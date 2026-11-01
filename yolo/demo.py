@@ -65,7 +65,7 @@ BLE = [
 CLASSIC = [
     ("00:1b:66:03:00:01", "Sennheiser MOMENTUM 4", "evening", -59, "audio/video", True),
     ("88:c6:26:03:00:02", "Car Multimedia", "worker", -80, "audio/video", False),
-    ("ac:bc:32:03:00:03", "Sjaak's MacBook", "worker", -54, "computer", False),
+    ("ac:bc:32:03:00:03", "MacBook Pro", "worker", -54, "computer", False),
 ]
 
 

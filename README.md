@@ -9,6 +9,27 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Storage:** SQLite in a single volume, per-minute signal samples, configurable retention, CSV export, JSON API
 - **Demo mode** so you can try the UI without any radios
 
+| Overview | Device: Wi-Fi client |
+|---|---|
+| [![Overview](docs/screenshots/overview.png)](docs/screenshots/overview.png) | [![Wi-Fi client detail](docs/screenshots/device-client.png)](docs/screenshots/device-client.png) |
+| **Statistics** | **Device: access point** |
+| [![Statistics](docs/screenshots/statistics.png)](docs/screenshots/statistics.png) | [![Access point detail](docs/screenshots/device-ap.png)](docs/screenshots/device-ap.png) |
+
+<details>
+<summary>More screenshots</summary>
+
+**Device list** (randomized MACs hidden, band and connection state per device)
+
+![Devices](docs/screenshots/devices.png)
+
+**Wi-Fi client:** signal history, weekly presence heatmap, and a timeline showing when the phone was connected to each of three mesh BSSIDs (2.4, 5 and 6 GHz) as it roamed.
+
+**Access point:** which clients were connected when, and how many over time.
+
+</details>
+
+*Screenshots use the built-in demo mode (`DEMO_MODE=1`); all devices are synthetic.*
+
 ---
 
 ## Contents
