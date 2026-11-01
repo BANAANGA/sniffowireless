@@ -138,3 +138,69 @@ def test_band_migration(tmp_path):
     s = Store(Config(db_path=db), VendorLookup(None))
     bands = dict(s.conn.execute("SELECT mac, band FROM devices").fetchall())
     assert bands == {AP: "6", CL: "5"}
+
+
+# ---------------------------------------------------------------- identification
+from yolo.identify import ble_fingerprint, identify, wifi_fingerprint  # noqa: E402
+
+
+def _ht(ss, w40=True):
+    return (45, (2 if w40 else 0).to_bytes(2, "little") + b"\x17" + bytes([0xFF] * ss + [0] * (16 - ss)) + bytes(7))
+
+
+def _he(ss):
+    m = sum((2 if i < ss else 3) << (2 * i) for i in range(8))
+    return (255, bytes([35]) + bytes(6) + bytes([0x06]) + bytes(10) + m.to_bytes(2, "little"))
+
+
+def test_wifi_fingerprint_caps_and_wps():
+    wps = (bytes.fromhex("0050f204") + (0x1021).to_bytes(2, "big") + (2).to_bytes(2, "big") + b"HP"
+           + (0x1023).to_bytes(2, "big") + (13).to_bytes(2, "big") + b"OfficeJet Pro"
+           + (0x1054).to_bytes(2, "big") + (8).to_bytes(2, "big") + (3).to_bytes(2, "big") + bytes.fromhex("0050f204")
+           + (1).to_bytes(2, "big"))
+    fp = wifi_fingerprint([(1, b"\x82"), _ht(2), _he(2), (221, bytes.fromhex("0017f20a")), (221, wps)])
+    assert fp["gen"] == 6 and fp["ss"] == 2 and fp["width"] == 80 and "00:17:f2" in fp["vendors"]
+    assert fp["wps"] == {"manufacturer": "HP", "model": "OfficeJet Pro", "category": 3, "subcategory": 1}
+    r = identify({"kind": "ap", "ssid": "DIRECT-4F-HP OfficeJet Pro", "extra": {"fp": {"wifi": fp}}})
+    assert (r["brand"], r["dev_type"], r["wifi_gen"], r["era"]) == ("HP", "printer", 6, 2019)
+    assert r["ident"]["label"] == "HP OfficeJet Pro · Printer"
+
+
+def test_identify_legacy_and_6e():
+    old = identify({"kind": "ap", "extra": {"fp": {"wifi": wifi_fingerprint([(1, b"\x82"), (50, b"\x0c")])}}})
+    assert old["wifi_gen"] == 3 and old["era"] == 2003 and "2010" in old["ident"]["age_hint"]
+    laptop = identify({"kind": "wifi_client", "name": "LAPTOP-AB12CD34", "extra": {"fp": {"wifi": wifi_fingerprint([_ht(2)])}}})
+    assert laptop["ident"]["age_hint"].startswith("typically 2009–2016")
+    iot = identify({"kind": "wifi_client", "vendor": "Espressif Inc.", "extra": {"fp": {"wifi": wifi_fingerprint([_ht(1)])}}})
+    assert iot["ident"]["age_hint"].startswith("2009 or newer")
+    six = identify({"kind": "wifi_client", "band": "6", "randomized": 1,
+                    "extra": {"fp": {"wifi": wifi_fingerprint([_ht(2), _he(2)])}}})
+    assert six["wifi_gen"] == 66 and six["era"] == 2021
+
+
+def test_identify_ble_apple_and_cdp():
+    ad = {"company_id": 0x004C, "mfg": bytes([0x07, 0x19, 0x01, 0x14, 0x20]) + bytes(23)}
+    r = identify({"kind": "ble", "extra": {"fp": {"ble": ble_fingerprint(ad)}}})
+    assert (r["model"], r["dev_type"], r["era"]) == ("AirPods Pro (2nd gen)", "headphones", 2022)
+    ms = identify({"kind": "ble", "extra": {"fp": {"ble": ble_fingerprint({"company_id": 6, "mfg": bytes([1, 0x2F])})}}})
+    assert (ms["dev_type"], ms["os"]) == ("laptop", "Windows")
+
+
+def test_identify_names_and_cod():
+    r = identify({"kind": "ble", "name": "Galaxy Watch5", "extra": {}})
+    assert (r["brand"], r["dev_type"], r["model"]) == ("Samsung", "watch", "Galaxy Watch5")
+    r = identify({"kind": "bt_classic", "name": "Car Multimedia", "extra": {"cod": "0x200420"}})
+    assert r["dev_type"] == "car"
+    r = identify({"kind": "wifi_client", "vendor": "Espressif Inc.", "extra": {}})
+    assert (r["brand"], r["dev_type"]) == ("Espressif", "iot")
+
+
+def test_store_identifies_and_hashes(tmp_path):
+    s = Store(Config(db_path=str(tmp_path / "t.db")), VendorLookup(None))
+    fp = wifi_fingerprint([(1, b"\x82"), _ht(2), _he(2), (221, bytes.fromhex("0017f20a"))])
+    for mac in ("da:00:00:00:00:01", "da:00:00:00:00:02"):
+        s.process({"t": "wifi_client", "ts": 100, "mac": mac, "frame": "probe", "fp": {"wifi": fp, "src": "probe"}})
+    s.flush()
+    rows = s.conn.execute("SELECT brand, dev_type, wifi_gen, fp_hash FROM devices").fetchall()
+    assert len({r["fp_hash"] for r in rows}) == 1 and rows[0]["brand"] == "Apple" and rows[0]["dev_type"] == "phone"
+    assert s.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()[0] == "1"

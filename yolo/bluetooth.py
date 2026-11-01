@@ -15,6 +15,7 @@ import threading
 import time
 
 from . import status
+from .identify import ble_fingerprint
 from .oui import bt_company
 
 log = logging.getLogger("yolo.bt")
@@ -68,6 +69,7 @@ def parse_ad(data):
             out["appearance"] = APPEARANCE.get(a >> 6, f"0x{a:04x}")
         elif t == 0xFF and len(v) >= 2:
             out["company_id"] = v[0] | v[1] << 8
+            out["mfg"] = bytes(v[2:34])
         elif t in (0x02, 0x03):
             uuids += [f"{v[j] | v[j + 1] << 8:04x}" for j in range(0, len(v) - 1, 2)]
         elif t == 0x16 and len(v) >= 2:
@@ -121,7 +123,8 @@ def parse_event(pkt):
                 data = p[i + 24:i + 24 + ln]
                 i += 24 + ln
                 out.append({"ev": "adv", "mac": bdaddr(addr), "addr_type": atype, "rssi": r,
-                            "connectable": bool(evt_type & 0x01), "ad": parse_ad(data)})
+                            "connectable": bool(evt_type & 0x01), "ad": parse_ad(data),
+                            "ext": not evt_type & 0x10})  # bit 4 set = legacy PDU
         elif sub in (0x01, 0x0A) and len(p) >= 12 and p[1] == 0:  # LE (enhanced) connection complete
             handle = p[2] | (p[3] & 0x0F) << 8
             out.append({"ev": "conn", "handle": handle, "mac": bdaddr(p[6:12]), "le": True,
@@ -179,6 +182,7 @@ class BluetoothSensor:
         self.name_pending = None
         self.inquiring = False
         self.last_adv = 0.0
+        self.fp_seen = {}       # mac -> (fingerprint, ts) to avoid re-sending identical fingerprints
         self.packets = 0
         self.stop = None
         status.register(self.name, type="bluetooth", iface=dev, adverts=0, inquiries=0)
@@ -291,6 +295,14 @@ class BluetoothSensor:
             ad = ev["ad"]
             label, randomized = classify_le_addr(ev["addr_type"], ev["mac"])
             cid = ad.get("company_id")
+            fp = ble_fingerprint(ad, ev.get("ext", False))
+            prev = self.fp_seen.get(ev["mac"])
+            if fp and (not prev or prev[0] != fp or now - prev[1] > 600):
+                if len(self.fp_seen) > 50_000:
+                    self.fp_seen.clear()
+                self.fp_seen[ev["mac"]] = (fp, now)
+            else:
+                fp = None
             self.store.put({
                 "t": "bt", "kind": "ble", "ts": now, "mac": ev["mac"], "rssi": ev["rssi"],
                 "name": ad.get("name"), "randomized": randomized, "addr_random": label != "public",
@@ -298,6 +310,7 @@ class BluetoothSensor:
                 "extra": {"addr_type": label, "company": bt_company(cid), "appearance": ad.get("appearance"),
                           "tx_power": ad.get("tx_power"), "uuids": ad.get("uuids"),
                           "connectable": ev["connectable"]},
+                "fp": {"ble": fp} if fp else None,
             })
             status.update(self.name, adverts=self.packets)
         elif kind == "inq":

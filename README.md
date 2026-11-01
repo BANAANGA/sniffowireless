@@ -5,6 +5,7 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Wi-Fi:** passive monitor-mode capture with channel hopping across 2.4 GHz, 5 GHz and **6 GHz (Wi-Fi 6E/7)**, on one or more USB adapters
 - **Bluetooth:** BLE advertising plus Classic inquiry over a raw HCI socket. No BlueZ daemon is needed inside the container.
 - **Connectivity history:** presence sessions ("visits") for every device, connection sessions for Wi-Fi client→AP links (including roaming between BSSIDs and deauths), and Bluetooth links to the sensor's adapter
+- **Passive device identification:** brand, model, device type, OS, Wi-Fi generation and estimated age, worked out from capability elements, WPS data, Apple/Microsoft/Google Bluetooth beacons, Bluetooth class of device, names and MAC vendor. Each result shows its evidence and confidence. Probe fingerprints group randomized MACs that belong to the same model/OS.
 - **Drill-down statistics:** overview → device type → device → sessions; SSID → APs → clients; vendor / channel / probed SSID → devices; per-device signal history, weekly presence heatmap, timeline, peers, events
 - **Storage:** SQLite in a single volume, per-minute signal samples, configurable retention, CSV export, JSON API
 - **Demo mode** so you can try the UI without any radios
@@ -21,6 +22,10 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 **Device list** (randomized MACs hidden, band and connection state per device)
 
 ![Devices](docs/screenshots/devices.png)
+
+**Device identification** (an HP printer identified from its WPS data and Wi-Fi Direct network name)
+
+![Identification](docs/screenshots/identification.png)
 
 **Wi-Fi client:** signal history, weekly presence heatmap, and a timeline showing when the phone was connected to each of three mesh BSSIDs (2.4, 5 and 6 GHz) as it roamed.
 
@@ -39,11 +44,12 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 3. [Connecting USB Wi-Fi / Bluetooth adapters](#connecting-usb-wi-fi--bluetooth-adapters)
 4. [Deploy](#deploy)
 5. [Configuration](#configuration)
-6. [Using the UI](#using-the-ui)
-7. [API](#api)
-8. [Troubleshooting](#troubleshooting)
-9. [Development](#development)
-10. [Legal](#legal)
+6. [Device identification](#device-identification)
+7. [Using the UI](#using-the-ui)
+8. [API](#api)
+9. [Troubleshooting](#troubleshooting)
+10. [Development](#development)
+11. [Legal](#legal)
 
 ---
 
@@ -287,19 +293,43 @@ Tokens combine, e.g. `WIFI_CHANNELS=1,6,11,5common,6ghz`. A bare `5` or `6` on i
 
 ---
 
+## Device identification
+
+yolo works out what each device is purely from what it broadcasts. Nothing is sent to the device. Every clue becomes a piece of evidence with a confidence score, and for each field the best-supported value wins. The device page shows the result, a confidence badge per field and the full evidence list.
+
+| Source | What it reveals |
+|---|---|
+| **Wi-Fi capability elements** (probe/association requests, beacons) | Newest Wi-Fi standard (legacy a/b/g → Wi-Fi 4/5/6/6E/7), MIMO streams, channel width |
+| **WPS element** (many printers, TVs, routers, some PCs) | Manufacturer, model name/number, device name, device category |
+| **Vendor-specific elements** | Apple devices, Samsung, chipset vendor (Broadcom, Qualcomm, MediaTek, Realtek…), Wi-Fi Direct, MBO, Passpoint |
+| **Probe-request layout** | A *probe fingerprint* hash: the element order/capabilities are characteristic of chipset + OS build, so randomized MACs from the same kind of phone share a hash |
+| **Apple Continuity (BLE)** | AirPods/Beats model and release year; iPhone/iPad/Mac activity (Handoff, Nearby), AirPlay targets, Find My accessories |
+| **Microsoft CDP beacons (BLE)** | Windows desktop/laptop/tablet, Xbox, Android/iPhone running Microsoft apps |
+| **BLE services / appearance** | Tile, SmartTag, Fast Pair, Eddystone, heart-rate/fitness, HID keyboards/mice, Xiaomi/BTHome sensors… |
+| **Bluetooth class of device** | Phone, laptop, headphones, car audio, speaker, watch, … |
+| **Names / SSIDs** | “iPhone”, “Galaxy Watch5”, “DESKTOP-XXXXXXX” (Windows), “[TV] Samsung…”, “DIRECT-xx-HP…” printers, phone hotspots, car hotspots |
+| **MAC vendor (OUI)** | Brand, plus a type hint for single-purpose vendors (Espressif → IoT, Sonos → speaker, Hikvision → camera…) |
+
+**Estimated age** comes from the newest standard a device supports (it can't predate it), or from the model's release year when that is known (AirPods/Beats). For phones, computers, TVs and routers yolo also gives an upper bound: a laptop with only Wi-Fi 5 is typically from 2013–2020. Printers and IoT devices still ship with Wi-Fi 4 today, so for those only "N or newer" is shown.
+
+**Limits:** results are best-effort. Devices with randomized MACs and no name (most phones while idle) can often only be identified as "Apple phone, Wi-Fi 6" or "phone". Clients only reveal capabilities in probe/association frames, so a device first has to scan or (re)connect while the sensor is on its channel. When the rules improve in a new version, all stored devices are re-identified automatically on startup.
+
+---
+
 ## Using the UI
 
 - **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d), currently connected clients with the network they're on, sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
-- **Devices:** a searchable, sortable list. Filter by type, recency, band (2.4 / 5 / 6 GHz) or vendor, and hide randomized MACs. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
+- **Devices:** a searchable, sortable list showing what each device was identified as. Filter by radio type, device type, recency or band (2.4 / 5 / 6 GHz), and hide randomized MACs. Drill-downs add filters for brand, OS, Wi-Fi generation, age and probe fingerprint. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
   - key facts, total time present, visits, average and longest visit, time connected
+  - **identification:** brand, model, device type, OS, Wi-Fi generation and capabilities, chipset, estimated age, probe fingerprint (and how many other MACs share it), WPS info, and the evidence behind each value
   - **signal strength** chart (avg plus min–max band)
   - **weekly pattern** heatmap: when the device is usually around
   - **presence & connectivity timeline**: visits plus one lane per AP (or per client, on an AP's page) showing exactly when it was connected
   - for APs: **connected clients over time**, the client list, and other BSSIDs with the same SSID
   - for clients: the APs/networks it connected to, with session counts and total time, and the SSIDs it probes for
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
-- **Statistics:** activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
+- **Statistics:** device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
 
 ---
@@ -312,8 +342,8 @@ Interactive docs are at `/api/docs`. Main endpoints:
 |---|---|
 | `GET /api/summary` | Counts per type, recent events |
 | `GET /api/timeline?hours=24` | Active devices per type and connected clients per time bucket |
-| `GET /api/devices?kind=&active=&q=&vendor=&ssid=&probe=&bssid=&channel=&band=&randomized=&connected=&sort=&order=&limit=&offset=` | Device list (`band` is `2.4`, `5` or `6`) |
-| `GET /api/devices/{mac}` | Device detail, stats, peers, probes, events |
+| `GET /api/devices?kind=&active=&q=&vendor=&brand=&dev_type=&os=&wifi_gen=&era=&fp=&ssid=&probe=&bssid=&channel=&band=&randomized=&connected=&sort=&order=&limit=&offset=` | Device list (`band`: `2.4`/`5`/`6`; `wifi_gen`: `3` legacy, `4`–`7`, `66` = 6E) |
+| `GET /api/devices/{mac}` | Device detail, identification (`ident`), stats, peers, probes, events |
 | `GET /api/devices/{mac}/rssi?hours=` | Signal history |
 | `GET /api/devices/{mac}/sessions?hours=&as_peer=1` | Visits/connections (`as_peer=1`: client sessions on an AP) |
 | `GET /api/devices/{mac}/clients?hours=` | Connected clients over time for an AP |
@@ -363,6 +393,7 @@ yolo/
   config.py     environment configuration
   wifi.py       monitor mode, channel hopping, 802.11 frame parsing
   bluetooth.py  raw HCI LE scanning / inquiry / connection tracking
+  identify.py   passive device identification rules
   store.py      sessions, samples, events, SQLite persistence
   web.py        FastAPI JSON API
   demo.py       synthetic data generator

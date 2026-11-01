@@ -11,6 +11,8 @@ import queue
 import sqlite3
 import time
 
+from . import identify
+
 log = logging.getLogger("yolo.store")
 
 SCHEMA = """
@@ -20,10 +22,12 @@ CREATE TABLE IF NOT EXISTS devices(
   mac TEXT PRIMARY KEY, kind TEXT NOT NULL, first_seen REAL, last_seen REAL,
   vendor TEXT, name TEXT, ssid TEXT, channel INTEGER, freq INTEGER, band TEXT, enc TEXT,
   bssid TEXT, randomized INTEGER DEFAULT 0, packets INTEGER DEFAULT 0,
-  last_rssi INTEGER, best_rssi INTEGER, extra TEXT);
+  last_rssi INTEGER, best_rssi INTEGER, extra TEXT, brand TEXT, model TEXT, dev_type TEXT, os TEXT,
+  wifi_gen INTEGER, era INTEGER, fp_hash TEXT, ident TEXT);
 CREATE INDEX IF NOT EXISTS idx_devices_kind ON devices(kind, last_seen);
 CREATE INDEX IF NOT EXISTS idx_devices_last ON devices(last_seen);
 CREATE INDEX IF NOT EXISTS idx_devices_ssid ON devices(ssid);
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS sessions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, mac TEXT NOT NULL, type TEXT NOT NULL,
   peer TEXT, start_ts REAL NOT NULL, end_ts REAL NOT NULL, packets INTEGER DEFAULT 0,
@@ -49,7 +53,12 @@ CREATE INDEX IF NOT EXISTS idx_probes_ssid ON probes(ssid);
 """
 
 DEVICE_COLS = ("mac", "kind", "first_seen", "last_seen", "vendor", "name", "ssid", "channel",
-               "freq", "band", "enc", "bssid", "randomized", "packets", "last_rssi", "best_rssi", "extra")
+               "freq", "band", "enc", "bssid", "randomized", "packets", "last_rssi", "best_rssi", "extra",
+               "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "ident")
+JSON_COLS = ("extra", "ident")
+# Columns added after the first release: name -> SQL type (added by _migrate on old databases).
+ADDED_COLS = {"band": "TEXT", "brand": "TEXT", "model": "TEXT", "dev_type": "TEXT", "os": "TEXT",
+              "wifi_gen": "INTEGER", "era": "INTEGER", "fp_hash": "TEXT", "ident": "TEXT"}
 
 WIFI_KINDS = ("ap", "wifi_client")
 BT_KINDS = ("ble", "bt_classic")
@@ -131,12 +140,36 @@ class Store:
 
     def _migrate(self):
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(devices)")}
+        for col, typ in ADDED_COLS.items():
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE devices ADD COLUMN {col} {typ}")
+                log.info("Migrated database: added devices.%s", col)
         if "band" not in cols:
-            self.conn.execute("ALTER TABLE devices ADD COLUMN band TEXT")
             self.conn.execute("UPDATE devices SET band = CASE WHEN freq >= 5925 THEN '6' WHEN freq >= 4900 THEN '5' "
                               "WHEN freq > 0 THEN '2.4' WHEN channel <= 14 THEN '2.4' WHEN channel > 14 THEN '5' END "
                               "WHERE kind IN ('ap', 'wifi_client')")
-            log.info("Migrated database: added devices.band")
+        for idx in ("dev_type", "brand", "fp_hash"):
+            self.conn.execute(f"CREATE INDEX IF NOT EXISTS idx_devices_{idx} ON devices({idx})")
+        row = self.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()
+        if not row or int(row[0]) != identify.IDENT_VERSION:
+            self.reidentify_all()
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('ident_version', ?)",
+                              (str(identify.IDENT_VERSION),))
+
+    def reidentify_all(self):
+        """Re-run identification for every stored device (after the rules changed)."""
+        rows = self.conn.execute("SELECT * FROM devices").fetchall()
+        self.conn.execute("BEGIN")
+        for r in rows:
+            d = dict(r)
+            d["extra"] = json.loads(d["extra"] or "{}")
+            res = identify.identify(d)
+            self.conn.execute("UPDATE devices SET brand=?, model=?, dev_type=?, os=?, wifi_gen=?, era=?, ident=? "
+                              "WHERE mac=?", (res["brand"], res["model"], res["dev_type"], res["os"],
+                                              res["wifi_gen"], res["era"], json.dumps(res["ident"]), d["mac"]))
+        self.conn.execute("COMMIT")
+        if rows:
+            log.info("Re-identified %d devices (identification rules v%d)", len(rows), identify.IDENT_VERSION)
 
     # ------------------------------------------------------------------ input
     def put(self, obs):
@@ -236,6 +269,7 @@ class Store:
             if row:
                 dev = dict(row)
                 dev["extra"] = json.loads(dev["extra"] or "{}")
+                dev["ident"] = json.loads(dev["ident"] or "null")
             else:
                 randomized = o.get("randomized")
                 if randomized is None:
@@ -268,8 +302,30 @@ class Store:
                 dev[f] = v
         if o.get("extra"):
             dev["extra"].update({k: v for k, v in o["extra"].items() if v is not None})
+        fp_changed = self._merge_fp(dev, o.get("fp"))
+        ex = dev["extra"]
+        key = (dev["kind"], dev["name"], dev["vendor"], dev["ssid"], dev["band"], dev["randomized"],
+               ex.get("appearance"), ex.get("company"), ex.get("cod"), ex.get("class"))
+        if fp_changed or dev.get("_ikey") != key or dev.get("ident") is None:
+            dev["_ikey"] = key
+            dev.update(identify.identify(dev))
         self.dirty.add(mac)
         return dev
+
+    def _merge_fp(self, dev, fp):
+        """Merge a frame/advert fingerprint into the device; True if anything changed."""
+        if not fp:
+            return False
+        store = dev["extra"].setdefault("fp", {})
+        before = json.dumps(store, sort_keys=True)
+        if fp.get("wifi"):
+            store["wifi"] = identify.merge_wifi(store.get("wifi"), fp["wifi"])
+            if fp.get("src") == "probe" and fp["wifi"].get("sig"):
+                # Probe-request element layout is characteristic of chipset + OS build.
+                dev["fp_hash"] = identify.probe_hash(fp["wifi"]["sig"])
+        if fp.get("ble"):
+            store["ble"] = identify.merge_ble(store.get("ble"), fp["ble"])
+        return json.dumps(store, sort_keys=True) != before
 
     def _presence(self, dev, ts, rssi):
         mac = dev["mac"]
@@ -386,7 +442,7 @@ class Store:
             for mac in self.dirty:
                 d = self.devices.get(mac)
                 if d:
-                    rows.append(tuple(json.dumps(d["extra"]) if k == "extra" else d[k] for k in DEVICE_COLS))
+                    rows.append(tuple(json.dumps(d[k]) if k in JSON_COLS else d[k] for k in DEVICE_COLS))
             c.executemany(f"INSERT OR REPLACE INTO devices({','.join(DEVICE_COLS)}) "
                           f"VALUES({','.join('?' * len(DEVICE_COLS))})", rows)
             for s in sessions:
