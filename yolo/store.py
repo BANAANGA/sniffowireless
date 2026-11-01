@@ -18,7 +18,7 @@ PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 CREATE TABLE IF NOT EXISTS devices(
   mac TEXT PRIMARY KEY, kind TEXT NOT NULL, first_seen REAL, last_seen REAL,
-  vendor TEXT, name TEXT, ssid TEXT, channel INTEGER, freq INTEGER, enc TEXT,
+  vendor TEXT, name TEXT, ssid TEXT, channel INTEGER, freq INTEGER, band TEXT, enc TEXT,
   bssid TEXT, randomized INTEGER DEFAULT 0, packets INTEGER DEFAULT 0,
   last_rssi INTEGER, best_rssi INTEGER, extra TEXT);
 CREATE INDEX IF NOT EXISTS idx_devices_kind ON devices(kind, last_seen);
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_probes_ssid ON probes(ssid);
 """
 
 DEVICE_COLS = ("mac", "kind", "first_seen", "last_seen", "vendor", "name", "ssid", "channel",
-               "freq", "enc", "bssid", "randomized", "packets", "last_rssi", "best_rssi", "extra")
+               "freq", "band", "enc", "bssid", "randomized", "packets", "last_rssi", "best_rssi", "extra")
 
 WIFI_KINDS = ("ap", "wifi_client")
 BT_KINDS = ("ble", "bt_classic")
@@ -112,6 +112,7 @@ class Store:
         os.makedirs(os.path.dirname(os.path.abspath(cfg.db_path)), exist_ok=True)
         self.conn = connect(cfg.db_path)
         self.conn.executescript(SCHEMA)
+        self._migrate()
         n = self.conn.execute(
             "UPDATE sessions SET open=0, end_reason=COALESCE(end_reason,'restart') WHERE open=1").rowcount
         if n:
@@ -127,6 +128,15 @@ class Store:
         self.probe_updates = {}  # (mac, ssid) -> [first, last, count]
         self.known_probes = set()
         self._last_event = {}
+
+    def _migrate(self):
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(devices)")}
+        if "band" not in cols:
+            self.conn.execute("ALTER TABLE devices ADD COLUMN band TEXT")
+            self.conn.execute("UPDATE devices SET band = CASE WHEN freq >= 5925 THEN '6' WHEN freq >= 4900 THEN '5' "
+                              "WHEN freq > 0 THEN '2.4' WHEN channel <= 14 THEN '2.4' WHEN channel > 14 THEN '5' END "
+                              "WHERE kind IN ('ap', 'wifi_client')")
+            log.info("Migrated database: added devices.band")
 
     # ------------------------------------------------------------------ input
     def put(self, obs):
@@ -174,11 +184,11 @@ class Store:
         t, ts, rssi = o["t"], o["ts"], o.get("rssi")
 
         if t == "wifi_ap":
-            dev = self._device(mac, "ap", ts, rssi, o, ("ssid", "channel", "freq", "enc", "vendor"))
+            dev = self._device(mac, "ap", ts, rssi, o, ("ssid", "channel", "freq", "band", "enc", "vendor"))
             self._presence(dev, ts, rssi)
 
         elif t == "wifi_client":
-            dev = self._device(mac, "wifi_client", ts, rssi, o, ("channel", "freq", "vendor"))
+            dev = self._device(mac, "wifi_client", ts, rssi, o, ("channel", "freq", "band", "vendor"))
             self._presence(dev, ts, rssi)
             bssid, frame = o.get("bssid"), o.get("frame")
             if frame in ("deauth", "disassoc"):

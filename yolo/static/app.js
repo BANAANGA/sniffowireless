@@ -64,6 +64,13 @@ function axisTime(ts, span) {
   return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) + (span < 86400 * 4 ? ' ' + d.getHours() + 'h' : '');
 }
 const num = n => (n ?? 0).toLocaleString();
+const BANDS = { '2.4': { label: '2.4 GHz', color: '#4cc2ff' }, '5': { label: '5 GHz', color: '#8fd8ff' }, '6': { label: '6 GHz', color: '#d2efff' } };
+// Fixed order: JS would otherwise list the integer-like keys '5' and '6' before '2.4'.
+const BAND_LIST = ['2.4', '5', '6'].map(b => [b, BANDS[b]]);
+function chText(ch, band) {
+  if (ch == null) return '<span class="faint">—</span>';
+  return band ? `${ch}<span class="faint"> · ${band}G</span>` : `${ch}`;
+}
 const bytes = b => b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' kB';
 
 function kindBadge(k) {
@@ -229,7 +236,7 @@ async function viewOverview() {
     document.getElementById('sensors').innerHTML = (list.length ? list.map(x => `<div class="sensor">
       <div><div><span class="state-dot ${x.state === 'error' ? '' : 'on'}"></span><b>${esc(x.name)}</b>
       ${x.mon && x.mon !== x.iface ? `<span class="faint mono"> → ${esc(x.mon)}</span>` : ''}</div>
-      ${x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + x.channel : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>`}</div>
+      ${x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${x.bands ? ' · ' + x.bands.map(b => b + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>`}</div>
       <div class="muted mono" style="text-align:right">${(x.pps || 0).toFixed(1)} pkt/s<br>${num(x.packets)} total</div></div>`).join('')
       : `<div class="empty">${s.demo ? 'Demo mode — synthetic data' : 'No sensors configured'}</div>`)
       + `<div class="sensor muted"><span>Queue ${num(s.store.queue)} · dropped ${num(s.store.dropped)}</span><span>${num(s.store.open_presence)} present</span></div>`;
@@ -291,6 +298,7 @@ async function viewDevices(params) {
       <input type="search" id="q" placeholder="Search MAC, name, SSID, vendor…" value="${esc(st.q || '')}">
       <select id="kind"><option value="">All types</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <select id="active">${[['', 'Any time'], ['300', 'Active (5 min)'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']].map(([v, l]) => `<option value="${v}" ${String(st.active || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select id="band"><option value="">All bands</option>${BAND_LIST.map(([b, m]) => `<option value="${b}" ${st.band === b ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <label class="check"><input type="checkbox" id="hiderand" ${st.randomized === '0' ? 'checked' : ''}>Hide randomized MACs</label>
       ${chips}
     </div>
@@ -305,6 +313,7 @@ async function viewDevices(params) {
   document.getElementById('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => go({ q: e.target.value }), 350); });
   document.getElementById('kind').addEventListener('change', e => go({ kind: e.target.value }));
   document.getElementById('active').addEventListener('change', e => go({ active: e.target.value }));
+  document.getElementById('band').addEventListener('change', e => go({ band: e.target.value }));
   document.getElementById('hiderand').addEventListener('change', e => go({ randomized: e.target.checked ? '0' : '' }));
   const qi = document.getElementById('q');
   if (st.q) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); }
@@ -335,7 +344,7 @@ async function viewDevices(params) {
         <td class="trunc">${label ? esc(label) : '<span class="faint">—</span>'}${x.kind === 'ap' && x.enc ? ` <span class="tag ${x.enc.includes('OPN') ? 'bad' : ''}">${esc(x.enc.replace(/\/PSK|\/SAE/g, ''))}</span>` : ''}</td>
         <td class="trunc muted">${esc(x.vendor || '—')}</td>
         <td>${conn}</td>
-        <td class="muted">${x.channel ?? '—'}</td>
+        <td class="muted">${chText(x.channel, x.band)}</td>
         <td>${rssiBars(x.last_rssi)}</td>
         <td class="num muted">${num(x.packets)}</td>
         <td class="num muted" title="${esc(dt(x.first_seen))}">${ago(x.first_seen)}</td>
@@ -371,7 +380,7 @@ async function viewDevice(mac, params) {
     ['Vendor', esc(d.vendor || (d.randomized ? 'Randomized address' : 'Unknown'))],
     isAp ? ['SSID', esc(d.ssid || (d.ssid === '' || ex.hidden ? '<hidden>' : '—'))] : null,
     isAp ? ['Security', esc(d.enc || '—')] : null,
-    !isBt ? ['Channel', d.channel ? `${d.channel}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}` : '—'] : null,
+    !isBt ? ['Channel', d.channel ? `${d.channel}${d.band ? ` · ${BANDS[d.band] ? BANDS[d.band].label : d.band}` : ''}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}` : '—'] : null,
     isBt && d.name ? ['Name', esc(d.name)] : null,
     ex.addr_type ? ['Address type', esc(ex.addr_type)] : null,
     ex.company ? ['Manufacturer data', esc(ex.company)] : null,
@@ -423,7 +432,7 @@ async function viewDevice(mac, params) {
   const side = document.getElementById('side');
   if (isAp) {
     side.innerHTML = d.siblings.length ? `<table><tbody>${d.siblings.map(s => `<tr class="link" data-href="#/device/${enc(s.mac)}">
-      <td class="mono">${esc(s.mac)}</td><td class="muted">ch ${s.channel ?? '—'}</td><td>${rssiBars(s.last_rssi)}</td></tr>`).join('')}</tbody></table>
+      <td class="mono">${esc(s.mac)}</td><td class="muted">ch ${chText(s.channel, s.band)}</td><td>${rssiBars(s.last_rssi)}</td></tr>`).join('')}</tbody></table>
       <div class="pager"><a href="#/devices?ssid=${enc(d.ssid)}">All devices on “${esc(d.ssid)}” →</a></div>`
       : `<div class="empty">No other BSSIDs${d.ssid ? ` for “${esc(d.ssid)}”` : ''}</div>${d.ssid ? `<div class="pager"><a href="#/devices?ssid=${enc(d.ssid)}">All devices on “${esc(d.ssid)}” →</a></div>` : ''}`;
   } else {
@@ -563,7 +572,7 @@ async function viewStats(params) {
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
     <section class="panel"><header><h2>Session durations</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
     <section class="panel"><header><h2>Top vendors</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="vendors"></ul></div></section>
-    <section class="panel"><header><h2>AP channels</h2></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div></div></section>
+    <section class="panel"><header><h2>AP channels</h2><span class="legend" id="bandlegend"></span></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
     <section class="panel"><header><h2>Events</h2></header><div class="body flush table-wrap" id="evtypes"></div></section>
     <section class="panel span-3"><header><h2>Networks (SSIDs)</h2><span class="faint">${s.ssids.length} seen</span></header><div class="body flush table-wrap" id="ssids"></div></section>
     <section class="panel"><header><h2>Most connected clients</h2></header><div class="body flush table-wrap" id="topc"></div></section>
@@ -631,13 +640,24 @@ async function viewStats(params) {
   drawVendors('');
   document.getElementById('vkind').addEventListener('change', e => drawVendors(e.target.value));
 
-  // channels
+  // channels + bands
+  document.getElementById('bandlegend').innerHTML = BAND_LIST.map(([b, m]) => `<span><span class="swatch" style="background:${m.color}"></span>${b}G</span>`).join('');
   chart(document.getElementById('chans'), {
-    type: 'bar', data: { labels: s.channels.map(c => c.channel), datasets: [{ data: s.channels.map(c => c.aps), backgroundColor: KINDS.ap.color + 'cc', borderRadius: 2, maxBarThickness: 40 }] },
+    type: 'bar', data: { labels: s.channels.map(c => c.b === '6' ? `6G:${c.channel}` : c.channel),
+      datasets: [{ data: s.channels.map(c => c.aps), backgroundColor: s.channels.map(c => (BANDS[c.b] || BANDS['2.4']).color + 'cc'), borderRadius: 2, maxBarThickness: 40 }] },
     options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale() },
-      plugins: { tooltip: { callbacks: { title: i => `Channel ${i[0].label}`, label: i => `${i.raw} access points` } } },
-      onClick: (e, els) => { if (els.length) location.hash = hrefWith('/devices', { kind: 'ap', channel: s.channels[els[0].index].channel }); } },
+      plugins: { tooltip: { callbacks: { title: i => `Channel ${i[0].label} (${s.channels[i[0].dataIndex].b} GHz)`, label: i => `${i.raw} access points` } } },
+      onClick: (e, els) => { if (els.length) { const c = s.channels[els[0].index]; location.hash = hrefWith('/devices', { kind: 'ap', channel: c.channel, band: c.b }); } } },
   });
+  const bandTot = {};
+  s.bands.forEach(r => { bandTot[r.band] = bandTot[r.band] || { ap: 0, wifi_client: 0 }; bandTot[r.band][r.kind] = r.n; });
+  const bmax = Math.max(1, ...Object.values(bandTot).map(o => o.ap + o.wifi_client));
+  document.getElementById('bands').innerHTML = BAND_LIST.filter(([b]) => bandTot[b]).map(([b, m]) => {
+    const o = bandTot[b];
+    return `<li data-href="${hrefWith('/devices', { band: b })}"><div><div class="name">${m.label} <span class="faint">· ${num(o.ap)} APs, ${num(o.wifi_client)} clients</span></div>
+      <div class="track"><i style="width:${o.ap / bmax * 100}%;background:${KINDS.ap.color}"></i><i style="width:${o.wifi_client / bmax * 100}%;background:${KINDS.wifi_client.color}"></i></div></div>
+      <div class="n">${num(o.ap + o.wifi_client)}</div></li>`;
+  }).join('');
 
   const table = (id, head, rowsHtml, empty = 'No data') => {
     const el = document.getElementById(id);
@@ -654,7 +674,7 @@ async function viewStats(params) {
   table('topc', '<th>Client</th><th class="num">Networks</th><th class="num">Connected</th>', s.top_clients.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
     <td>${kindBadge(x.kind)} <span class="mono" style="margin-left:6px">${esc(x.name || x.vendor || x.mac)}</span></td><td class="num muted">${x.peers}</td><td class="num">${dur(x.secs)}</td></tr>`).join(''));
   table('topap', '<th>Access point</th><th class="num">Clients</th><th class="num">Client-time</th>', s.top_aps.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
-    <td>${esc(x.ssid || '<hidden>')} <span class="mono faint">ch ${x.channel ?? '?'}</span></td><td class="num">${x.clients}</td><td class="num muted">${dur(x.secs)}</td></tr>`).join(''));
+    <td>${esc(x.ssid || '<hidden>')} <span class="mono faint">ch ${x.channel ?? '?'}${x.band ? ' · ' + x.band + 'G' : ''}</span></td><td class="num">${x.clients}</td><td class="num muted">${dur(x.secs)}</td></tr>`).join(''));
   table('probes', '<th>SSID</th><th class="num">Clients</th><th class="num">Frames</th>', s.probes.map(x => `<tr class="link" data-href="${hrefWith('/devices', { probe: x.ssid })}">
     <td class="trunc">${esc(x.ssid)}${x.aps ? ' <span class="tag">nearby</span>' : ''}</td><td class="num">${x.clients}</td><td class="num muted">${num(x.frames)}</td></tr>`).join(''), 'No directed probes');
   bindLi(root);

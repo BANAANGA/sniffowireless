@@ -5,7 +5,10 @@ from dataclasses import dataclass, field
 CHANNELS_24 = list(range(1, 14))
 CHANNELS_5 = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120,
               124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
-CHANNELS_DEFAULT = CHANNELS_24 + [36, 40, 44, 48, 149, 153, 157, 161, 165]
+CHANNELS_5_COMMON = [36, 40, 44, 48, 149, 153, 157, 161, 165]
+CHANNELS_6 = list(range(1, 234, 4))  # 20 MHz channels 1..233
+# Preferred Scanning Channels: 6 GHz APs advertise on these, so they find most networks quickly.
+CHANNELS_6_PSC = list(range(5, 230, 16))
 
 
 def _env(name, default=""):
@@ -30,31 +33,105 @@ def _list(name):
     return [p.strip() for p in _env(name).split(",") if p.strip()]
 
 
+def band_of(freq):
+    if not freq:
+        return None
+    if freq >= 5925:
+        return "6"
+    if freq >= 4900:
+        return "5"
+    return "2.4"
+
+
+def ch_to_freq(ch, band=None):
+    """Channel number -> centre frequency (MHz). Without a band, 1-14 is 2.4 GHz, else 5 GHz."""
+    if band == "6":
+        return 5935 if ch == 2 else 5950 + ch * 5
+    if band == "2.4" or (band is None and ch <= 14):
+        return 2484 if ch == 14 else 2407 + ch * 5
+    return 5000 + ch * 5
+
+
+def freq_to_channel(f):
+    if not f:
+        return None
+    if f == 2484:
+        return 14
+    if 2412 <= f <= 2472:
+        return (f - 2407) // 5
+    if 5000 <= f <= 5900:
+        return (f - 5000) // 5
+    if f == 5935:
+        return 2
+    if 5955 <= f <= 7115:
+        return (f - 5950) // 5
+    return None
+
+
+def chan_label(freq):
+    """Human readable channel label for a frequency, e.g. '6', '36', '6G:37'."""
+    ch = freq_to_channel(freq)
+    if ch is None:
+        return f"{freq}MHz"
+    return f"6G:{ch}" if band_of(freq) == "6" else str(ch)
+
+
+PRESETS = {
+    "2.4ghz": [ch_to_freq(c, "2.4") for c in CHANNELS_24],
+    "5ghz": [ch_to_freq(c, "5") for c in CHANNELS_5],
+    "5common": [ch_to_freq(c, "5") for c in CHANNELS_5_COMMON],
+    "6ghz": [ch_to_freq(c, "6") for c in CHANNELS_6_PSC],
+    "6all": [ch_to_freq(c, "6") for c in CHANNELS_6],
+}
+PRESETS["default"] = PRESETS["2.4ghz"] + PRESETS["5common"]
+PRESETS["all"] = PRESETS["2.4ghz"] + PRESETS["5ghz"] + PRESETS["6ghz"]
+ALIASES = {"": "default", "2.4": "2.4ghz", "6g": "6ghz", "6e": "6ghz", "6psc": "6ghz",
+           "6g:psc": "6ghz", "6g:all": "6all"}
+# A bare "5" or "6" is a band preset only when it is the whole spec ("1,5,9" are channels).
+WHOLE_SPEC = {"5": "5ghz", "6": "6ghz"}
+
+
+def _valid_channels(band):
+    if band == "6":
+        return set(CHANNELS_6)
+    if band == "2.4":
+        return set(CHANNELS_24) | {14}
+    if band == "5":
+        return set(CHANNELS_5)
+    return set(CHANNELS_24) | set(CHANNELS_5)
+
+
 def parse_channels(spec):
-    """Parse '1,6,11', '1-13,36-48', 'all', '2.4', '5' or '' (default set)."""
+    """Parse a channel spec into a list of frequencies (MHz).
+
+    Tokens are comma separated and may be presets (default, all, 2.4ghz, 5ghz, 6ghz, 6all),
+    plain channels/ranges (1,6,11,36-48: 1-14 are 2.4 GHz, the rest 5 GHz) or 6 GHz
+    channels with a '6g:' prefix (6g:5,6g:37-69). Ranges keep only valid channel numbers.
+    """
     spec = (spec or "").strip().lower()
-    if spec in ("", "default"):
-        return list(CHANNELS_DEFAULT)
-    if spec == "all":
-        return CHANNELS_24 + CHANNELS_5
-    if spec in ("2.4", "2.4ghz", "24"):
-        return list(CHANNELS_24)
-    if spec in ("5", "5ghz"):
-        return list(CHANNELS_5)
+    if spec in WHOLE_SPEC:
+        return list(PRESETS[WHOLE_SPEC[spec]])
     out = []
-    for part in spec.split(","):
-        part = part.strip()
-        if not part:
+    for tok in [t.strip() for t in spec.split(",")] if spec else [""]:
+        tok = ALIASES.get(tok, tok)
+        if tok in PRESETS:
+            out.extend(PRESETS[tok])
             continue
-        if "-" in part:
-            a, b = part.split("-", 1)
-            rng = range(int(a), int(b) + 1)
-            # A range like 36-48 only makes sense for valid 5 GHz channels.
-            out.extend(c for c in rng if c in CHANNELS_24 or c in CHANNELS_5 or c > 165)
+        band = None
+        for prefix, b in (("6g:", "6"), ("5g:", "5"), ("2g:", "2.4")):
+            if tok.startswith(prefix):
+                band, tok = b, tok[len(prefix):]
+                break
+        if not tok:
+            continue
+        if "-" in tok:
+            lo, hi = (int(x) for x in tok.split("-", 1))
+            valid = _valid_channels(band)
+            out.extend(ch_to_freq(c, band) for c in range(lo, hi + 1) if c in valid)
         else:
-            out.append(int(part))
+            out.append(ch_to_freq(int(tok), band))
     seen = set()
-    return [c for c in out if not (c in seen or seen.add(c))]
+    return [f for f in out if not (f in seen or seen.add(f))]
 
 
 @dataclass
@@ -68,10 +145,11 @@ class Config:
     log_level: str = "INFO"
 
     wifi_interfaces: list = field(default_factory=list)
-    wifi_channels: list = field(default_factory=lambda: list(CHANNELS_DEFAULT))
+    wifi_channels: list = field(default_factory=lambda: list(PRESETS["default"]))  # MHz
     wifi_channels_per_iface: dict = field(default_factory=dict)
     wifi_hop_interval: float = 0.5
     wifi_set_monitor: bool = True
+    wifi_regdomain: str = ""
 
     bt_devices: list = field(default_factory=list)
     bt_active_scan: bool = True
@@ -111,6 +189,7 @@ class Config:
             wifi_channels_per_iface=per_iface,
             wifi_hop_interval=_float("WIFI_HOP_INTERVAL", 0.5),
             wifi_set_monitor=_bool("WIFI_SET_MONITOR", True),
+            wifi_regdomain=_env("WIFI_REGDOMAIN").upper(),
             bt_devices=_list("BT_DEVICES"),
             bt_active_scan=_bool("BT_ACTIVE_SCAN", True),
             bt_inquiry=_bool("BT_INQUIRY", True),
