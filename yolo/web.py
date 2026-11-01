@@ -18,7 +18,7 @@ from .store import connect
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
-            "name", "ssid", "kind", "channel"}
+            "name", "ssid", "kind", "channel", "band"}
 
 
 def overlap_counts(rows, since, until, bucket):
@@ -114,7 +114,7 @@ def create_app(cfg, store):
 
     # ----------------------------------------------------------------- devices
     def device_filters(kind=None, active=0, q=None, vendor=None, ssid=None, probe=None, bssid=None,
-                       channel=None, randomized=None, connected=0):
+                       channel=None, randomized=None, connected=0, band=None):
         where, params = [], []
         if kind:
             ks = [k for k in kind.split(",") if k in KINDS]
@@ -146,6 +146,9 @@ def create_app(cfg, store):
         if channel is not None:
             where.append("d.channel = ?")
             params.append(channel)
+        if band:
+            where.append("d.band = ?")
+            params.append(band)
         if randomized is not None:
             where.append("d.randomized = ?")
             params.append(int(randomized))
@@ -156,9 +159,10 @@ def create_app(cfg, store):
     @app.get("/api/devices")
     def devices(kind: str = None, active: int = 0, q: str = None, vendor: str = None, ssid: str = None,
                 probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
-                connected: int = 0, sort: str = "last_seen", order: str = "desc", limit: int = 100,
+                connected: int = 0, band: str = None, sort: str = "last_seen", order: str = "desc", limit: int = 100,
                 offset: int = 0):
-        where, params = device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected)
+        where, params = device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected,
+                                       band)
         sort = sort if sort in SORTABLE else "last_seen"
         order = "ASC" if order.lower() == "asc" else "DESC"
         limit = max(1, min(limit, 1000))
@@ -190,12 +194,12 @@ def create_app(cfg, store):
                 "SUM(s.end_ts-s.start_ts) total, MIN(s.start_ts) first, MAX(s.end_ts) last, MAX(s.open) connected "
                 "FROM sessions s LEFT JOIN devices d ON d.mac=s.mac WHERE s.type='assoc' AND s.peer=? "
                 "GROUP BY s.mac ORDER BY connected DESC, last DESC", (mac,))
-            d["siblings"] = rows("SELECT mac, channel, last_seen, last_rssi, vendor FROM devices "
+            d["siblings"] = rows("SELECT mac, channel, band, last_seen, last_rssi, vendor FROM devices "
                                  "WHERE kind='ap' AND ssid=? AND mac != ? ORDER BY last_seen DESC", (d["ssid"], mac)) \
                 if d["ssid"] else []
         else:
             d["peers"] = rows(
-                "SELECT s.peer AS mac, a.kind, a.ssid, a.vendor, a.channel, COUNT(*) sessions, "
+                "SELECT s.peer AS mac, a.kind, a.ssid, a.vendor, a.channel, a.band, COUNT(*) sessions, "
                 "SUM(s.end_ts-s.start_ts) total, MIN(s.start_ts) first, MAX(s.end_ts) last, MAX(s.open) connected "
                 "FROM sessions s LEFT JOIN devices a ON a.mac=s.peer WHERE s.type='assoc' AND s.mac=? "
                 "GROUP BY s.peer ORDER BY connected DESC, last DESC", (mac,))
@@ -256,7 +260,8 @@ def create_app(cfg, store):
         out = {"days": days}
         out["vendors"] = rows("SELECT COALESCE(vendor,'Unknown') vendor, kind, COUNT(*) n FROM devices "
                               "WHERE last_seen>=? GROUP BY vendor, kind ORDER BY n DESC", (since,))
-        ssids = rows("SELECT ssid, COUNT(*) aps, GROUP_CONCAT(DISTINCT channel) channels, "
+        ssids = rows("SELECT ssid, COUNT(*) aps, GROUP_CONCAT(DISTINCT CASE band WHEN '6' THEN '6G:' || channel "
+                     "ELSE channel END) channels, GROUP_CONCAT(DISTINCT band) bands, "
                      "GROUP_CONCAT(DISTINCT enc) enc, MAX(last_rssi) rssi FROM devices "
                      "WHERE kind='ap' AND ssid IS NOT NULL AND ssid != '' AND last_seen>=? GROUP BY ssid", (since,))
         clients = {r["ssid"]: r for r in rows(
@@ -269,8 +274,11 @@ def create_app(cfg, store):
         out["probes"] = rows("SELECT ssid, COUNT(DISTINCT mac) clients, SUM(count) frames, "
                              "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "
                              "FROM probes p WHERE last_seen>=? GROUP BY ssid ORDER BY clients DESC LIMIT 50", (since,))
-        out["channels"] = rows("SELECT channel, COUNT(*) aps FROM devices WHERE kind='ap' AND channel IS NOT NULL "
-                               "AND last_seen>=? GROUP BY channel ORDER BY channel", (since,))
+        out["channels"] = rows("SELECT channel, COALESCE(band, CASE WHEN channel <= 14 THEN '2.4' ELSE '5' END) AS b, "
+                               "COUNT(*) aps FROM devices WHERE kind='ap' AND channel IS NOT NULL AND last_seen>=? "
+                               "GROUP BY b, channel ORDER BY b = '6', b = '5', channel", (since,))
+        out["bands"] = rows("SELECT band, kind, COUNT(*) n FROM devices WHERE band IS NOT NULL AND last_seen>=? "
+                            "GROUP BY band, kind", (since,))
         hourly = rows("SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT s.mac, d.kind, "
                       "((s.minute - ?) % 86400) / 3600 h, (s.minute - ?) / 86400 day FROM samples s "
                       "JOIN devices d ON d.mac=s.mac WHERE s.minute>=?) GROUP BY h, kind", (off, off, since))
@@ -289,7 +297,7 @@ def create_app(cfg, store):
             "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s LEFT JOIN devices d ON d.mac=s.mac "
             "WHERE s.type='assoc' AND s.end_ts>=? GROUP BY s.mac ORDER BY secs DESC LIMIT 15", (now, since, since))
         out["top_aps"] = rows(
-            "SELECT s.peer mac, a.ssid, a.channel, a.vendor, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions, "
+            "SELECT s.peer mac, a.ssid, a.channel, a.band, a.vendor, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions, "
             "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s JOIN devices a ON a.mac=s.peer "
             "WHERE s.type='assoc' AND s.end_ts>=? AND a.kind='ap' GROUP BY s.peer ORDER BY clients DESC LIMIT 15",
             (now, since, since))
@@ -331,7 +339,7 @@ def create_app(cfg, store):
 
     @app.get("/api/export/devices.csv")
     def export_devices():
-        cols = ["mac", "kind", "vendor", "name", "ssid", "channel", "enc", "bssid", "randomized", "packets",
+        cols = ["mac", "kind", "vendor", "name", "ssid", "channel", "band", "freq", "enc", "bssid", "randomized", "packets",
                 "last_rssi", "best_rssi", "first_seen", "last_seen"]
         return _csv("devices.csv", cols, rows("SELECT * FROM devices ORDER BY last_seen DESC"))
 

@@ -15,6 +15,7 @@ services:
     environment:
       WIFI_INTERFACES: ${WIFI_INTERFACES:-}
       WIFI_CHANNELS: ${WIFI_CHANNELS:-}
+      WIFI_REGDOMAIN: ${WIFI_REGDOMAIN:-}
       BT_DEVICES: ${BT_DEVICES:-}
       WEB_PORT: ${WEB_PORT:-8080}
       DEMO_MODE: ${DEMO_MODE:-0}

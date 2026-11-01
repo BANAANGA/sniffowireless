@@ -1,6 +1,7 @@
 """802.11 monitor-mode capture: monitor setup, channel hopping and frame parsing."""
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -10,6 +11,7 @@ from scapy.layers.dot11 import (Dot11, Dot11AssoResp, Dot11Beacon, Dot11Deauth, 
                                 Dot11Elt, Dot11ProbeResp, Dot11ReassoResp, RadioTap)
 
 from . import status
+from .config import band_of, chan_label, freq_to_channel
 
 conf.verb = 0
 log = logging.getLogger("yolo.wifi")
@@ -24,20 +26,6 @@ def is_unicast(mac):
         return not (int(mac[0:2], 16) & 0x01)
     except ValueError:
         return False
-
-
-def freq_to_channel(f):
-    if not f:
-        return None
-    if f == 2484:
-        return 14
-    if 2412 <= f <= 2472:
-        return (f - 2407) // 5
-    if 5000 <= f <= 5900:
-        return (f - 5000) // 5
-    if 5955 <= f <= 7115:
-        return (f - 5950) // 5
-    return None
 
 
 def decode_ssid(raw):
@@ -89,17 +77,20 @@ def parse_frame(pkt):
     a2 = d.addr2.lower() if d.addr2 else None
     a3 = d.addr3.lower() if d.addr3 else None
     ch = freq_to_channel(freq)
+    band = band_of(freq)
     out = []
 
     def client(mac, bssid=None, frame=None, r=None, **kw):
         if is_unicast(mac) and mac != bssid:
             out.append({"t": "wifi_client", "ts": ts, "mac": mac, "bssid": bssid, "frame": frame,
-                        "rssi": r, "freq": freq, **kw})
+                        "rssi": r, "freq": freq, "band": band, **kw})
 
     def ap(mac, r=None, **kw):
         if is_unicast(mac):
-            out.append({"t": "wifi_ap", "ts": ts, "mac": mac, "rssi": r, "freq": freq,
-                        "channel": kw.pop("channel", None) or ch, **kw})
+            beacon_ch = kw.pop("channel", None)
+            out.append({"t": "wifi_ap", "ts": ts, "mac": mac, "rssi": r, "freq": freq, "band": band,
+                        # 6 GHz beacons carry no DS Parameter Set; the tuned frequency is authoritative there.
+                        "channel": ch if band == "6" else (beacon_ch or ch), **kw})
 
     if d.type == 0:
         st = d.subtype
@@ -212,9 +203,45 @@ def ensure_monitor(iface, allow_change=True):
     return mon
 
 
-def set_channel(iface, ch):
-    rc, out = run_cmd("iw", "dev", iface, "set", "channel", str(ch))
+def supported_freqs(iface):
+    """Frequencies (MHz) the adapter's phy can tune to, or None if it can't be determined."""
+    try:
+        phy = os.path.basename(os.readlink(f"/sys/class/net/{iface}/phy80211"))
+    except OSError:
+        return None
+    rc, out = run_cmd("iw", "phy", phy, "info")
+    if rc != 0:
+        return None
+    freqs = set()
+    for line in out.splitlines():
+        m = re.match(r"\s*\* (\d+)(?:\.\d+)? MHz \[\d+\](.*)", line)
+        if m and "disabled" not in m.group(2):
+            freqs.add(int(m.group(1)))
+    return freqs or None
+
+
+def assign_channels(freqs, ifaces, supported):
+    """Spread frequencies over adapters, giving each one only to adapters that support it."""
+    plan = {i: [] for i in ifaces}
+    for f in freqs:
+        able = [i for i in ifaces if supported.get(i) is None or f in supported[i]]
+        if able:
+            plan[min(able, key=lambda i: len(plan[i]))].append(f)
+    return plan
+
+
+def set_freq(iface, freq):
+    # Tuning by frequency works for every band and avoids 2.4 / 6 GHz channel-number clashes.
+    rc, out = run_cmd("iw", "dev", iface, "set", "freq", str(freq))
     return rc == 0, out
+
+
+def set_regdomain(country):
+    rc, out = run_cmd("iw", "reg", "set", country)
+    if rc != 0:
+        log.warning("Could not set regulatory domain %s: %s", country, out)
+    else:
+        log.info("Regulatory domain set to %s", country)
 
 
 class WifiSensor:
@@ -224,7 +251,9 @@ class WifiSensor:
         self.mon = None
         self.packets = 0
         self.stop = None
-        status.register(self.name, type="wifi", iface=iface, channels=self.channels, channel=None)
+        status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
+                        channels=[chan_label(f) for f in self.channels],
+                        bands=sorted({band_of(f) for f in self.channels}))
 
     def start(self, stop):
         self.stop = stop
@@ -258,30 +287,32 @@ class WifiSensor:
             if not self.mon:
                 self.stop.wait(1)
                 continue
-            chans = [c for c in self.channels if bad.get(c, 0) < 3]
-            if not chans:
+            freqs = [f for f in self.channels if bad.get(f, 0) < 3]
+            if not freqs:
                 status.update(self.name, error="no usable channels for this adapter")
                 self.stop.wait(10)
                 bad.clear()
                 continue
-            if len(chans) == 1:
-                ok, _ = set_channel(self.mon, chans[0])
-                status.update(self.name, channel=chans[0] if ok else None)
+            if len(freqs) == 1:
+                ok, _ = set_freq(self.mon, freqs[0])
+                status.update(self.name, channel=chan_label(freqs[0]) if ok else None,
+                              band=band_of(freqs[0]) if ok else None)
                 self.stop.wait(30)
                 continue
-            for ch in chans:
+            for f in freqs:
                 if self.stop.is_set() or not self.mon:
                     break
-                ok, out = set_channel(self.mon, ch)
+                ok, out = set_freq(self.mon, f)
                 if ok:
-                    bad.pop(ch, None)
-                    status.update(self.name, channel=ch)
+                    bad.pop(f, None)
+                    status.update(self.name, channel=chan_label(f), band=band_of(f))
                     self.stop.wait(self.cfg.wifi_hop_interval)
                 else:
-                    bad[ch] = bad.get(ch, 0) + 1
-                    if bad[ch] == 3:
-                        log.info("%s: channel %s unsupported, skipping (%s)", self.name, ch, out)
-                    status.update(self.name, skipped=sorted(c for c, n in bad.items() if n >= 3))
+                    bad[f] = bad.get(f, 0) + 1
+                    if bad[f] == 3:
+                        log.info("%s: channel %s (%d MHz) unsupported, skipping (%s)",
+                                 self.name, chan_label(f), f, out)
+                    status.update(self.name, skipped=[chan_label(x) for x in sorted(bad) if bad[x] >= 3])
 
     def _rate_loop(self):
         last, last_t = 0, time.time()

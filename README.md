@@ -2,7 +2,7 @@
 
 A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container. It works like a small Kismet, with one difference: it is built to track **how devices connect over time**. It records which Wi-Fi client was associated with which access point and when. It also records when phones, wearables and other Bluetooth devices come into and leave range. You can drill into all of it from a dark, minimal web UI.
 
-- **Wi-Fi:** passive monitor-mode capture with channel hopping across 2.4 GHz and 5 GHz, on one or more USB adapters
+- **Wi-Fi:** passive monitor-mode capture with channel hopping across 2.4 GHz, 5 GHz and **6 GHz (Wi-Fi 6E/7)**, on one or more USB adapters
 - **Bluetooth:** BLE advertising plus Classic inquiry over a raw HCI socket. No BlueZ daemon is needed inside the container.
 - **Connectivity history:** presence sessions ("visits") for every device, connection sessions for Wi-Fi client→AP links (including roaming between BSSIDs and deauths), and Bluetooth links to the sensor's adapter
 - **Drill-down statistics:** overview → device type → device → sessions; SSID → APs → clients; vendor / channel / probed SSID → devices; per-device signal history, weekly presence heatmap, timeline, peers, events
@@ -60,6 +60,19 @@ You need an adapter whose Linux driver supports **monitor mode**. In-kernel driv
 | Atheros **AR9271** (Alfa AWUS036NHA, TP-Link TL-WN722N **v1**) | 2.4 GHz | `ath9k_htc` | Classic choice, 2.4 GHz only |
 | Ralink **RT5370 / RT3070** | 2.4 GHz | `rt2800usb` | Cheap and works |
 | Realtek **RTL8812AU / RTL8814AU** (Alfa AWUS036ACH / ACS) | 2.4/5 GHz | out-of-tree `aircrack-ng/rtl8812au` | Works, but you build the driver on the host |
+
+### 6 GHz (Wi-Fi 6E / Wi-Fi 7)
+
+To see 6 GHz networks you need a **6E-capable adapter** whose driver allows monitor mode on 6 GHz. The best-supported USB option today is the **MT7921AU** (`mt7921u`, kernel ≥ 5.18; ≥ 6.1 recommended). Some Intel AX210/BE200 PCIe cards also work in monitor mode on recent kernels.
+
+1. **Set your regulatory domain.** Most drivers keep 6 GHz disabled until a country is configured. Set `WIFI_REGDOMAIN=NL` (your two-letter country code), or run `sudo iw reg set NL` on the host.
+2. **Check the adapter can tune 6 GHz.** The command below should list frequencies from 5955 MHz upwards that are not marked `(disabled)`. `(no IR)` is fine, because monitoring is passive.
+   ```bash
+   iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -E "\* (59[5-9][0-9]|6[0-9]{3}|7[01][0-9]{2})"
+   ```
+3. **Add 6 GHz channels.** Use `WIFI_CHANNELS=default,6ghz`, or `all`, which covers 2.4 + 5 GHz + the 6 GHz Preferred Scanning Channels. 6 GHz access points always beacon on one of the 15 PSCs (5, 21, 37 … 229), so `6ghz` finds them with far fewer hops than all 59 channels (`6all`).
+
+yolo reads each adapter's supported frequencies at startup and gives 6 GHz channels only to adapters that can tune them. A 2.4/5 GHz adapter and a 6E adapter can therefore share one channel list. 6 GHz clients nearly always use randomized MACs (WPA3 + MAC privacy are mandatory there), but connection sessions are still tracked per network.
 
 > **Don't use the adapter your host relies on for its own network.** Putting it in monitor mode disconnects it. Use a dedicated USB adapter. Two adapters (for example one locked to 2.4 GHz and one hopping 5 GHz) give much better coverage than one adapter that hops across everything.
 
@@ -212,8 +225,9 @@ All settings are environment variables (put them in `.env`).
 | Variable | Default | Description |
 |---|---|---|
 | `WIFI_INTERFACES` | *(empty)* | Comma-separated Wi-Fi adapters to capture on, e.g. `wlan1,wlan2`. Empty disables Wi-Fi. |
-| `WIFI_CHANNELS` | `default` | `default` (1–13 + 36–48 + 149–165), `all`, `2.4`, `5`, or a list/ranges like `1,6,11,36-48`. With several adapters the list is split between them. |
-| `WIFI_CHANNELS_<iface>` | – | Per-adapter channel list, e.g. `WIFI_CHANNELS_wlan1=1,6,11`. A single channel locks the adapter (no hopping). |
+| `WIFI_CHANNELS` | `default` | Comma-separated presets and channels (see below). With several adapters the list is split between them, and each channel only goes to adapters that support it. |
+| `WIFI_CHANNELS_<iface>` | – | Per-adapter channel list, e.g. `WIFI_CHANNELS_wlan1=1,6,11` or `WIFI_CHANNELS_wlan2=6ghz`. A single channel locks the adapter (no hopping). |
+| `WIFI_REGDOMAIN` | – | Two-letter country code applied with `iw reg set` at startup (e.g. `NL`, `US`, `DE`). Usually required for 6 GHz. |
 | `WIFI_HOP_INTERVAL` | `0.5` | Seconds spent on each channel. |
 | `WIFI_SET_MONITOR` | `1` | Put interfaces in monitor mode automatically. |
 | `BT_DEVICES` | *(empty)* | Bluetooth adapters, e.g. `hci0`. Empty disables Bluetooth. |
@@ -236,12 +250,26 @@ All settings are environment variables (put them in `.env`).
 | `DEMO_MODE` | `0` | Generate synthetic devices. |
 | `DEMO_BACKFILL_HOURS` | `72` | History generated on first demo start. |
 
+**Channel syntax** for `WIFI_CHANNELS` / `WIFI_CHANNELS_<iface>`:
+
+| Token | Meaning |
+|---|---|
+| `default` | 2.4 GHz 1–13 + 5 GHz 36–48, 149–165 |
+| `2.4ghz` (or `2.4`), `5ghz`, `5common` | The whole band / common 5 GHz channels |
+| `6ghz` | 6 GHz Preferred Scanning Channels 5, 21, 37 … 229 (15 channels) |
+| `6all` | All 59 20-MHz 6 GHz channels (1–233) |
+| `all` | 2.4 GHz + all 5 GHz + 6 GHz PSCs |
+| `1,6,11`, `36-48` | Channel numbers: 1–14 are 2.4 GHz, higher numbers 5 GHz; ranges keep valid channels only |
+| `6g:37`, `6g:1-93` | 6 GHz channels (prefix needed, because 6 GHz reuses numbers 1, 5, 9 …) |
+
+Tokens combine, e.g. `WIFI_CHANNELS=1,6,11,5common,6ghz`. A bare `5` or `6` on its own means the whole 5 / 6 GHz band.
+
 ---
 
 ## Using the UI
 
 - **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d), currently connected clients with the network they're on, sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
-- **Devices:** a searchable, sortable list. Filter by type, recency or vendor, and hide randomized MACs. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
+- **Devices:** a searchable, sortable list. Filter by type, recency, band (2.4 / 5 / 6 GHz) or vendor, and hide randomized MACs. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
   - key facts, total time present, visits, average and longest visit, time connected
   - **signal strength** chart (avg plus min–max band)
@@ -250,7 +278,7 @@ All settings are environment variables (put them in `.env`).
   - for APs: **connected clients over time**, the client list, and other BSSIDs with the same SSID
   - for clients: the APs/networks it connected to, with session counts and total time, and the SSIDs it probes for
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
-- **Statistics:** activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
+- **Statistics:** activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
 
 ---
@@ -263,7 +291,7 @@ Interactive docs are at `/api/docs`. Main endpoints:
 |---|---|
 | `GET /api/summary` | Counts per type, recent events |
 | `GET /api/timeline?hours=24` | Active devices per type and connected clients per time bucket |
-| `GET /api/devices?kind=&active=&q=&vendor=&ssid=&probe=&bssid=&channel=&randomized=&connected=&sort=&order=&limit=&offset=` | Device list |
+| `GET /api/devices?kind=&active=&q=&vendor=&ssid=&probe=&bssid=&channel=&band=&randomized=&connected=&sort=&order=&limit=&offset=` | Device list (`band` is `2.4`, `5` or `6`) |
 | `GET /api/devices/{mac}` | Device detail, stats, peers, probes, events |
 | `GET /api/devices/{mac}/rssi?hours=` | Signal history |
 | `GET /api/devices/{mac}/sessions?hours=&as_peer=1` | Visits/connections (`as_peer=1`: client sessions on an AP) |
@@ -283,6 +311,7 @@ Interactive docs are at `/api/docs`. Main endpoints:
 | `interface wlan1 not found` | Check `iw dev` on the host, make sure the container uses `network_mode: host`, and pin the name with udev. |
 | `driver refused monitor mode` | The chipset/driver doesn't support it (common for onboard Broadcom and many Realtek chips with in-kernel drivers). Use an adapter from the table above. |
 | Adapter keeps leaving monitor mode | NetworkManager / wpa_supplicant is managing it. See [step 2](#2-keep-networkmanager--wpa_supplicant-away-from-it). |
+| No 6 GHz networks | Set `WIFI_REGDOMAIN`, add `6ghz` to `WIFI_CHANNELS`, and check `iw phy … info` lists 6 GHz frequencies that aren't `(disabled)`. The startup log says which configured channels each adapter cannot tune. 6 GHz range is short, so move the sensor closer. |
 | Only 2.4 GHz networks show up | The adapter is 2.4 GHz only (channels it can't tune are skipped automatically; see the sensor panel), or 5 GHz APs are out of range. |
 | Few clients compared to APs | Clients transmit far less than APs beacon. Lock one adapter to your busiest channel(s) with `WIFI_CHANNELS_<iface>`, or add a second adapter. |
 | `hci0 is blocked by rfkill` | `sudo rfkill unblock bluetooth` |

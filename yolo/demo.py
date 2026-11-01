@@ -4,6 +4,7 @@ import logging
 import random
 import time
 
+from .config import band_of, ch_to_freq, freq_to_channel
 from .oui import bt_company
 
 log = logging.getLogger("yolo.demo")
@@ -17,14 +18,24 @@ APS = [
     ("00:1d:7e:40:00:06", "Linksys", 11, "OPN", -83, "Cisco-Linksys"),
     ("50:c7:bf:20:00:07", "", 6, "WPA2/PSK", -66, "TP-Link"),
     ("f4:f5:d8:50:00:08", "Bakery Guest", 1, "OPN", -80, "Google"),
+    ("24:a4:3c:10:00:09", "HomeNet", ("6", 37), "WPA3/SAE", -58, "Ubiquiti"),
 ]
+
+
+def _freq(ch):
+    return ch_to_freq(ch[1], ch[0]) if isinstance(ch, tuple) else ch_to_freq(ch)
+
+
+def _radio(ch):
+    f = _freq(ch)
+    return {"freq": f, "channel": freq_to_channel(f), "band": band_of(f)}
 
 # mac, vendor, schedule, preferred AP index(es), base rssi, probes
 CLIENTS = [
-    ("a4:83:e7:01:00:01", "Apple", "resident", (0, 1), -50, ["HomeNet", "Office-WLAN"]),
+    ("a4:83:e7:01:00:01", "Apple", "resident", (0, 1, 8), -50, ["HomeNet", "Office-WLAN"]),
     ("a4:83:e7:01:00:02", "Apple", "worker", (0, 1), -58, ["HomeNet", "eduroam"]),
     ("5c:0a:5b:01:00:03", "Samsung", "evening", (0, 1), -61, ["HomeNet"]),
-    ("a0:a8:cd:01:00:04", "Intel", "worker", (1,), -47, ["HomeNet", "KPN"]),
+    ("a0:a8:cd:01:00:04", "Intel", "worker", (1, 8), -47, ["HomeNet", "KPN"]),
     ("b8:27:eb:01:00:05", "Raspberry Pi", "always", (0,), -39, []),
     ("24:0a:c4:01:00:06", "Espressif", "always", (2,), -52, []),
     ("24:0a:c4:01:00:07", "Espressif", "always", (2,), -63, []),
@@ -100,7 +111,7 @@ class DemoGenerator:
         out = []
         for mac, ssid, ch, enc, base, vendor in APS:
             out.append({"t": "wifi_ap", "ts": t + rng.random() * 50, "mac": mac, "ssid": ssid or None,
-                        "channel": ch, "enc": enc, "rssi": self._rssi(base), "vendor": vendor,
+                        **_radio(ch), "enc": enc, "rssi": self._rssi(base), "vendor": vendor,
                         "extra": {"hidden": True} if not ssid else None})
         for mac, vendor, sched, aps, base, probes in CLIENTS:
             if not present(sched, mac, t):
@@ -109,7 +120,7 @@ class DemoGenerator:
             bssid = APS[ap_i][0]
             for _ in range(rng.randint(2, 6)):
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "bssid": bssid,
-                            "frame": "data", "rssi": self._rssi(base), "channel": APS[ap_i][2], "vendor": vendor})
+                            "frame": "data", "rssi": self._rssi(base), **_radio(APS[ap_i][2]), "vendor": vendor})
             if probes and rng.random() < 0.05:
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",
                             "probe": rng.choice(probes), "rssi": self._rssi(base), "vendor": vendor})
