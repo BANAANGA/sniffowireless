@@ -1,0 +1,23 @@
+services:
+  yolo:
+    build: .
+    image: yolo:latest
+    container_name: yolo
+    restart: unless-stopped
+    # Host networking is required: monitor-mode Wi-Fi interfaces and HCI Bluetooth
+    # adapters live in the host's network namespace.
+    network_mode: host
+    # Needed to switch adapters into monitor mode, change channels and open raw HCI sockets.
+    privileged: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WIFI_INTERFACES: ${WIFI_INTERFACES:-}
+      WIFI_CHANNELS: ${WIFI_CHANNELS:-}
+      BT_DEVICES: ${BT_DEVICES:-}
+      WEB_PORT: ${WEB_PORT:-8080}
+      DEMO_MODE: ${DEMO_MODE:-0}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data:/data

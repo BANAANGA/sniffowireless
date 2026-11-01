@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>yolo</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='%23e6e7e9'/%3E%3Ccircle cx='8' cy='8' r='6.5' fill='none' stroke='%23e6e7e9' stroke-opacity='.4'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/"><span class="dot"></span>yolo</a>
+  <nav>
+    <a href="#/" data-nav="/">Overview</a>
+    <a href="#/devices" data-nav="/devices">Devices</a>
+    <a href="#/stats" data-nav="/stats">Statistics</a>
+    <a href="#/events" data-nav="/events">Events</a>
+  </nav>
+  <span id="live" class="live" title="Sensor status"></span>
+</header>
+<main id="app"></main>
+<script src="/vendor/chart.umd.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js'"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
