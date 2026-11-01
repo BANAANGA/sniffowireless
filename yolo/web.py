@@ -18,7 +18,7 @@ from .store import connect
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
-            "name", "ssid", "kind", "channel", "band"}
+            "name", "ssid", "kind", "channel", "band", "brand", "model", "dev_type", "os", "wifi_gen", "era"}
 
 
 def overlap_counts(rows, since, until, bucket):
@@ -64,8 +64,11 @@ def create_app(cfg, store):
         return r[0] if r else None
 
     def _dev(d):
-        if d and isinstance(d.get("extra"), str):
-            d["extra"] = json.loads(d["extra"] or "{}")
+        if d:
+            for k in ("extra", "ident"):
+                if isinstance(d.get(k), str):
+                    d[k] = json.loads(d[k] or "null")
+            d["extra"] = d.get("extra") or {}
         return d
 
     # ---------------------------------------------------------------- overview
@@ -114,7 +117,8 @@ def create_app(cfg, store):
 
     # ----------------------------------------------------------------- devices
     def device_filters(kind=None, active=0, q=None, vendor=None, ssid=None, probe=None, bssid=None,
-                       channel=None, randomized=None, connected=0, band=None):
+                       channel=None, randomized=None, connected=0, band=None, dev_type=None, brand=None,
+                       os=None, wifi_gen=None, era=None, fp=None):
         where, params = [], []
         if kind:
             ks = [k for k in kind.split(",") if k in KINDS]
@@ -125,8 +129,9 @@ def create_app(cfg, store):
             params.append(time.time() - active)
         if q:
             like = f"%{q.strip()}%"
-            where.append("(d.mac LIKE ? OR d.name LIKE ? OR d.ssid LIKE ? OR d.vendor LIKE ?)")
-            params += [like] * 4
+            where.append("(d.mac LIKE ? OR d.name LIKE ? OR d.ssid LIKE ? OR d.vendor LIKE ? OR d.brand LIKE ? "
+                         "OR d.model LIKE ?)")
+            params += [like] * 6
         if vendor:
             if vendor == "Unknown":
                 where.append("d.vendor IS NULL")
@@ -149,6 +154,20 @@ def create_app(cfg, store):
         if band:
             where.append("d.band = ?")
             params.append(band)
+        for col, val in (("dev_type", dev_type), ("brand", brand), ("os", os), ("fp_hash", fp)):
+            if val == "Unknown":
+                where.append(f"d.{col} IS NULL")
+            elif val:
+                where.append(f"d.{col} = ?")
+                params.append(val)
+        if wifi_gen is not None:
+            where.append("d.wifi_gen = ?" if wifi_gen else "d.wifi_gen IS NULL")
+            if wifi_gen:
+                params.append(wifi_gen)
+        if era is not None:
+            where.append("d.era = ?" if era else "d.era IS NULL")
+            if era:
+                params.append(era)
         if randomized is not None:
             where.append("d.randomized = ?")
             params.append(int(randomized))
@@ -159,10 +178,11 @@ def create_app(cfg, store):
     @app.get("/api/devices")
     def devices(kind: str = None, active: int = 0, q: str = None, vendor: str = None, ssid: str = None,
                 probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
-                connected: int = 0, band: str = None, sort: str = "last_seen", order: str = "desc", limit: int = 100,
+                connected: int = 0, band: str = None, dev_type: str = None, brand: str = None, os: str = None,
+                wifi_gen: int = None, era: int = None, fp: str = None, sort: str = "last_seen", order: str = "desc", limit: int = 100,
                 offset: int = 0):
         where, params = device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected,
-                                       band)
+                                       band, dev_type, brand, os, wifi_gen, era, fp)
         sort = sort if sort in SORTABLE else "last_seen"
         order = "ASC" if order.lower() == "asc" else "DESC"
         limit = max(1, min(limit, 1000))
@@ -207,6 +227,8 @@ def create_app(cfg, store):
         d["probes"] = rows("SELECT ssid, first_seen, last_seen, count, "
                            "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "
                            "FROM probes p WHERE mac=? ORDER BY last_seen DESC", (mac,))
+        d["fp_peers"] = one("SELECT COUNT(*) n FROM devices WHERE fp_hash=? AND mac != ?",
+                            (d["fp_hash"], mac))["n"] if d.get("fp_hash") else 0
         d["events"] = rows("SELECT e.*, p.ssid peer_ssid FROM events e LEFT JOIN devices p ON p.mac=e.peer "
                            "WHERE e.mac=? OR e.peer=? ORDER BY e.id DESC LIMIT 200", (mac, mac))
         d["now"] = time.time()
@@ -304,6 +326,13 @@ def create_app(cfg, store):
         out["randomized"] = rows("SELECT kind, randomized, COUNT(*) n FROM devices WHERE last_seen>=? "
                                  "GROUP BY kind, randomized", (since,))
         out["events"] = rows("SELECT type, COUNT(*) n FROM events WHERE ts>=? GROUP BY type ORDER BY n DESC", (since,))
+        for col in ("dev_type", "brand", "os", "wifi_gen", "era"):
+            out[col] = rows(f"SELECT {col} v, kind, COUNT(*) n FROM devices WHERE last_seen>=? GROUP BY {col}, kind "
+                            f"ORDER BY n DESC", (since,))
+        out["fingerprints"] = rows(
+            "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
+            "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
+            "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT 15", (since,))
         return out
 
     @app.get("/api/events")
@@ -339,7 +368,8 @@ def create_app(cfg, store):
 
     @app.get("/api/export/devices.csv")
     def export_devices():
-        cols = ["mac", "kind", "vendor", "name", "ssid", "channel", "band", "freq", "enc", "bssid", "randomized", "packets",
+        cols = ["mac", "kind", "vendor", "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "name", "ssid",
+                "channel", "band", "freq", "enc", "bssid", "randomized", "packets",
                 "last_rssi", "best_rssi", "first_seen", "last_seen"]
         return _csv("devices.csv", cols, rows("SELECT * FROM devices ORDER BY last_seen DESC"))
 

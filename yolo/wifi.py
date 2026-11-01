@@ -12,6 +12,7 @@ from scapy.layers.dot11 import (Dot11, Dot11AssoResp, Dot11Beacon, Dot11Deauth, 
 
 from . import status
 from .config import band_of, chan_label, freq_to_channel
+from .identify import wifi_fingerprint
 
 conf.verb = 0
 log = logging.getLogger("yolo.wifi")
@@ -49,6 +50,31 @@ def _elt_ssid(pkt):
     return None
 
 
+def _elts(pkt):
+    out = []
+    elt = pkt.getlayer(Dot11Elt)
+    while elt is not None:
+        out.append((elt.ID, bytes(elt.info or b"")))
+        elt = elt.payload.getlayer(Dot11Elt) if elt.payload else None
+    return out
+
+
+class FingerprintGate:
+    """Only fingerprint a given (device, frame source) every `interval` seconds: beacons arrive ~10/s."""
+
+    def __init__(self, interval=600):
+        self.interval, self.seen = interval, {}
+
+    def __call__(self, mac, src, ts):
+        k = (mac, src)
+        if ts - self.seen.get(k, 0) < self.interval:
+            return False
+        if len(self.seen) > 100_000:
+            self.seen.clear()
+        self.seen[k] = ts
+        return True
+
+
 def _radio(pkt):
     rssi = freq = None
     if pkt.haslayer(RadioTap):
@@ -66,8 +92,12 @@ def _radio(pkt):
     return rssi, freq
 
 
-def parse_frame(pkt):
-    """Turn one captured 802.11 frame into zero or more store observations."""
+def parse_frame(pkt, fp_gate=None):
+    """Turn one captured 802.11 frame into zero or more store observations.
+
+    Management frames carrying capability elements also get a device fingerprint ('fp'),
+    subject to `fp_gate(mac, source, ts)` so busy devices aren't re-parsed on every frame.
+    """
     if not pkt.haslayer(Dot11):
         return []
     d = pkt[Dot11]
@@ -79,6 +109,12 @@ def parse_frame(pkt):
     ch = freq_to_channel(freq)
     band = band_of(freq)
     out = []
+
+    def fingerprint(mac, src):
+        if not is_unicast(mac) or (fp_gate and not fp_gate(mac, src, ts)):
+            return None
+        fp = wifi_fingerprint(_elts(pkt))
+        return {"wifi": fp, "src": src} if fp else None
 
     def client(mac, bssid=None, frame=None, r=None, **kw):
         if is_unicast(mac) and mac != bssid:
@@ -106,14 +142,15 @@ def parse_frame(pkt):
             crypto = stats.get("crypto") or set()
             ap(a2 or a3, rssi, ssid=ssid or None, channel=stats.get("channel"),
                enc=",".join(sorted(crypto)) or None,
-               extra={"hidden": True} if st == 8 and ssid == "" else None)
+               extra={"hidden": True} if st == 8 and ssid == "" else None,
+               fp=fingerprint(a2 or a3, "beacon"))
             if st == 5:
                 client(a1, None, "probe_resp")
         elif st == 4:  # probe request
             ssid = _elt_ssid(pkt)
-            client(a2, None, "probe", rssi, probe=ssid or None)
+            client(a2, None, "probe", rssi, probe=ssid or None, fp=fingerprint(a2, "probe"))
         elif st in (0, 2):  # (re)association request: client -> AP
-            client(a2, a1, "assoc", rssi)
+            client(a2, a1, "assoc", rssi, fp=fingerprint(a2, "assoc"))
             ap(a1)
         elif st in (1, 3):  # (re)association response: AP -> client
             layer = pkt.getlayer(Dot11AssoResp) or pkt.getlayer(Dot11ReassoResp)
@@ -250,6 +287,7 @@ class WifiSensor:
         self.name = f"wifi:{iface}"
         self.mon = None
         self.packets = 0
+        self.fp_gate = FingerprintGate()
         self.stop = None
         status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
                         channels=[chan_label(f) for f in self.channels],
@@ -263,7 +301,7 @@ class WifiSensor:
     def _handle(self, pkt):
         self.packets += 1
         try:
-            for o in parse_frame(pkt):
+            for o in parse_frame(pkt, self.fp_gate):
                 self.store.put(o)
         except Exception:
             log.debug("Failed to parse frame", exc_info=True)

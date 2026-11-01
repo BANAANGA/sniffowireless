@@ -176,3 +176,7 @@ td.trunc { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 760px) { .live { display: none; } .filters input[type=search] { width: 100%; } .page-head .seg { overflow-x: auto; max-width: 100%; } }
+.conf { font-size: 10px; font-weight: 400; padding: 0 5px; border-radius: 3px; border: 1px solid var(--border-2); color: var(--faint); vertical-align: 1px; margin-left: 4px; }
+.conf-high { color: var(--good); border-color: rgba(62,207,142,.35); }
+.conf-medium { color: var(--warn); border-color: rgba(245,184,74,.35); }
+details summary::marker { color: var(--faint); }

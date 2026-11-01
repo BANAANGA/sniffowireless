@@ -67,6 +67,24 @@ const num = n => (n ?? 0).toLocaleString();
 const BANDS = { '2.4': { label: '2.4 GHz', color: '#4cc2ff' }, '5': { label: '5 GHz', color: '#8fd8ff' }, '6': { label: '6 GHz', color: '#d2efff' } };
 // Fixed order: JS would otherwise list the integer-like keys '5' and '6' before '2.4'.
 const BAND_LIST = ['2.4', '5', '6'].map(b => [b, BANDS[b]]);
+const DEV_TYPES = {
+  phone: 'Phone', tablet: 'Tablet', laptop: 'Laptop', desktop: 'Desktop PC', computer: 'Computer', watch: 'Smartwatch',
+  wearable: 'Wearable', headphones: 'Headphones', speaker: 'Speaker', tv: 'TV', streaming: 'Streaming device',
+  console: 'Game console', controller: 'Game controller', printer: 'Printer', camera: 'Camera', tag: 'Tracker tag',
+  sensor: 'Sensor', iot: 'IoT device', light: 'Smart light', input: 'Keyboard / mouse', car: 'Car',
+  router: 'Router / access point', hotspot: 'Mobile hotspot', smart_home: 'Smart home', beacon: 'Beacon',
+  sbc: 'Single-board computer', media: 'Media device', network: 'Network device',
+};
+const genLabel = g => g == null ? 'Unknown' : g === 66 ? 'Wi-Fi 6E' : g === 3 ? 'Legacy a/b/g' : `Wi-Fi ${g}`;
+const eraLabel = y => y == null ? 'Unknown' : y <= 2003 ? 'before ~2010' : `${y} or newer`;
+const typeLabel = t => t ? (DEV_TYPES[t] || t) : 'Unknown';
+const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v) };
+function identCell(x) {
+  const id = x.ident || {};
+  const label = id.label || (x.vendor ? esc(x.vendor) : '');
+  const gen = x.wifi_gen ? ` <span class="tag">${genLabel(x.wifi_gen).replace('Wi-Fi ', 'Wi-Fi\u00a0')}</span>` : '';
+  return (label ? esc(label) : '<span class="faint">—</span>') + gen;
+}
 function chText(ch, band) {
   if (ch == null) return '<span class="faint">—</span>';
   return band ? `${ch}<span class="faint"> · ${band}G</span>` : `${ch}`;
@@ -280,7 +298,8 @@ function linkRows(root) {
 }
 
 // ------------------------------------------------------------------ devices
-const FILTER_LABELS = { vendor: 'Vendor', ssid: 'SSID', probe: 'Probed', bssid: 'Connected to', channel: 'Channel', connected: 'Connected now' };
+const FILTER_LABELS = { vendor: 'Vendor', brand: 'Brand', dev_type: 'Device type', os: 'OS', wifi_gen: 'Wi-Fi', era: 'Age', fp: 'Fingerprint',
+  ssid: 'SSID', probe: 'Probed', bssid: 'Connected to', channel: 'Channel', connected: 'Connected now' };
 
 async function viewDevices(params) {
   const st = Object.fromEntries(params.entries());
@@ -289,14 +308,15 @@ async function viewDevices(params) {
   const offset = +(st.offset || 0), limit = 100;
   const chips = Object.keys(FILTER_LABELS).filter(k => st[k]).map(k => {
     const rest = { ...st }; delete rest[k]; delete rest.offset;
-    return `<span class="chip">${FILTER_LABELS[k]}${k === 'connected' ? '' : ': <b>' + esc(st[k]) + '</b>'}<a href="${hrefWith('/devices', rest)}">✕</a></span>`;
+    return `<span class="chip">${FILTER_LABELS[k]}${k === 'connected' ? '' : ': <b>' + esc(FILTER_FMT[k] ? FILTER_FMT[k](st[k]) : st[k]) + '</b>'}<a href="${hrefWith('/devices', rest)}">✕</a></span>`;
   }).join('');
   app.innerHTML = `
     <div class="page-head"><div><h1>Devices</h1><div class="sub" id="count">&nbsp;</div></div>
       <a class="btn muted" href="/api/export/devices.csv">Export CSV</a></div>
     <div class="filters">
-      <input type="search" id="q" placeholder="Search MAC, name, SSID, vendor…" value="${esc(st.q || '')}">
+      <input type="search" id="q" placeholder="Search MAC, name, SSID, brand, model…" value="${esc(st.q || '')}">
       <select id="kind"><option value="">All types</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+      <select id="devtype"><option value="">All device types</option>${Object.entries(DEV_TYPES).map(([k, l]) => `<option value="${k}" ${st.dev_type === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="active">${[['', 'Any time'], ['300', 'Active (5 min)'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']].map(([v, l]) => `<option value="${v}" ${String(st.active || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="band"><option value="">All bands</option>${BAND_LIST.map(([b, m]) => `<option value="${b}" ${st.band === b ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <label class="check"><input type="checkbox" id="hiderand" ${st.randomized === '0' ? 'checked' : ''}>Hide randomized MACs</label>
@@ -313,13 +333,14 @@ async function viewDevices(params) {
   document.getElementById('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => go({ q: e.target.value }), 350); });
   document.getElementById('kind').addEventListener('change', e => go({ kind: e.target.value }));
   document.getElementById('active').addEventListener('change', e => go({ active: e.target.value }));
+  document.getElementById('devtype').addEventListener('change', e => go({ dev_type: e.target.value }));
   document.getElementById('band').addEventListener('change', e => go({ band: e.target.value }));
   document.getElementById('hiderand').addEventListener('change', e => go({ randomized: e.target.checked ? '0' : '' }));
   const qi = document.getElementById('q');
   if (st.q) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); }
 
   const cols = [
-    ['kind', 'Type'], ['mac', 'Address'], ['name', 'Name / SSID'], ['vendor', 'Vendor'], [null, 'Connection'],
+    ['kind', 'Type'], ['mac', 'Address'], ['name', 'Name / SSID'], ['brand', 'Identified as'], [null, 'Connection'],
     ['channel', 'Ch'], ['last_rssi', 'Signal'], ['packets', 'Frames', 'num'], ['first_seen', 'First seen', 'num'], ['last_seen', 'Last seen', 'num'],
   ];
   async function load() {
@@ -342,7 +363,7 @@ async function viewDevices(params) {
         <td>${kindBadge(x.kind)}</td>
         <td class="mono"><span class="state-dot ${active ? 'on' : ''}"></span>${esc(x.mac)}${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}</td>
         <td class="trunc">${label ? esc(label) : '<span class="faint">—</span>'}${x.kind === 'ap' && x.enc ? ` <span class="tag ${x.enc.includes('OPN') ? 'bad' : ''}">${esc(x.enc.replace(/\/PSK|\/SAE/g, ''))}</span>` : ''}</td>
-        <td class="trunc muted">${esc(x.vendor || '—')}</td>
+        <td class="trunc muted" style="max-width:300px">${identCell(x)}</td>
         <td>${conn}</td>
         <td class="muted">${chText(x.channel, x.band)}</td>
         <td>${rssiBars(x.last_rssi)}</td>
@@ -372,7 +393,8 @@ async function viewDevice(mac, params) {
   const d = await api(`/api/devices/${enc(mac)}`);
   const m = KINDS[d.kind] || { label: d.kind, color: FAINT };
   const isAp = d.kind === 'ap', isBt = d.kind === 'ble' || d.kind === 'bt_classic';
-  const title = devLabel(d) || d.vendor || d.mac;
+  const idn = d.ident || {};
+  const title = devLabel(d) || idn.label || d.vendor || d.mac;
   const ex = d.extra || {};
   const facts = [
     ['Address', `<span class="mono">${esc(d.mac)}</span>`],
@@ -407,6 +429,7 @@ async function viewDevice(mac, params) {
       ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div>
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
+      ${identPanel(d)}
       <section class="panel span-2"><header><h2>Signal strength</h2><span class="legend"><span><span class="swatch" style="background:${m.color}"></span>avg</span><span><span class="swatch" style="background:${m.color}44"></span>min–max</span></span></header>
         <div class="body"><div class="chart-box"><canvas id="rssi"></canvas></div></div></section>
       <section class="panel"><header><h2>Weekly pattern</h2><span class="faint">minutes present, last 4 weeks</span></header><div class="body" id="heat"></div></section>
@@ -571,7 +594,12 @@ async function viewStats(params) {
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
     <section class="panel"><header><h2>Session durations</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
-    <section class="panel"><header><h2>Top vendors</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="vendors"></ul></div></section>
+    <section class="panel"><header><h2>Device types</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
+    <section class="panel"><header><h2>Brands</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
+    <section class="panel"><header><h2>Wi-Fi generation</h2><span class="faint">newest standard supported</span></header><div class="body"><ul class="bars-list" id="st-gen"></ul></div></section>
+    <section class="panel"><header><h2>Estimated age</h2><span class="faint">earliest possible year</span></header><div class="body"><ul class="bars-list" id="st-era"></ul></div></section>
+    <section class="panel"><header><h2>Operating systems</h2></header><div class="body"><ul class="bars-list" id="st-os"></ul></div></section>
+    <section class="panel"><header><h2>Shared fingerprints</h2><span class="faint">same probe layout = same model / OS</span></header><div class="body flush table-wrap" id="st-fp"></div></section>
     <section class="panel"><header><h2>AP channels</h2><span class="legend" id="bandlegend"></span></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
     <section class="panel"><header><h2>Events</h2></header><div class="body flush table-wrap" id="evtypes"></div></section>
     <section class="panel span-3"><header><h2>Networks (SSIDs)</h2><span class="faint">${s.ssids.length} seen</span></header><div class="body flush table-wrap" id="ssids"></div></section>
@@ -623,22 +651,37 @@ async function viewStats(params) {
       <div class="n">${num(tot)}</div></li>`).join('')}</ul>
     <p class="faint" style="margin:12px 0 0">Randomized (locally administered / private) addresses rotate, so one physical device can appear as many entries. Connections usually keep a stable per-network address.</p>`;
 
-  // vendors
-  const drawVendors = kind => {
+  // identification breakdowns
+  const barList = (id, rows, label, filterKey, kind = '', limit = 12, order = null) => {
     const agg = {};
-    s.vendors.filter(v => !kind || v.kind === kind).forEach(v => {
-      agg[v.vendor] = agg[v.vendor] || { n: 0, kinds: {} };
-      agg[v.vendor].n += v.n; agg[v.vendor].kinds[v.kind] = (agg[v.vendor].kinds[v.kind] || 0) + v.n;
+    rows.filter(r => !kind || r.kind === kind).forEach(r => {
+      const k = r.v == null ? '' : String(r.v);
+      agg[k] = agg[k] || { n: 0, kinds: {} };
+      agg[k].n += r.n; agg[k].kinds[r.kind] = (agg[k].kinds[r.kind] || 0) + r.n;
     });
-    const top = Object.entries(agg).sort((a, b) => b[1].n - a[1].n).slice(0, 14);
-    const max = top.length ? top[0][1].n : 1;
-    document.getElementById('vendors').innerHTML = top.map(([v, o]) => `<li data-href="${hrefWith('/devices', { vendor: v, kind })}">
-      <div><div class="name">${esc(v)}</div><div class="track">${Object.entries(o.kinds).map(([k, n]) => `<i style="width:${n / max * 100}%;background:${KINDS[k].color}"></i>`).join('')}</div></div>
+    let list = Object.entries(agg);
+    list = order ? list.sort(order) : list.sort((a, b) => b[1].n - a[1].n);
+    list = list.slice(0, limit);
+    const max = Math.max(1, ...list.map(([, o]) => o.n));
+    document.getElementById(id).innerHTML = list.map(([v, o]) => `<li data-href="${hrefWith('/devices', { [filterKey]: v === '' ? (filterKey === 'wifi_gen' || filterKey === 'era' ? '0' : 'Unknown') : v, kind })}">
+      <div><div class="name">${v === '' ? '<span class="faint">Unknown</span>' : esc(label(v))}</div><div class="track">${Object.entries(o.kinds).map(([k, n]) => `<i style="width:${n / max * 100}%;background:${KINDS[k].color}"></i>`).join('')}</div></div>
       <div class="n">${num(o.n)}</div></li>`).join('') || '<div class="empty">No data</div>';
     bindLi(root);
   };
-  drawVendors('');
-  document.getElementById('vkind').addEventListener('change', e => drawVendors(e.target.value));
+  const numDesc = (a, b) => (b[0] === '' ? -1 : +b[0]) - (a[0] === '' ? -1 : +a[0]);
+  barList('st-type', s.dev_type, typeLabel, 'dev_type');
+  barList('st-brand', s.brand, v => v, 'brand', '', 14);
+  const genRank = v => v === '' ? -1 : +v === 66 ? 6.5 : +v;  // 66 = Wi-Fi 6E sits between 6 and 7
+  barList('st-gen', s.wifi_gen.filter(r => r.kind === 'ap' || r.kind === 'wifi_client'), v => genLabel(+v), 'wifi_gen', '', 10,
+    (a, b) => genRank(b[0]) - genRank(a[0]));
+  barList('st-era', s.era, v => eraLabel(+v), 'era', '', 10, numDesc);
+  barList('st-os', s.os, v => v, 'os');
+  document.getElementById('vkind').addEventListener('change', e => barList('st-brand', s.brand, v => v, 'brand', e.target.value, 14));
+  const fpEl = document.getElementById('st-fp');
+  fpEl.innerHTML = s.fingerprints.length ? `<table><thead><tr><th>Fingerprint</th><th>Likely</th><th class="num">MACs</th></tr></thead><tbody>${s.fingerprints.map(f => `<tr class="link" data-href="${hrefWith('/devices', { fp: f.fp_hash })}">
+    <td class="mono">${esc(f.fp_hash)}</td><td class="trunc muted">${esc([f.brand, typeLabel(f.dev_type) !== 'Unknown' ? typeLabel(f.dev_type) : null, f.wifi_gen ? genLabel(f.wifi_gen) : null].filter(Boolean).join(' · ') || '—')}</td>
+    <td class="num">${f.n}${f.randomized ? ` <span class="tag warn">${f.randomized} rand</span>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No shared fingerprints yet</div>';
+  linkRows(fpEl);
 
   // channels + bands
   document.getElementById('bandlegend').innerHTML = BAND_LIST.map(([b, m]) => `<span><span class="swatch" style="background:${m.color}"></span>${b}G</span>`).join('');
@@ -715,6 +758,40 @@ async function viewEvents(params) {
   }
   document.getElementById('more').onclick = () => load(true);
   await load(false);
+}
+
+function identPanel(d) {
+  const idn = d.ident;
+  if (!idn) return '';
+  const f = idn.fields || {};
+  const row = (label, key, fmt = v => esc(v), filter = null) => {
+    const x = f[key];
+    if (!x) return `<div><span>${label}</span><b class="faint">unknown</b></div>`;
+    const val = filter ? `<a href="${hrefWith('/devices', { [filter]: filter === 'dev_type' ? x.value : d[filter] ?? x.value })}">${fmt(x.value)}</a>` : fmt(x.value);
+    return `<div><span>${label}</span><b>${val} <span class="conf conf-${x.level}" title="${x.conf}% confidence">${x.level}</span></b></div>`;
+  };
+  const caps = idn.wifi_caps || {};
+  const capText = [caps.ss ? `${caps.ss}×${caps.ss} MIMO` : null, caps.width ? `${caps.width} MHz` : null].filter(Boolean).join(' · ');
+  const wps = idn.wps || {};
+  const ev = idn.evidence || [];
+  return `<section class="panel span-3"><header><h2>Identification</h2><span class="faint">passive fingerprinting · ${ev.length} clue${ev.length === 1 ? '' : 's'}</span></header>
+    <div class="body"><div class="kv">
+      ${row('Brand', 'brand', esc, 'brand')}
+      ${row('Model', 'model')}
+      ${row('Device type', 'type', typeLabel, 'dev_type')}
+      ${row('Operating system', 'os', esc, 'os')}
+      ${row('Wi-Fi', 'wifi', v => esc(v) + (capText ? ` <span class="faint">${capText}</span>` : ''), d.wifi_gen ? 'wifi_gen' : null)}
+      ${row('Wi-Fi chipset', 'chipset')}
+      <div><span>Estimated age</span><b>${idn.age_hint ? esc(idn.age_hint) : '<span class="faint">unknown</span>'}</b></div>
+      ${d.fp_hash ? `<div><span>Probe fingerprint</span><b><a class="mono" href="${hrefWith('/devices', { fp: d.fp_hash })}">${esc(d.fp_hash)}</a> <span class="faint">${d.fp_peers ? `shared with ${d.fp_peers} other MAC${d.fp_peers > 1 ? 's' : ''}` : 'unique'}</span></b></div>` : ''}
+      ${wps.device_name || wps.manufacturer ? `<div><span>WPS info</span><b>${esc([wps.manufacturer, wps.model, wps.model_number, wps.device_name].filter(Boolean).join(' · '))}</b></div>` : ''}
+    </div>
+    ${idn.features && idn.features.length ? `<div style="margin-top:14px">${idn.features.map(x => `<span class="tag" style="margin:0 6px 6px 0">${esc(x)}</span>`).join('')}</div>` : ''}
+    ${ev.length ? `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Evidence</summary>
+      <table style="margin-top:8px"><thead><tr><th>Finding</th><th>Value</th><th>Source</th><th class="num">Confidence</th></tr></thead><tbody>
+      ${ev.map(e => `<tr><td class="muted">${esc(e.field)}</td><td>${esc(e.field === 'type' ? typeLabel(e.value) : e.value)}</td><td class="muted" style="white-space:normal">${esc(e.source)}</td><td class="num muted">${e.conf}%</td></tr>`).join('')}
+      </tbody></table></details>` : ''}
+    </div></section>`;
 }
 
 route();

@@ -5,9 +5,101 @@ import random
 import time
 
 from .config import band_of, ch_to_freq, freq_to_channel
+from .identify import wifi_fingerprint
 from .oui import bt_company
 
 log = logging.getLogger("yolo.demo")
+
+def _wps(**attrs):
+    ids = {"manufacturer": 0x1021, "model": 0x1023, "model_number": 0x1024, "device_name": 0x1011}
+    out = b""
+    for k, v in attrs.items():
+        if k == "category":
+            val = v[0].to_bytes(2, "big") + bytes.fromhex("0050f204") + v[1].to_bytes(2, "big")
+            out += (0x1054).to_bytes(2, "big") + len(val).to_bytes(2, "big") + val
+        else:
+            out += ids[k].to_bytes(2, "big") + len(v).to_bytes(2, "big") + v.encode()
+    return out
+
+
+def wifi_fp(gen, ss=1, width=20, vendors=(), wfa=(), wps=None, base=(1, 50, 127)):
+    """Build raw 802.11 capability elements like a real device sends and run the real parser on them."""
+    elts = [(eid, b"\x00" * 8) for eid in base]
+    if gen and gen >= 4:
+        mcs = bytes([0xFF] * ss + [0] * (16 - ss))
+        elts.append((45, (0x0002 if width >= 40 else 0).to_bytes(2, "little") + b"\x17" + mcs + b"\x00" * 7))
+    if gen and gen >= 5:
+        mcs_map = sum((2 if i < ss else 3) << (2 * i) for i in range(8))
+        elts.append((191, ((1 if width >= 160 else 0) << 2).to_bytes(4, "little") + mcs_map.to_bytes(2, "little")
+                     + b"\x00" * 6))
+    if gen and gen >= 6:
+        phy0 = 0x06 | (0x08 if width >= 160 else 0)
+        mcs_map = sum((2 if i < ss else 3) << (2 * i) for i in range(8))
+        elts.append((255, bytes([35]) + b"\x00" * 6 + bytes([phy0]) + b"\x00" * 10 + mcs_map.to_bytes(2, "little")))
+    if gen and gen >= 7:
+        elts.append((255, bytes([108]) + b"\x00\x00" + bytes([0x02 if width >= 320 else 0]) + b"\x00" * 8))
+    for v in vendors:
+        oui, vtype = v.split("/") if "/" in v else (v, "1")
+        elts.append((221, bytes.fromhex(oui.replace(":", "")) + bytes([int(vtype)]) + b"\x00\x01"))
+    for t in wfa:
+        elts.append((221, bytes.fromhex("506f9a") + bytes([t]) + b"\x00"))
+    if wps:
+        elts.append((221, bytes.fromhex("0050f204") + _wps(**wps)))
+    return wifi_fingerprint(elts)
+
+
+APPLE_PHONE = dict(gen=6, ss=2, width=80, vendors=("00:17:f2/10", "00:10:18/2", "00:50:f2/2"))
+ANDROID_PHONE = dict(gen=6, ss=2, width=80, vendors=("8c:fd:f0/1", "00:50:f2/2"), wfa=(0x09, 0x16))
+WINDOWS_PC = dict(gen=6, ss=2, width=160, vendors=("00:50:f2/2",), wfa=(0x09,), base=(1, 50, 59, 127))
+# per-MAC Wi-Fi fingerprints (clients: probe/assoc capabilities, APs: beacon capabilities)
+WIFI_FPS = {
+    "a4:83:e7:01:00:01": APPLE_PHONE,
+    "a4:83:e7:01:00:02": dict(gen=6, ss=2, width=80, vendors=("00:17:f2/10", "00:10:18/2"), base=(1, 50, 59, 127)),
+    "5c:0a:5b:01:00:03": dict(ANDROID_PHONE, vendors=("00:00:f0/1", "8c:fd:f0/1")),
+    "a0:a8:cd:01:00:04": dict(WINDOWS_PC, wps=dict(device_name="LAPTOP-8K3J2QH9", category=(1, 5))),
+    "b8:27:eb:01:00:05": dict(gen=5, ss=1, width=80, vendors=("00:10:18/2",)),
+    "24:0a:c4:01:00:06": dict(gen=4, ss=1, width=20),
+    "24:0a:c4:01:00:07": dict(gen=4, ss=1, width=20),
+    "fc:65:de:01:00:08": dict(gen=5, ss=2, width=80, vendors=("00:0c:e7/4",)),
+    "5c:aa:fd:01:00:09": dict(gen=5, ss=2, width=80, vendors=("00:03:7f/1",)),
+    "f4:f5:d8:01:00:0a": dict(gen=5, ss=1, width=80, vendors=("00:10:18/2",)),
+    "da:4e:91:01:00:0b": APPLE_PHONE,
+    "3e:12:aa:01:00:0c": ANDROID_PHONE,
+    "8c:85:90:01:00:0d": dict(gen=5, ss=2, width=80, vendors=("00:17:f2/10", "00:10:18/2")),
+    "a0:a8:cd:01:00:0e": dict(gen=5, ss=2, width=80, wfa=(0x09,), wps=dict(device_name="DESKTOP-4MJ8T2Q",
+                                                                          category=(1, 6))),
+    "5c:0a:5b:01:00:0f": dict(gen=6, ss=2, width=80, vendors=("00:00:f0/1",), wfa=(0x09,),
+                              wps=dict(manufacturer="Samsung Electronics", model="QE55Q80T",
+                                       device_name="[TV] Samsung Q80 Series (55)", category=(7, 1))),
+    # access points
+    "24:a4:3c:10:00:01": dict(gen=6, ss=2, width=40),
+    "24:a4:3c:10:00:02": dict(gen=6, ss=4, width=160),
+    "24:a4:3c:10:00:09": dict(gen=7, ss=2, width=320),
+    "50:c7:bf:20:00:03": dict(gen=4, ss=2, width=40, vendors=("00:e0:4c/2",)),
+    "a0:40:a0:30:00:04": dict(gen=5, ss=4, width=80, wps=dict(manufacturer="Arcadyan Technology Corporation",
+                                                              model="VRV9517", category=(6, 1))),
+    "a0:40:a0:30:00:05": dict(gen=6, ss=4, width=160),
+    "00:1d:7e:40:00:06": dict(gen=None, wps=dict(manufacturer="Linksys", model="WRT54GL", category=(6, 1))),
+    "50:c7:bf:20:00:07": dict(gen=4, ss=1, width=20),
+    "f4:f5:d8:50:00:08": dict(gen=5, ss=2, width=80),
+    "9c:7b:ef:60:00:0a": dict(gen=4, ss=1, width=20, wfa=(0x09,),
+                              wps=dict(manufacturer="HP", model="OfficeJet Pro 9010 series", category=(3, 1))),
+}
+WIFI_FPS = {k: wifi_fp(**v) for k, v in WIFI_FPS.items()}
+# random-MAC passers-by fall into three device families, showing probe-fingerprint grouping
+PASSER_FPS = [WIFI_FPS["a4:83:e7:01:00:01"], WIFI_FPS["3e:12:aa:01:00:0c"], wifi_fp(**WINDOWS_PC)]
+
+BLE_FPS = {
+    "4c:11:aa:02:00:01": {"company": 0x004C, "apple": [0x07], "apple_model": 0x2014},
+    "c9:22:bb:02:00:02": {"company": 0x0075, "ext_adv": True},
+    "e1:33:cc:02:00:03": {"company": 0x038F, "uuids": ["fe95"]},
+    "d4:44:dd:02:00:05": {"uuids": ["feed"]},
+    "f0:55:ee:02:00:06": {"company": 0x01DA, "uuids": ["1812"]},
+    "4a:66:ff:02:00:07": {"company": 0x004C, "apple": [0x0C, 0x10]},
+    "5b:77:00:02:00:08": {"company": 0x0006, "ms_type": 15},
+    "6c:88:11:02:00:09": {"company": 0x004C, "apple": [0x12]},
+    "cb:99:22:02:00:0a": {"company": 0x0499, "ext_adv": True},
+}
 
 APS = [
     ("24:a4:3c:10:00:01", "HomeNet", 1, "WPA2/PSK", -42, "Ubiquiti"),
@@ -19,6 +111,7 @@ APS = [
     ("50:c7:bf:20:00:07", "", 6, "WPA2/PSK", -66, "TP-Link"),
     ("f4:f5:d8:50:00:08", "Bakery Guest", 1, "OPN", -80, "Google"),
     ("24:a4:3c:10:00:09", "HomeNet", ("6", 37), "WPA3/SAE", -58, "Ubiquiti"),
+    ("9c:7b:ef:60:00:0a", "DIRECT-4F-HP OfficeJet Pro 9010", 6, "WPA2/PSK", -69, "Hewlett Packard"),
 ]
 
 
@@ -46,7 +139,7 @@ CLIENTS = [
     ("3e:12:aa:01:00:0c", None, "evening", (3,), -74, ["Vodafone-7F2A"]),
     ("8c:85:90:01:00:0d", "Apple", "neighbour", (3,), -76, ["Vodafone-7F2A"]),
     ("a0:a8:cd:01:00:0e", "Intel", "neighbour", (4,), -80, ["Ziggo5G-Neighbour"]),
-    ("5c:0a:5b:01:00:0f", "Samsung", "visitor", (5,), -79, ["Linksys", "Starbucks"]),
+    ("5c:0a:5b:01:00:0f", "Samsung", "evening", (2,), -62, []),
 ]
 
 BLE = [
@@ -63,9 +156,9 @@ BLE = [
 ]
 
 CLASSIC = [
-    ("00:1b:66:03:00:01", "Sennheiser MOMENTUM 4", "evening", -59, "audio/video", True),
-    ("88:c6:26:03:00:02", "Car Multimedia", "worker", -80, "audio/video", False),
-    ("ac:bc:32:03:00:03", "MacBook Pro", "worker", -54, "computer", False),
+    ("00:1b:66:03:00:01", "Sennheiser MOMENTUM 4", "evening", -59, "audio/video", True, "0x240418"),
+    ("00:1c:d7:03:00:02", "Car Multimedia", "worker", -80, "audio/video", False, "0x200420"),
+    ("ac:bc:32:03:00:03", "MacBook Pro", "worker", -54, "computer", False, "0x5a010c"),
 ]
 
 
@@ -112,39 +205,43 @@ class DemoGenerator:
         for mac, ssid, ch, enc, base, vendor in APS:
             out.append({"t": "wifi_ap", "ts": t + rng.random() * 50, "mac": mac, "ssid": ssid or None,
                         **_radio(ch), "enc": enc, "rssi": self._rssi(base), "vendor": vendor,
-                        "extra": {"hidden": True} if not ssid else None})
+                        "extra": {"hidden": True} if not ssid else None,
+                        "fp": {"wifi": WIFI_FPS[mac], "src": "beacon"} if mac in WIFI_FPS else None})
         for mac, vendor, sched, aps, base, probes in CLIENTS:
             if not present(sched, mac, t):
                 continue
             ap_i = aps[(_h(mac, int(t // 5400)) % len(aps))] if len(aps) > 1 else aps[0]
             bssid = APS[ap_i][0]
-            for _ in range(rng.randint(2, 6)):
+            fp = WIFI_FPS.get(mac)
+            for n in range(rng.randint(2, 6)):
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "bssid": bssid,
-                            "frame": "data", "rssi": self._rssi(base), **_radio(APS[ap_i][2]), "vendor": vendor})
+                            "frame": "data", "rssi": self._rssi(base), **_radio(APS[ap_i][2]), "vendor": vendor,
+                            "fp": {"wifi": fp, "src": "assoc"} if fp and n == 0 else None})
             if probes and rng.random() < 0.05:
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",
-                            "probe": rng.choice(probes), "rssi": self._rssi(base), "vendor": vendor})
+                            "probe": rng.choice(probes), "rssi": self._rssi(base), "vendor": vendor,
+                            "fp": {"wifi": fp, "src": "probe"} if fp else None})
         for i, mac in enumerate(self.passers):
             if _h(mac, int(t // 900)) % 25 == 0:
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",
                             "probe": rng.choice([None, None, "Starbucks", "KPN", "eduroam", "NS WiFi", "HomeNet"]),
-                            "rssi": self._rssi(-82)})
+                            "rssi": self._rssi(-82), "fp": {"wifi": PASSER_FPS[i % 3], "src": "probe"}})
         for mac, name, cid, sched, base, atype, app in BLE:
             if not present(sched, mac, t):
                 continue
-            for _ in range(rng.randint(3, 10)):
-                out.append({"t": "bt", "kind": "ble", "ts": t + rng.random() * 55, "mac": mac, "name": name,
+            for n in range(rng.randint(3, 10)):
+                out.append({"t": "bt", "kind": "ble", "fp": {"ble": BLE_FPS[mac]} if mac in BLE_FPS and n == 0 else None, "ts": t + rng.random() * 55, "mac": mac, "name": name,
                             "rssi": self._rssi(base), "randomized": atype.startswith("random-") and
                             atype != "random-static", "addr_random": atype != "public",
                             "vendor": bt_company(cid) if atype != "public" else "Govee",
                             "extra": {"addr_type": atype, "company": bt_company(cid), "appearance": app,
                                       "connectable": True}})
         minute = int(t // 60)
-        for mac, name, sched, base, cls, connects in CLASSIC:
+        for mac, name, sched, base, cls, connects, cod in CLASSIC:
             if not present(sched, mac, t):
                 continue
             out.append({"t": "bt", "kind": "bt_classic", "ts": t + 1, "mac": mac, "name": name,
-                        "rssi": self._rssi(base), "randomized": False, "extra": {"class": cls}})
+                        "rssi": self._rssi(base), "randomized": False, "extra": {"class": cls, "cod": cod}})
         if _h("deauth", int(t // 3600)) % 11 == 0 and minute % 60 < 3:
             out.append({"t": "event", "ts": t + 5, "mac": APS[5][0], "type": "deauth_broadcast",
                         "detail": "deauth to ff:ff:ff:ff:ff:ff reason 7"})
@@ -154,7 +251,7 @@ class DemoGenerator:
     def _bt_connections(self, t, prev):
         """Simulate the headphones connecting to the sensor's own adapter in the evening."""
         out = []
-        for mac, name, sched, base, cls, connects in CLASSIC:
+        for mac, name, sched, base, cls, connects, cod in CLASSIC:
             if not connects:
                 continue
             now = present(sched, mac, t) and (_h(mac, int(t // 2700)) % 3 != 0)
