@@ -13,6 +13,7 @@ from scapy.layers.dot11 import (Dot11, Dot11AssoResp, Dot11Beacon, Dot11Deauth, 
 from . import status
 from .config import band_of, chan_label, freq_to_channel
 from .identify import wifi_fingerprint
+from .survey import frame_airtime_us, rate_from_radiotap
 
 conf.verb = 0
 log = logging.getLogger("yolo.wifi")
@@ -288,6 +289,8 @@ class WifiSensor:
         self.mon = None
         self.packets = 0
         self.fp_gate = FingerprintGate()
+        self.cur_freq = None
+        self.acc = {}  # freq -> [frames, bytes, airtime_us, retries, noise_sum, noise_cnt] for the channel survey
         self.stop = None
         status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
                         channels=[chan_label(f) for f in self.channels],
@@ -298,8 +301,40 @@ class WifiSensor:
         for target, n in ((self._capture_loop, "cap"), (self._hop_loop, "hop"), (self._rate_loop, "rate")):
             threading.Thread(target=target, daemon=True, name=f"{self.name}:{n}").start()
 
+    def _measure(self, pkt):
+        f = self.cur_freq
+        if f is None:
+            return
+        a = self.acc.get(f)
+        if a is None:
+            a = self.acc[f] = [0, 0, 0.0, 0, 0, 0]
+        n = len(pkt)
+        rate = noise = None
+        if pkt.haslayer(RadioTap):
+            rt = pkt[RadioTap]
+            rate = rate_from_radiotap(rt)
+            noise = getattr(rt, "dBm_AntNoise", None)
+        a[0] += 1
+        a[1] += n
+        a[2] += frame_airtime_us(n, rate)
+        if pkt.haslayer(Dot11) and int(pkt[Dot11].FCfield) & 0x08:
+            a[3] += 1
+        if noise is not None and -120 < noise < 0:
+            a[4] += noise
+            a[5] += 1
+
+    def _emit_survey(self, freq, dwell_s):
+        a = self.acc.pop(freq, None) or [0, 0, 0.0, 0, 0, 0]
+        self.store.put({"t": "chan", "ts": time.time(), "mac": "-", "freq": freq, "dwell_ms": int(dwell_s * 1000),
+                        "frames": a[0], "bytes": a[1], "airtime_us": int(a[2]), "retries": a[3],
+                        "noise_sum": a[4], "noise_cnt": a[5]})
+
     def _handle(self, pkt):
         self.packets += 1
+        try:
+            self._measure(pkt)
+        except Exception:
+            pass
         try:
             for o in parse_frame(pkt, self.fp_gate):
                 self.store.put(o)
@@ -335,7 +370,11 @@ class WifiSensor:
                 ok, _ = set_freq(self.mon, freqs[0])
                 status.update(self.name, channel=chan_label(freqs[0]) if ok else None,
                               band=band_of(freqs[0]) if ok else None)
+                self.cur_freq = freqs[0] if ok else None
+                t0 = time.time()
                 self.stop.wait(30)
+                if ok:
+                    self._emit_survey(freqs[0], time.time() - t0)
                 continue
             for f in freqs:
                 if self.stop.is_set() or not self.mon:
@@ -344,7 +383,12 @@ class WifiSensor:
                 if ok:
                     bad.pop(f, None)
                     status.update(self.name, channel=chan_label(f), band=band_of(f))
+                    self.acc.pop(f, None)  # discard frames counted before the radio settled
+                    self.cur_freq = f
+                    t0 = time.time()
                     self.stop.wait(self.cfg.wifi_hop_interval)
+                    self.cur_freq = None
+                    self._emit_survey(f, time.time() - t0)
                 else:
                     bad[f] = bad.get(f, 0) + 1
                     if bad[f] == 3:

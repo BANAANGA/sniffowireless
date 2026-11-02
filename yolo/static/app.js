@@ -29,10 +29,34 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const enc = encodeURIComponent;
 const isMac = s => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(s || '');
 
+let ME = null;  // {username, role} of the logged-in user
+const isAdmin = () => !ME || ME.role === 'admin';
+
 async function api(path) {
-  const r = await fetch(path);
+  const r = await fetch(path, { headers: { 'X-Yolo': '1' } });
+  if (r.status === 401) { location.href = '/login'; throw new Error('Not logged in'); }
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
+}
+// Mutating request; throws Error(detail) on failure.
+async function send(method, path, body) {
+  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-Yolo': '1' },
+    body: body === undefined ? undefined : JSON.stringify(body) });
+  if (r.status === 401) { location.href = '/login'; throw new Error('Not logged in'); }
+  let data = null;
+  try { data = await r.json(); } catch { /* empty */ }
+  if (!r.ok) {
+    const d = data && data.detail;
+    throw new Error(Array.isArray(d) ? d.map(x => x.msg).join('; ') : d || `${r.status} ${r.statusText}`);
+  }
+  return data;
+}
+function toast(msg, bad = false) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (bad ? ' bad' : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), bad ? 6000 : 3000);
 }
 
 function ago(ts) {
@@ -103,6 +127,7 @@ function rssiBars(r) {
 }
 function devLabel(d) {
   if (!d) return '';
+  if (d.label) return d.label;
   if (d.kind === 'ap') return d.ssid || (d.ssid === '' ? '<hidden>' : '');
   return d.name || '';
 }
@@ -161,8 +186,12 @@ function parseHash() {
   const [path, qs] = h.split('?');
   return { path, params: new URLSearchParams(qs || '') };
 }
+const ROUTES = [];  // [prefix, handler(rest, params)] registered by views.js
+function addRoute(prefix, fn) { ROUTES.push([prefix, fn]); }
+
 async function route() {
   cleanup();
+  closeModal();
   const id = ++routeId;
   const { path, params } = parseHash();
   document.querySelectorAll('[data-nav]').forEach(a => {
@@ -170,7 +199,9 @@ async function route() {
     a.classList.toggle('active', n === '/' ? path === '/' : path.startsWith(n));
   });
   try {
-    if (path === '/') await viewOverview();
+    const custom = ROUTES.find(([p]) => p.endsWith('/') ? path.startsWith(p) : path === p);
+    if (custom) await custom[1](decodeURIComponent(path.slice(custom[0].length)), params);
+    else if (path === '/') await viewOverview();
     else if (path === '/devices') await viewDevices(params);
     else if (path.startsWith('/device/')) await viewDevice(decodeURIComponent(path.slice(8)), params);
     else if (path === '/stats') await viewStats(params);
@@ -283,7 +314,7 @@ async function viewOverview() {
 }
 
 function eventRow(e, full = false) {
-  const who = e.kind === 'ap' ? (e.ssid || e.mac) : (e.name || e.vendor || e.mac);
+  const who = e.label || (e.kind === 'ap' ? (e.ssid || e.mac) : (e.name || e.vendor || e.mac));
   let detail = '';
   if (e.peer) detail = `→ ${isMac(e.peer) ? `<a href="#/device/${enc(e.peer)}">${esc(e.peer_ssid || e.peer)}</a>` : esc(e.peer)}`;
   if (e.detail && e.type !== 'new_device') detail += ` <span class="faint">${esc(e.detail)}</span>`;
@@ -319,6 +350,7 @@ async function viewDevices(params) {
       <select id="devtype"><option value="">All device types</option>${Object.entries(DEV_TYPES).map(([k, l]) => `<option value="${k}" ${st.dev_type === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="active">${[['', 'Any time'], ['300', 'Active (5 min)'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']].map(([v, l]) => `<option value="${v}" ${String(st.active || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="band"><option value="">All bands</option>${BAND_LIST.map(([b, m]) => `<option value="${b}" ${st.band === b ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+      <select id="known"><option value="">Known &amp; unknown</option><option value="1" ${st.known === '1' ? 'selected' : ''}>Known</option><option value="0" ${st.known === '0' ? 'selected' : ''}>Unknown</option><option value="w" ${st.watch === '1' ? 'selected' : ''}>Watched</option></select>
       <label class="check"><input type="checkbox" id="hiderand" ${st.randomized === '0' ? 'checked' : ''}>Hide randomized MACs</label>
       ${chips}
     </div>
@@ -333,6 +365,7 @@ async function viewDevices(params) {
   document.getElementById('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => go({ q: e.target.value }), 350); });
   document.getElementById('kind').addEventListener('change', e => go({ kind: e.target.value }));
   document.getElementById('active').addEventListener('change', e => go({ active: e.target.value }));
+  document.getElementById('known').addEventListener('change', e => go(e.target.value === 'w' ? { watch: '1', known: '' } : { known: e.target.value, watch: '' }));
   document.getElementById('devtype').addEventListener('change', e => go({ dev_type: e.target.value }));
   document.getElementById('band').addEventListener('change', e => go({ band: e.target.value }));
   document.getElementById('hiderand').addEventListener('change', e => go({ randomized: e.target.checked ? '0' : '' }));
@@ -362,7 +395,7 @@ async function viewDevices(params) {
       return `<tr class="link" data-href="#/device/${enc(x.mac)}">
         <td>${kindBadge(x.kind)}</td>
         <td class="mono"><span class="state-dot ${active ? 'on' : ''}"></span>${esc(x.mac)}${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}</td>
-        <td class="trunc">${label ? esc(label) : '<span class="faint">—</span>'}${x.kind === 'ap' && x.enc ? ` <span class="tag ${x.enc.includes('OPN') ? 'bad' : ''}">${esc(x.enc.replace(/\/PSK|\/SAE/g, ''))}</span>` : ''}</td>
+        <td class="trunc">${x.watch ? '<span class="star" title="Watched">★</span>' : ''}${label ? (x.label ? `<b>${esc(label)}</b>` : esc(label)) : '<span class="faint">—</span>'}${x.group_name ? ` <span class="tag">${esc(x.group_name)}</span>` : ''}${x.kind === 'ap' && x.enc ? ` <span class="tag ${x.enc.includes('OPN') ? 'bad' : ''}">${esc(x.enc.replace(/\/PSK|\/SAE/g, ''))}</span>` : ''}</td>
         <td class="trunc muted" style="max-width:300px">${identCell(x)}</td>
         <td>${conn}</td>
         <td class="muted">${chText(x.channel, x.band)}</td>
@@ -391,6 +424,7 @@ async function viewDevices(params) {
 // ------------------------------------------------------------------ device
 async function viewDevice(mac, params) {
   const d = await api(`/api/devices/${enc(mac)}`);
+  if (d.meta && d.meta.label) d.label = d.meta.label;
   const m = KINDS[d.kind] || { label: d.kind, color: FAINT };
   const isAp = d.kind === 'ap', isBt = d.kind === 'ble' || d.kind === 'bt_classic';
   const idn = d.ident || {};
@@ -414,6 +448,7 @@ async function viewDevice(mac, params) {
     ['Frames', num(d.packets)],
     ['First seen', `${dt(d.first_seen)} <span class="faint">${ago(d.first_seen)}</span>`],
     ['Last seen', `${dt(d.last_seen)} <span class="faint">${ago(d.last_seen)}</span>`],
+    d.room ? ['Room', `<a href="#/map">${esc(d.room)}</a>${d.sightings && d.sightings.length > 1 ? ` <span class="faint">heard by ${d.sightings.length} sensors</span>` : ''}`] : null,
     ['Time present', `${dur(d.presence.total)} <span class="faint">in ${num(d.presence.n)} visits</span>`],
     ['Average visit', dur(d.presence.avg)],
     ['Longest visit', dur(d.presence.longest)],
@@ -429,6 +464,7 @@ async function viewDevice(mac, params) {
       ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div>
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
+      ${trackPanel(d)}
       ${identPanel(d)}
       <section class="panel span-2"><header><h2>Signal strength</h2><span class="legend"><span><span class="swatch" style="background:${m.color}"></span>avg</span><span><span class="swatch" style="background:${m.color}44"></span>min–max</span></span></header>
         <div class="body"><div class="chart-box"><canvas id="rssi"></canvas></div></div></section>
@@ -441,6 +477,7 @@ async function viewDevice(mac, params) {
       <section class="panel"><header><h2>Events</h2><a class="muted" href="#/events?mac=${enc(d.mac)}">All →</a></header><div class="body flush" id="devevents"></div></section>
     </div>`;
 
+  bindTrackPanel(d);
   // facts / static sections
   const peers = document.getElementById('peers');
   peers.innerHTML = d.peers.length ? `<table><thead><tr><th>${isAp ? 'Client' : 'Access point / adapter'}</th><th>${isAp ? 'Vendor' : 'SSID'}</th><th class="num">Sessions</th><th class="num">Total time</th><th class="num">First</th><th class="num">Last</th></tr></thead><tbody>
@@ -794,5 +831,45 @@ function identPanel(d) {
     </div></section>`;
 }
 
-route();
-pollStatus();
+// ------------------------------------------------------------------ modal
+function closeModal() { document.querySelectorAll('.modal-bg').forEach(m => m.remove()); }
+// body: HTML for the form fields; onSubmit(form) may throw to show an error.
+function openModal(title, body, onSubmit, { submit = 'Save', danger = false, wide = false } = {}) {
+  closeModal();
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<form class="modal${wide ? ' wide' : ''}"><header><h2>${esc(title)}</h2><button type="button" class="x" aria-label="Close">✕</button></header>
+    <div class="modal-body">${body}</div><div class="modal-err"></div>
+    <footer><button type="button" class="btn ghost cancel">Cancel</button>${onSubmit ? `<button class="btn ${danger ? 'danger' : 'primary'}">${esc(submit)}</button>` : ''}</footer></form>`;
+  document.body.appendChild(bg);
+  const form = bg.querySelector('form');
+  bg.querySelector('.x').onclick = bg.querySelector('.cancel').onclick = closeModal;
+  bg.addEventListener('mousedown', e => { if (e.target === bg) closeModal(); });
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const btn = form.querySelector('footer .btn:last-child');
+    btn.disabled = true;
+    try { await onSubmit(form); closeModal(); } catch (err) { form.querySelector('.modal-err').textContent = err.message; }
+    btn.disabled = false;
+  };
+  const first = form.querySelector('input,select,textarea');
+  if (first) first.focus();
+  return form;
+}
+const fv = (form, name) => { const el = form.elements[name]; return el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : undefined; };
+
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const st = await (await fetch('/api/auth/state')).json();
+    if (!st.user) { location.href = '/login'; return; }
+    ME = st.user;
+    const u = document.getElementById('user');
+    if (u) u.innerHTML = st.disabled ? '<span class="faint">auth disabled</span>'
+      : `<span>${esc(ME.username)}</span><span class="faint">${esc(ME.role)}</span><a href="#" id="logout">Sign out</a>`;
+    const lo = document.getElementById('logout');
+    if (lo) lo.onclick = async e => { e.preventDefault(); await send('POST', '/api/auth/logout'); location.href = '/login'; };
+    document.body.classList.toggle('viewer', !isAdmin());
+  } catch { /* offline: route() will show the error */ }
+  route();
+  pollStatus();
+});

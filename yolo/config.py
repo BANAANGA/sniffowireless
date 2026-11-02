@@ -142,6 +142,12 @@ class Config:
     web_port: int = 8080
     web_user: str = ""
     web_password: str = ""
+    auth_disabled: bool = False
+    data_dir: str = "/data"
+    # "server" (default: capture + store + web UI) or "sensor" (capture only, forward to a server)
+    mode: str = "server"
+    server_url: str = ""
+    sensor_token: str = ""
     log_level: str = "INFO"
 
     wifi_interfaces: list = field(default_factory=list)
@@ -183,6 +189,11 @@ class Config:
             web_port=_int("WEB_PORT", 8080),
             web_user=_env("WEB_USER"),
             web_password=_env("WEB_PASSWORD"),
+            auth_disabled=_bool("AUTH_DISABLED", False),
+            data_dir=_env("DATA_DIR") or os.path.dirname(os.path.abspath(_env("DB_PATH", "/data/yolo.db"))),
+            mode=_env("YOLO_MODE", "server").lower(),
+            server_url=_env("SERVER_URL").rstrip("/"),
+            sensor_token=_env("SENSOR_TOKEN"),
             log_level=_env("LOG_LEVEL", "INFO").upper(),
             wifi_interfaces=ifaces,
             wifi_channels=parse_channels(_env("WIFI_CHANNELS")),

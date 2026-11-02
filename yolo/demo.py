@@ -75,7 +75,8 @@ WIFI_FPS = {
     "24:a4:3c:10:00:01": dict(gen=6, ss=2, width=40),
     "24:a4:3c:10:00:02": dict(gen=6, ss=4, width=160),
     "24:a4:3c:10:00:09": dict(gen=7, ss=2, width=320),
-    "50:c7:bf:20:00:03": dict(gen=4, ss=2, width=40, vendors=("00:e0:4c/2",)),
+    "50:c7:bf:20:00:03": dict(gen=4, ss=2, width=40, vendors=("00:e0:4c/2",),
+                              wps=dict(manufacturer="TP-Link", model="TL-WR841N", category=(6, 1))),
     "a0:40:a0:30:00:04": dict(gen=5, ss=4, width=80, wps=dict(manufacturer="Arcadyan Technology Corporation",
                                                               model="VRV9517", category=(6, 1))),
     "a0:40:a0:30:00:05": dict(gen=6, ss=4, width=160),
@@ -189,10 +190,64 @@ def present(sched, mac, t):
     return False
 
 
+# ---------------------------------------------------------------- multi-sensor / rooms / security demo
+SENSORS = [("local", "This server", "Hallway", 0.50, 0.78), ("living-room", "Living room sensor", "Living room", 0.24, 0.32),
+           ("office", "Office sensor", "Office", 0.78, 0.30)]
+ROOMS = ["Hallway", "Living room", "Office"]
+FIXED_ROOMS = {  # stationary devices
+    "24:a4:3c:10:00:01": "Living room", "24:a4:3c:10:00:02": "Office", "24:a4:3c:10:00:09": "Hallway",
+    "50:c7:bf:20:00:03": "Hallway", "b8:27:eb:01:00:05": "Office", "24:0a:c4:01:00:06": "Living room",
+    "24:0a:c4:01:00:07": "Office", "fc:65:de:01:00:08": "Living room", "5c:aa:fd:01:00:09": "Living room",
+    "f4:f5:d8:01:00:0a": "Hallway", "5c:0a:5b:01:00:0f": "Living room", "a4:c1:38:02:00:04": "Office",
+    "cb:99:22:02:00:0a": "Living room", "d4:44:dd:02:00:05": "Hallway", "f0:55:ee:02:00:06": "Office",
+}
+MOBILE = {"a4:83:e7:01:00:01", "4c:11:aa:02:00:01", "00:1b:66:03:00:01", "5c:0a:5b:01:00:03", "c9:22:bb:02:00:02",
+          "a0:a8:cd:01:00:04", "a4:83:e7:01:00:02", "e1:33:cc:02:00:03", "ac:bc:32:03:00:03", "da:4e:91:01:00:0b"}
+CARRIED_BY = {"4c:11:aa:02:00:01": "a4:83:e7:01:00:01", "00:1b:66:03:00:01": "a4:83:e7:01:00:01",
+              "c9:22:bb:02:00:02": "5c:0a:5b:01:00:03", "e1:33:cc:02:00:03": "a0:a8:cd:01:00:04"}
+GROUPS = [("Sam", 1, {"a4:83:e7:01:00:01": "Sam's iPhone", "4c:11:aa:02:00:01": "Sam's AirPods",
+                      "00:1b:66:03:00:01": "Sam's headphones"}),
+          ("Alex", 0, {"5c:0a:5b:01:00:03": "Alex's Galaxy", "c9:22:bb:02:00:02": "Alex's watch"}),
+          ("Robin", 0, {"a0:a8:cd:01:00:04": "Robin's work laptop", "a4:83:e7:01:00:02": "Robin's MacBook",
+                        "e1:33:cc:02:00:03": "Robin's band", "ac:bc:32:03:00:03": "Robin's MacBook (BT)"})]
+LABELS = {"b8:27:eb:01:00:05": "Pi-hole", "24:0a:c4:01:00:06": "Smart plug (kitchen)",
+          "24:0a:c4:01:00:07": "Smart plug (desk lamp)", "fc:65:de:01:00:08": "Echo Dot",
+          "5c:aa:fd:01:00:09": "Sonos One", "f4:f5:d8:01:00:0a": "Nest Mini", "5c:0a:5b:01:00:0f": "Living room TV",
+          "a4:c1:38:02:00:04": "Thermometer office", "cb:99:22:02:00:0a": "Ruuvi living room",
+          "f0:55:ee:02:00:06": "Desk keyboard", "d4:44:dd:02:00:05": "Keys (Tile)"}
+EVIL_TWIN = "0a:1b:2c:66:00:01"
+KARMA = "0a:13:37:00:00:01"
+CHANNELS = [(1, "2.4", 0.32), (6, "2.4", 0.55), (11, "2.4", 0.41), (36, "5", 0.16), (44, "5", 0.11),
+            (149, "5", 0.04), (37, "6", 0.03)]
+FLOORPLAN_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" width="1000" height="640">
+<rect width="1000" height="640" fill="#111316"/>
+<g fill="none" stroke="#3a3f47" stroke-width="6">
+<rect x="20" y="20" width="960" height="600" rx="4"/><line x1="520" y1="20" x2="520" y2="400"/>
+<line x1="20" y1="400" x2="430" y2="400"/><line x1="610" y1="400" x2="980" y2="400"/>
+<line x1="300" y1="400" x2="300" y2="620"/><line x1="700" y1="400" x2="700" y2="620"/></g>
+<g fill="#5b6068" font-family="sans-serif" font-size="22"><text x="50" y="60">Living room</text>
+<text x="550" y="60">Office</text><text x="330" y="440">Hallway</text><text x="50" y="440">Kitchen</text>
+<text x="730" y="440">Bedroom</text></g></svg>"""
+
+
+def room_of(mac, t):
+    if mac in CARRIED_BY:
+        return room_of(CARRIED_BY[mac], t)
+    if mac in FIXED_ROOMS:
+        return FIXED_ROOMS[mac]
+    return ROOMS[_h(mac, int(t // 1500)) % 3]
+
+
+def pen(room, sensor_room):
+    return 0 if room == sensor_room else -13 - (_h(room, sensor_room) % 6)
+
+
 class DemoGenerator:
-    def __init__(self, cfg, store):
-        self.cfg, self.store = cfg, store
+    def __init__(self, cfg, store, ctx=None):
+        self.cfg, self.store, self.ctx = cfg, store, ctx
         self.rng = random.Random(42)
+        if ctx:
+            self.seed()
         self.passers = [f"{0x02 | (i * 4 & 0xfc):02x}:{self.rng.randrange(256):02x}:{self.rng.randrange(256):02x}:"
                         f"9{i % 10}:{self.rng.randrange(256):02x}:{self.rng.randrange(256):02x}" for i in range(40)]
 
@@ -222,7 +277,7 @@ class DemoGenerator:
                             "probe": rng.choice(probes), "rssi": self._rssi(base), "vendor": vendor,
                             "fp": {"wifi": fp, "src": "probe"} if fp else None})
         for i, mac in enumerate(self.passers):
-            if _h(mac, int(t // 900)) % 25 == 0:
+            if _h(mac, int(t // 900)) % 25 == 0 and (self.ctx is None or int(t // 60) % 15 == i % 15):
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",
                             "probe": rng.choice([None, None, "Starbucks", "KPN", "eduroam", "NS WiFi", "HomeNet"]),
                             "rssi": self._rssi(-82), "fp": {"wifi": PASSER_FPS[i % 3], "src": "probe"}})
@@ -245,6 +300,8 @@ class DemoGenerator:
         if _h("deauth", int(t // 3600)) % 11 == 0 and minute % 60 < 3:
             out.append({"t": "event", "ts": t + 5, "mac": APS[5][0], "type": "deauth_broadcast",
                         "detail": "deauth to ff:ff:ff:ff:ff:ff reason 7"})
+        if self.ctx:
+            out += self.extras(t, out)
         out.sort(key=lambda o: o["ts"])
         return out
 
@@ -260,6 +317,79 @@ class DemoGenerator:
                             "peer": "hci0", "detail": "ACL link" if now else "reason 0x13"})
                 prev[mac] = now
         return out
+
+    def seed(self):
+        """Pre-configure the admin features (my networks, labels, groups, sensors, floor plan) once."""
+        import os
+        from contextlib import closing
+
+        from .manage import apply_ignore, apply_meta
+        ctx = self.ctx
+        if ctx.settings.get("networks")["ssids"]:
+            return
+        ctx.settings.set("networks", {"ssids": ["HomeNet", "HomeNet-IoT"], "trusted_bssids": [
+            "24:a4:3c:10:00:01", "24:a4:3c:10:00:02", "24:a4:3c:10:00:09", "50:c7:bf:20:00:03"]})
+        now = time.time()
+        with closing(ctx.wdb()) as c:
+            for name, watch, members in GROUPS:
+                gid = c.execute("INSERT INTO groups(name, kind, watch, created) VALUES(?,?,?,?)",
+                                (name, "person", watch, now)).lastrowid
+                for mac, label in members.items():
+                    c.execute("INSERT OR REPLACE INTO device_meta(mac, label, known, watch, group_id, updated) "
+                              "VALUES(?,?,1,?,?,?)", (mac, label, watch, gid, now))
+            for mac, label in LABELS.items():
+                c.execute("INSERT OR REPLACE INTO device_meta(mac, label, known, updated) VALUES(?,?,1,?)",
+                          (mac, label, now))
+            for sid, name, room, x, y in SENSORS:
+                c.execute("INSERT OR REPLACE INTO sensors(id, name, room, x, y, created, last_seen) VALUES(?,?,?,?,?,?,?)",
+                          (sid, name, room, x, y, now, now))
+        path = os.path.join(self.cfg.data_dir, "floorplan.svg")
+        with open(path, "w") as fh:
+            fh.write(FLOORPLAN_SVG)
+        ctx.settings.set("floorplan", {"image": "floorplan.svg", "width": 1000, "height": 640})
+        ctx.location.reload()
+        ctx.security.reload()
+        apply_meta(ctx)
+        apply_ignore(ctx)
+
+    def extras(self, t, out):
+        """Per-sensor copies (room location), channel survey samples and staged security incidents."""
+        extra = []
+        seen = set()
+        for o in out:
+            mac = o.get("mac")
+            if o.get("rssi") is None or mac in seen or (mac not in FIXED_ROOMS and mac not in MOBILE):
+                continue
+            seen.add(mac)
+            room = room_of(mac, t)
+            base = o["rssi"]
+            o["rssi"] = base + pen(room, "Hallway")
+            for sid, _, sroom, _, _ in SENSORS[1:]:
+                extra.append({**o, "sensor": sid, "rssi": base + pen(room, sroom) + self.rng.randint(-2, 2),
+                              "fp": None, "ts": o["ts"] + 0.5})
+        hour = ((t + 3600) % 86400) / 3600
+        busy = 0.5 + 0.5 * max(0.0, 1 - abs(hour - 20) / 8)
+        for ch, band, u in CHANNELS:
+            dwell = 2500
+            util = min(0.95, u * busy * (0.85 + self.rng.random() * 0.3))
+            frames = int(util * dwell * 1.6)
+            extra.append({"t": "chan", "ts": t + 30, "mac": "-", "freq": ch_to_freq(ch, band), "dwell_ms": dwell,
+                          "frames": frames, "bytes": frames * 300, "airtime_us": int(util * dwell * 1000),
+                          "retries": int(frames * (0.06 + u * 0.18)), "noise_sum": -95 * 20 if band == "2.4" else -101 * 20,
+                          "noise_cnt": 20})
+        day, minute = int((t + 3600) // 86400), int(((t + 3600) % 86400) // 60)
+        if day % 2 == 0 and 21 * 60 <= minute < 21 * 60 + 40:  # evil twin of HomeNet, open network
+            extra.append({"t": "wifi_ap", "ts": t + 10, "mac": EVIL_TWIN, "ssid": "HomeNet", "enc": "OPN",
+                          "rssi": self._rssi(-61), **_radio(6), "randomized": True})
+        if day % 3 == 1 and 14 * 60 <= minute < 14 * 60 + 25:  # KARMA-style AP answering every probe
+            for i, ssid in enumerate(("Starbucks", "KPN", "eduroam", "NS WiFi", "Ziggo")):
+                extra.append({"t": "wifi_ap", "ts": t + i, "mac": KARMA, "ssid": ssid, "enc": "OPN",
+                              "rssi": self._rssi(-70), **_radio(11)})
+        if minute == 3 * 60 + 17:  # nightly deauthentication burst against HomeNet
+            for i in range(40):
+                extra.append({"t": "wifi_client", "ts": t + i * 0.2, "mac": "a4:83:e7:01:00:01",
+                              "bssid": "24:a4:3c:10:00:01", "frame": "deauth", "reason": 7, "rssi": None})
+        return extra
 
     def backfill(self, hours):
         if not hours:
@@ -281,7 +411,12 @@ class DemoGenerator:
                 self.store.flush()
             t += 60
         self.store.flush()
+        self._sensors_alive()
         log.info("Demo backfill done (%d observations)", n)
+
+    def _sensors_alive(self):
+        if self.ctx:  # the demo's remote sensors are simulated: keep them "online"
+            self.ctx.execute("UPDATE sensors SET last_seen=?", (time.time(),))
 
     def run(self, stop):
         state = getattr(self, "_conn_state", {})
@@ -292,3 +427,4 @@ class DemoGenerator:
                 self.store.put(o)
             for o in self._bt_connections(t, state):
                 self.store.put(o)
+            self._sensors_alive()
