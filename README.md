@@ -6,6 +6,13 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Bluetooth:** BLE advertising plus Classic inquiry over a raw HCI socket. No BlueZ daemon is needed inside the container.
 - **Connectivity history:** presence sessions ("visits") for every device, connection sessions for Wi-Fi client→AP links (including roaming between BSSIDs and deauths), and Bluetooth links to the sensor's adapter
 - **Passive device identification:** brand, model, device type, OS, Wi-Fi generation and estimated age, worked out from capability elements, WPS data, Apple/Microsoft/Google Bluetooth beacons, Bluetooth class of device, names and MAC vendor. Each result shows its evidence and confidence. Probe fingerprints group randomized MACs that belong to the same model/OS.
+- **Labels, groups and watch list:** name devices, mark them known, and group a person's phone, watch and earbuds (or a phone's rotating MACs, with merge suggestions) into one presence history
+- **Alerts:** rules for watched or unknown devices, groups arriving/leaving and security events, with quiet hours and cooldowns, delivered via ntfy, Telegram, Discord, webhooks or email
+- **Security monitoring (defensive):** evil-twin / rogue access points for your SSIDs, deauthentication floods, KARMA-style access points, and open/WEP/WPS/no-WPA3 findings on your own networks
+- **Wi-Fi health:** per-channel airtime, retries and noise with channel recommendations; client health for your own networks (band use, roaming and ping-pong, sticky clients, disconnect reasons)
+- **Multiple sensors and a map:** remote Raspberry Pi sensors forward to one server; each device gets a room and an approximate position on your floor plan
+- **Occupancy reports:** estimated people per hour, visitors, dwell time, a printable/PDF report and a weekly email
+- **Accounts and integrations:** login with admin/viewer roles, API tokens, an ignore list, and a Prometheus `/metrics` endpoint with a ready-made Grafana dashboard
 - **Drill-down statistics:** overview → device type → device → sessions; SSID → APs → clients; vendor / channel / probed SSID → devices; per-device signal history, weekly presence heatmap, timeline, peers, events
 - **Storage:** SQLite in a single volume, per-minute signal samples, configurable retention, CSV export, JSON API
 - **Demo mode** so you can try the UI without any radios
@@ -31,6 +38,14 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 
 **Access point:** which clients were connected when, and how many over time.
 
+| Security | Map |
+|---|---|
+| [![Security](docs/screenshots/security.png)](docs/screenshots/security.png) | [![Map](docs/screenshots/map.png)](docs/screenshots/map.png) |
+| **My networks** | **Channels** |
+| [![My networks](docs/screenshots/mynet.png)](docs/screenshots/mynet.png) | [![Channels](docs/screenshots/channels.png)](docs/screenshots/channels.png) |
+| **Occupancy report** | **Group (person)** |
+| [![Reports](docs/screenshots/reports.png)](docs/screenshots/reports.png) | [![Group](docs/screenshots/group.png)](docs/screenshots/group.png) |
+
 </details>
 
 *Screenshots use the built-in demo mode (`DEMO_MODE=1`); all devices are synthetic.*
@@ -43,13 +58,18 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 2. [Hardware](#hardware)
 3. [Connecting USB Wi-Fi / Bluetooth adapters](#connecting-usb-wi-fi--bluetooth-adapters)
 4. [Deploy](#deploy)
-5. [Configuration](#configuration)
-6. [Device identification](#device-identification)
-7. [Using the UI](#using-the-ui)
-8. [API](#api)
-9. [Troubleshooting](#troubleshooting)
-10. [Development](#development)
-11. [Legal](#legal)
+5. [Accounts & access](#accounts--access)
+6. [Configuration](#configuration)
+7. [Device identification](#device-identification)
+8. [Using the UI](#using-the-ui)
+9. [Alerts & notifications](#alerts--notifications)
+10. [Security monitoring](#security-monitoring)
+11. [Multiple sensors & the map](#multiple-sensors--the-map)
+12. [Prometheus & Grafana](#prometheus--grafana)
+13. [API](#api)
+14. [Troubleshooting](#troubleshooting)
+15. [Development](#development)
+16. [Legal](#legal)
 
 ---
 
@@ -205,7 +225,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Open **http://<host>:8080**. Data is stored in `./data/yolo.db`. Back up that file to keep your history.
+Open **http://<host>:8080**. On the first visit you create the admin account (see [Accounts & access](#accounts--access)). Data is stored in `./data` (`yolo.db` plus an uploaded floor plan). Back up that folder to keep your history.
 
 Try it without hardware:
 
@@ -245,6 +265,28 @@ The database schema is created and upgraded automatically.
 
 ---
 
+## Accounts & access
+
+The web UI and API need a login.
+
+- **First start without `WEB_USER`/`WEB_PASSWORD`:** the browser shows a *Create the admin account* page. To stop someone else on your network from claiming the admin account first, it asks for a one-time **setup code** printed in the container log:
+  ```bash
+  docker compose logs yolo | grep "setup code"
+  ```
+- **With `WEB_USER` and `WEB_PASSWORD`:** that account is created (or reset) as an admin on every start, and no setup page is shown. Its password can only be changed through the environment.
+- **Roles:** *admins* can change settings, labels, groups, alert rules and the ignore list. *Viewers* can only look. Add users under **Settings → Users**.
+- **API tokens** (Settings → API tokens) are sent as `Authorization: Bearer <token>`:
+  - `metrics`: only `/metrics`
+  - `read`: read-only API
+  - `admin`: full API
+
+  Remote sensors get their own tokens, created under Settings → Sensors.
+- Passwords are stored as salted PBKDF2-SHA256 hashes. Sessions are HttpOnly cookies that expire after 14 days of inactivity. Logins are rate-limited per IP.
+- **HTTPS:** put yolo behind a reverse proxy (Caddy, Traefik, nginx) for TLS when you reach it from outside your LAN. The session cookie is marked `Secure` when the proxy sets `X-Forwarded-Proto: https`.
+- `AUTH_DISABLED=1` turns login off entirely. Only use it on a network where you trust everyone.
+
+---
+
 ## Configuration
 
 All settings are environment variables (put them in `.env`).
@@ -267,11 +309,15 @@ All settings are environment variables (put them in `.env`).
 | `ACTIVE_WINDOW` | `300` | "Active now" window used by the overview cards. |
 | `RETENTION_DAYS` | `30` | Samples, sessions, events and devices older than this are pruned hourly. |
 | `EVENTS_FOR_RANDOMIZED` | `0` | Also log arrive/leave/new-device events for randomized addresses. |
-| `IGNORE_MACS` | – | Comma-separated addresses to ignore completely. |
+| `IGNORE_MACS` | – | Comma-separated addresses to ignore completely (the admin can also maintain an ignore list in the UI). |
 | `WEB_PORT` | `8080` | HTTP port (on the host, because of host networking). |
 | `WEB_HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` behind a reverse proxy. |
-| `WEB_USER` / `WEB_PASSWORD` | – | Enable HTTP basic auth for the UI and API. |
+| `WEB_USER` / `WEB_PASSWORD` | – | Admin account created/reset on start. If unset, create it in the browser with the setup code from the log. |
+| `AUTH_DISABLED` | `0` | `1` disables login completely (trusted networks only). |
+| `YOLO_MODE` | `server` | `sensor` = capture only and forward to `SERVER_URL` (see [Multiple sensors](#multiple-sensors--the-map)). |
+| `SERVER_URL` / `SENSOR_TOKEN` | – | Sensor mode: URL of the main yolo server and the token from Settings → Sensors. |
 | `DB_PATH` | `/data/yolo.db` | SQLite database location. |
+| `DATA_DIR` | folder of `DB_PATH` | Where uploaded files (floor plan) are kept. |
 | `TZ` | `UTC` | Container time zone (logs). The UI always shows the viewer's local time. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` shows HCI command failures and parse errors. |
 | `DEMO_MODE` | `0` | Generate synthetic devices. |
@@ -331,12 +377,140 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
 - **Statistics:** device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
+- **Groups:** people or things made of several devices. A group's page shows the combined presence (when *any* of its devices was around), one timeline lane per device, and its events.
+- **Map:** your floor plan with sensors and devices on it, plus a per-room device count. See [Multiple sensors & the map](#multiple-sensors--the-map).
+- **Reports:** occupancy, meaning estimated people present per hour, a typical-week heatmap, unique/new/returning visitors per day and median visit length. *Print / PDF* gives a clean light-themed printout, and a weekly summary can be emailed (Settings → Weekly report). People are estimated from Wi-Fi phones present for at least 5 minutes; a "person" group counts once.
+- **My networks:** add your SSIDs under Settings → My networks to see:
+  - clients over time
+  - band use (2.4/5/6 GHz share of connected time)
+  - per-client signal, connected time, roams and **ping-pong roaming** (A→B→A within 2 minutes)
+  - **sticky clients** (connected below −75 dBm while another of your APs is available)
+  - clients capable of 5 GHz that sit on 2.4 GHz
+  - disconnect reasons (timeouts vs. deauth reason codes)
+- **Channels:** for each channel the sensor hops over:
+  - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
+  - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
+  - a recommendation for each of your own access points
+
+  Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
+- **Settings:**
+  - account (password), users, my networks, ignore list, sensors
+  - notification channels, weekly report, detection thresholds, API tokens
+
+### Ignore list
+
+Under **Settings → Ignore list** an admin can drop these before anything is stored:
+- devices, by MAC
+- whole vendor prefixes, e.g. a smart-plug brand
+- networks, by SSID, optionally including every client connected to them
+
+Ignored traffic never reaches the database, the UI or alerts. Tick *Also delete data already stored* to purge existing history for matching devices. The page shows how many stored devices match before you save.
+
+### Labels, watch list and groups
+
+On any device page an admin can set a **label** ("Sam's iPhone") and notes, and mark the device:
+- **known:** excluded from "unknown device" alerts
+- **watched:** included in arrive/leave alerts
+
+A device can also be put in a **group**. *Possibly the same physical device* lists other MACs with the same probe fingerprint (or name) that were never present at the same time, which is typical of MAC rotation. One click adds them to the group.
+
+---
+
+## Alerts & notifications
+
+Events (arrived, left, group arrived/left, new device, connected, roamed, moved room, rogue AP, deauth flood, …) are matched against **rules** (Alerts → Rules). Each rule has:
+- the events it reacts to
+- which devices it covers: any, watched, unknown, specific MACs, groups, or device types
+- an optional time window (e.g. 23:00–06:00) and weekdays
+- a per-device cooldown
+- the notification channels to use
+
+Three rules are created on first start and only log to the alert history until you attach a channel:
+- watched devices arriving or leaving
+- security alerts
+- unknown devices at night
+
+**Channels** (Settings → Notifications):
+
+| Type | You need |
+|---|---|
+| ntfy | server URL (default `https://ntfy.sh`), topic, optional access token |
+| Telegram | bot token (from @BotFather) and chat ID |
+| Discord | channel webhook URL |
+| Webhook | URL; receives `{"title", "body", "severity", "event"}` as JSON, with an optional extra auth header |
+| Email | SMTP host, port, STARTTLS/SSL, login, from and to |
+
+Use **Send test** to check a channel. Secrets are never sent back to the browser.
+
+---
+
+## Security monitoring
+
+Configure **My networks** first (Settings → My networks), then mark your own access points as **trusted** (Security page, *Trust all listed* on a clean setup). yolo then reports:
+
+| Finding | How it's detected |
+|---|---|
+| **Rogue / evil-twin AP** | one of your SSIDs broadcast by an untrusted BSSID; *high* when security or vendor differs from your trusted APs or the BSSID is locally administered |
+| **Deauthentication flood** | ≥ 25 deauth/disassoc frames within 10 s for one BSSID (configurable) |
+| **KARMA-style AP** | one BSSID advertising ≥ 4 different SSIDs within 10 minutes (configurable) |
+| **Open / WEP / WPA-TKIP network** | on your own SSIDs |
+| **WPS enabled** | WPS element in your AP's beacons |
+| **No WPA3** | informational |
+
+Findings can be acknowledged (no repeat alerts) or resolved (they reopen if the condition returns). All detection is passive: yolo never transmits deauths or other attack frames.
+
+---
+
+## Multiple sensors & the map
+
+Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
+
+1. On the server: **Settings → Sensors → Add remote sensor**, then give it a name and room. You get a token and a ready-made `docker run` command.
+2. On the sensor machine: connect the adapters as described above, then run that command (build or copy the image first). It's the same image with `YOLO_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
+   ```bash
+   docker run -d --name yolo-sensor --restart unless-stopped --network host --privileged \
+     -e YOLO_MODE=sensor -e SERVER_URL=http://192.168.1.10:8080 -e SENSOR_TOKEN=yolo_... \
+     -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 yolo:latest
+   ```
+   The sensor buffers and retries if the server is unreachable, and corrects small clock differences.
+3. **Map → Edit layout:** upload a floor plan (PNG, JPEG, WebP or SVG) and drag each sensor to where it really is.
+
+Every device gets a **room** (the sensor that hears it strongest, with 4 dB hysteresis so it doesn't flicker) and a "moved" event when that changes. It also gets an approximate **position**: the signal-weighted average of the three strongest sensors. With one sensor, devices are drawn in a ring around it by signal strength. Room-level accuracy is realistic with a sensor per room. Exact positions are not; walls, bodies and phone orientation easily change the signal by 10 dB.
+
+---
+
+## Prometheus & Grafana
+
+`GET /metrics` serves Prometheus metrics, including:
+- devices active by kind and type
+- clients per AP and per SSID
+- presence and signal of watched or labelled devices, and group presence
+- events per type, open findings by severity
+- channel airtime and retry ratios
+- sensor frames/s, and store queue/drops
+
+Create a token with scope `metrics` and scrape with it:
+
+```yaml
+scrape_configs:
+  - job_name: yolo
+    authorization: { type: Bearer, credentials_file: /etc/prometheus/yolo_token }
+    static_configs: [{ targets: ["yolo-host:8080"] }]
+```
+
+`contrib/monitoring/` holds a ready-to-run Prometheus + Grafana stack with a provisioned **yolo** dashboard:
+
+```bash
+echo -n "yolo_<your metrics token>" > contrib/monitoring/yolo_token
+GRAFANA_PASSWORD=choose-one docker compose -f contrib/monitoring/docker-compose.monitoring.yml up -d
+# Grafana: http://<host>:3000  (admin / GRAFANA_PASSWORD)
+```
 
 ---
 
 ## API
 
-Interactive docs are at `/api/docs`. Main endpoints:
+Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a login session or `Authorization: Bearer <token>`. Main read endpoints:
 
 | Endpoint | Description |
 |---|---|
@@ -352,6 +526,15 @@ Interactive docs are at `/api/docs`. Main endpoints:
 | `GET /api/events?type=&mac=&kind=&before=` | Event log |
 | `GET /api/status` | Sensor and store health |
 | `GET /api/export/devices.csv`, `/api/export/sessions.csv?days=7` | CSV export |
+| `GET /api/groups`, `/api/groups/{id}` | Groups and combined presence |
+| `GET /api/alerts`, `/api/alert-rules` | Alert history and rules |
+| `GET /api/security` | Findings, my-network BSSIDs, security events |
+| `GET /api/channels?hours=24` | Channel survey and recommendations |
+| `GET /api/mynet?days=7` | Health of my networks |
+| `GET /api/map`, `/api/sensors` | Device rooms/positions, sensors |
+| `GET /api/reports/occupancy?days=7` | Occupancy report data |
+| `GET /metrics` | Prometheus metrics |
+| `POST /api/ingest` | Remote sensors push observations here (sensor token) |
 
 ---
 
@@ -370,6 +553,10 @@ Interactive docs are at `/api/docs`. Main endpoints:
 | Classic BT devices missing | Classic devices only answer inquiries while *discoverable* (usually only in their pairing screen). Devices connected to the host are always recorded. |
 | `Operation not permitted` on HCI | Run privileged (or add `NET_RAW`, `NET_ADMIN` and `seccomp=unconfined`). |
 | Many short-lived "devices" | These are randomized MACs. Tick **Hide randomized MACs**. |
+| Locked out of the UI | Set `WEB_USER`/`WEB_PASSWORD` and restart: that account is reset to admin with the given password. |
+| "Too many failed logins" | Wait 5 minutes (per-IP limit after 8 failures). |
+| Remote sensor shows offline | Check `docker logs yolo-sensor` on the sensor; `SERVER_URL` must be reachable from it and the token must match the sensor. |
+| Everyone is in the same room on the map | You need at least two sensors with room names; one sensor can only tell distance. |
 | `dropped` counter rising | The host is too slow for the frame rate. Lower the number of channels or use fewer adapters. |
 
 ---
@@ -394,11 +581,22 @@ yolo/
   wifi.py       monitor mode, channel hopping, 802.11 frame parsing
   bluetooth.py  raw HCI LE scanning / inquiry / connection tracking
   identify.py   passive device identification rules
-  store.py      sessions, samples, events, SQLite persistence
-  web.py        FastAPI JSON API
+  store.py      sessions, samples, events, ignore rules, plugin hooks, SQLite persistence
+  auth.py       accounts, sessions, API tokens, setup flow
+  settings.py   admin settings (JSON in the database)
+  manage.py     ignore list, my networks, labels, groups
+  alerts.py     alert rules, notification channels, engine
+  security.py   rogue AP / deauth / KARMA / config findings
+  survey.py     channel airtime survey and recommendations
+  health.py     my-network client health
+  sensors.py    remote sensor forwarding, ingest, room location, floor plan
+  reports.py    occupancy analytics and weekly email
+  metrics.py    Prometheus endpoint
+  web.py        FastAPI app and device/statistics API
   demo.py       synthetic data generator
-  static/       single-page UI (vanilla JS + Chart.js)
-tests/          parser and session-logic tests
+  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, login.html
+contrib/monitoring/  Prometheus + Grafana stack and dashboard
+tests/          parser, session, auth, alert, security, survey, location and report tests
 ```
 
 ---

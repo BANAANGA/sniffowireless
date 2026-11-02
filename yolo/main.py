@@ -2,31 +2,15 @@ import logging
 import threading
 import time
 
-import uvicorn
-
 from .config import Config
 from .oui import VendorLookup
-from .store import Store
-from .web import create_app
 
 log = logging.getLogger("yolo")
 
 
-def main():
-    cfg = Config.from_env()
-    logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    vendors = VendorLookup(cfg.manuf_path)
-    store = Store(cfg, vendors)
-    stop = threading.Event()
-    sensors = 0
-
-    if cfg.demo:
-        from .demo import DemoGenerator
-        demo = DemoGenerator(cfg, store)
-        demo.backfill(cfg.demo_backfill_hours)
-        threading.Thread(target=demo.run, args=(stop,), daemon=True, name="demo").start()
-        log.info("Demo mode enabled: generating synthetic devices")
-
+def start_sensors(cfg, sink, stop):
+    """Start Wi-Fi / Bluetooth capture; `sink` is the Store (server) or a Forwarder (remote sensor)."""
+    n = 0
     if cfg.wifi_interfaces:
         from .config import chan_label
         from .wifi import WifiSensor, assign_channels, set_regdomain, supported_freqs
@@ -45,24 +29,90 @@ def main():
                              ",".join(missing[:6]))
         for iface in cfg.wifi_interfaces:
             chans = cfg.wifi_channels_per_iface.get(iface) or plan.get(iface) or cfg.wifi_channels
-            WifiSensor(iface, chans, cfg, store).start(stop)
+            WifiSensor(iface, chans, cfg, sink).start(stop)
             log.info("Wi-Fi sensor on %s, channels %s", iface, ",".join(chan_label(f) for f in chans))
-            sensors += 1
-
+            n += 1
     if cfg.bt_devices:
         from .bluetooth import BluetoothSensor
         for dev in cfg.bt_devices:
-            BluetoothSensor(dev, cfg, store).start(stop)
+            BluetoothSensor(dev, cfg, sink).start(stop)
             log.info("Bluetooth sensor on %s", dev)
-            sensors += 1
+            n += 1
+    return n
 
-    if not sensors and not cfg.demo:
-        log.warning("No sensors configured: set WIFI_INTERFACES and/or BT_DEVICES (or DEMO_MODE=1)")
+
+def run_sensor(cfg):
+    """YOLO_MODE=sensor: capture only and forward everything to the central server."""
+    from .sensors import Forwarder
+    stop = threading.Event()
+    fwd = Forwarder(cfg)
+    if not start_sensors(cfg, fwd, stop):
+        raise SystemExit("Sensor mode needs WIFI_INTERFACES and/or BT_DEVICES")
+    log.info("Remote sensor forwarding to %s", cfg.server_url)
+    try:
+        fwd.run(stop)
+    except KeyboardInterrupt:
+        stop.set()
+
+
+def build(cfg):
+    """Create the store, plugins and shared context for server mode."""
+    from .alerts import AlertEngine
+    from .auth import Auth
+    from .context import Ctx
+    from .manage import apply_ignore, apply_meta
+    from .reports import ReportScheduler
+    from .security import SecurityMonitor
+    from .sensors import LocationTracker
+    from .settings import Settings
+    from .store import Store, connect
+    from .survey import SurveyCollector
+
+    store = Store(cfg, VendorLookup(cfg.manuf_path))
+    ctx = Ctx(cfg, store, Settings(lambda: connect(cfg.db_path)))
+    ctx.auth = Auth(cfg, ctx.wdb)
+    ctx.alerts = AlertEngine(ctx)
+    ctx.security = SecurityMonitor(ctx)
+    ctx.survey = SurveyCollector(ctx)
+    ctx.location = LocationTracker(ctx)
+    ctx.reports = ReportScheduler(ctx)
+    store.hooks += [ctx.security, ctx.survey, ctx.location]
+    store.listeners.append(ctx.alerts.on_events)
+    apply_ignore(ctx)
+    apply_meta(ctx)
+    return ctx
+
+
+def main():
+    cfg = Config.from_env()
+    logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    if cfg.mode == "sensor":
+        return run_sensor(cfg)
+
+    import uvicorn
+
+    from .web import create_app
+
+    ctx = build(cfg)
+    store = ctx.store
+    stop = threading.Event()
+    ctx.alerts.start(stop)
+    ctx.reports.start(stop)
+    if cfg.demo:
+        from .demo import DemoGenerator
+        demo = DemoGenerator(cfg, store, ctx)
+        demo.backfill(cfg.demo_backfill_hours)
+        threading.Thread(target=demo.run, args=(stop,), daemon=True, name="demo").start()
+        log.info("Demo mode enabled: generating synthetic devices")
+    if not start_sensors(cfg, store, stop) and not cfg.demo:
+        log.warning("No local sensors configured: set WIFI_INTERFACES and/or BT_DEVICES, add remote sensors in "
+                    "Settings → Sensors, or use DEMO_MODE=1")
 
     writer = threading.Thread(target=store.run, args=(stop,), name="store")
     writer.start()
     try:
-        uvicorn.run(create_app(cfg, store), host=cfg.web_host, port=cfg.web_port, log_level="warning")
+        uvicorn.run(create_app(ctx), host=cfg.web_host, port=cfg.web_port, log_level="warning",
+                    proxy_headers=True, forwarded_allow_ips="*")
     finally:
         log.info("Shutting down")
         stop.set()

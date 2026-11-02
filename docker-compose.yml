@@ -18,6 +18,8 @@ services:
       WIFI_REGDOMAIN: ${WIFI_REGDOMAIN:-}
       BT_DEVICES: ${BT_DEVICES:-}
       WEB_PORT: ${WEB_PORT:-8080}
+      WEB_USER: ${WEB_USER:-}
+      WEB_PASSWORD: ${WEB_PASSWORD:-}
       DEMO_MODE: ${DEMO_MODE:-0}
       TZ: ${TZ:-UTC}
     volumes:

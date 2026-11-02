@@ -1,0 +1,29 @@
+# Optional Prometheus + Grafana for yolo's /metrics endpoint.
+#   1. In yolo: Settings → API tokens → New token (scope "metrics"), save it to ./yolo_token
+#   2. docker compose -f contrib/monitoring/docker-compose.monitoring.yml up -d
+#   3. Grafana: http://<host>:3000 (admin / the GRAFANA_PASSWORD you set) → dashboard "yolo"
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=90d"]
+    extra_hosts: ["host.docker.internal:host-gateway"]  # yolo runs with host networking
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./yolo_token:/etc/prometheus/yolo_token:ro
+      - prometheus-data:/prometheus
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD}
+      GF_USERS_DEFAULT_THEME: dark
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -9,18 +9,38 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='%23e6e7e9'/%3E%3Ccircle cx='8' cy='8' r='6.5' fill='none' stroke='%23e6e7e9' stroke-opacity='.4'/%3E%3C/svg%3E">
 </head>
 <body>
-<header class="top">
+<aside class="side">
   <a class="brand" href="#/"><span class="dot"></span>yolo</a>
   <nav>
-    <a href="#/" data-nav="/">Overview</a>
-    <a href="#/devices" data-nav="/devices">Devices</a>
-    <a href="#/stats" data-nav="/stats">Statistics</a>
-    <a href="#/events" data-nav="/events">Events</a>
+    <div class="nav-group">
+      <a href="#/" data-nav="/">Overview</a>
+      <a href="#/devices" data-nav="/device">Devices</a>
+      <a href="#/groups" data-nav="/group">Groups</a>
+      <a href="#/map" data-nav="/map">Map</a>
+      <a href="#/stats" data-nav="/stats">Statistics</a>
+      <a href="#/reports" data-nav="/reports">Reports</a>
+    </div>
+    <div class="nav-group"><span class="nav-title">Wi-Fi</span>
+      <a href="#/mynet" data-nav="/mynet">My networks</a>
+      <a href="#/channels" data-nav="/channels">Channels</a>
+      <a href="#/security" data-nav="/security">Security</a>
+    </div>
+    <div class="nav-group"><span class="nav-title">Activity</span>
+      <a href="#/events" data-nav="/events">Events</a>
+      <a href="#/alerts" data-nav="/alerts">Alerts</a>
+    </div>
+    <div class="nav-group nav-bottom">
+      <a href="#/settings" data-nav="/settings">Settings</a>
+    </div>
   </nav>
-  <span id="live" class="live" title="Sensor status"></span>
-</header>
+  <div class="side-foot">
+    <span id="live" class="live" title="Sensor status"></span>
+    <div id="user" class="user"></div>
+  </div>
+</aside>
 <main id="app"></main>
 <script src="/vendor/chart.umd.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js'"></script>
 <script src="/static/app.js"></script>
+<script src="/static/views.js"></script>
 </body>
 </html>

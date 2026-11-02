@@ -1,67 +1,30 @@
 """HTTP API + static single-page UI."""
-import base64
 import csv
 import io
 import json
-import math
-import secrets
 import time
-from contextlib import closing
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import status
-from .store import connect
+from . import alerts, auth, health, manage, metrics, reports, security, sensors, status, survey
+from .auth import current_user
+from .web_util import overlap_counts
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
             "name", "ssid", "kind", "channel", "band", "brand", "model", "dev_type", "os", "wifi_gen", "era"}
 
 
-def overlap_counts(rows, since, until, bucket):
-    """Count distinct macs whose [start, end] overlaps each time bucket."""
-    n = max(1, math.ceil((until - since) / bucket))
-    sets = [set() for _ in range(n)]
-    for mac, start, end in rows:
-        i0 = max(0, int((start - since) // bucket))
-        i1 = min(n - 1, int((end - since) // bucket))
-        for i in range(i0, i1 + 1):
-            sets[i].add(mac)
-    return [(since + i * bucket, len(s)) for i, s in enumerate(sets)]
-
-
-def create_app(cfg, store):
+def create_app(ctx):
+    cfg, store = ctx.cfg, ctx.store
     app = FastAPI(title="yolo", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     static = Path(__file__).parent / "static"
     vendor_dir = Path("/app/vendor")
-
-    if cfg.web_user:
-        @app.middleware("http")
-        async def basic_auth(request: Request, call_next):
-            if request.url.path == "/api/health":
-                return await call_next(request)
-            ok = False
-            h = request.headers.get("authorization", "")
-            if h.lower().startswith("basic "):
-                try:
-                    u, _, p = base64.b64decode(h[6:]).decode().partition(":")
-                    ok = secrets.compare_digest(u, cfg.web_user) and secrets.compare_digest(p, cfg.web_password)
-                except Exception:
-                    ok = False
-            if not ok:
-                return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="yolo"'})
-            return await call_next(request)
-
-    def rows(sql, params=()):
-        with closing(connect(cfg.db_path, readonly=True)) as c:
-            return [dict(r) for r in c.execute(sql, params)]
-
-    def one(sql, params=()):
-        r = rows(sql, params)
-        return r[0] if r else None
+    ctx.auth.install(app)
+    rows, one = ctx.rows, ctx.one
 
     def _dev(d):
         if d:
@@ -73,16 +36,16 @@ def create_app(cfg, store):
 
     # ---------------------------------------------------------------- overview
     @app.get("/api/health")
-    def health():
+    def healthcheck():
         return {"ok": True}
 
-    @app.get("/api/status")
+    @app.get("/api/status", dependencies=[Depends(current_user)])
     def get_status():
         return {"sensors": status.snapshot(), "store": store.stats(), "demo": cfg.demo, "now": time.time(),
                 "config": {"active_window": cfg.active_window, "wifi_session_timeout": cfg.wifi_session_timeout,
                            "bt_session_timeout": cfg.bt_session_timeout, "retention_days": cfg.retention_days}}
 
-    @app.get("/api/summary")
+    @app.get("/api/summary", dependencies=[Depends(current_user)])
     def summary():
         now = time.time()
         since = now - cfg.active_window
@@ -94,11 +57,12 @@ def create_app(cfg, store):
                     "WHERE s.type='assoc' AND s.open=1 GROUP BY d.kind")
         for r in conn:
             kinds[r["kind"]]["connected"] = r["n"]
-        events = rows("SELECT e.*, d.kind, d.name, d.vendor, d.ssid, p.ssid peer_ssid FROM events e "
-                      "LEFT JOIN devices d ON d.mac=e.mac LEFT JOIN devices p ON p.mac=e.peer WHERE e.type != 'new_probe' ORDER BY e.id DESC LIMIT 30")
+        events = rows("SELECT e.*, d.kind, d.name, d.vendor, d.ssid, p.ssid peer_ssid, m.label FROM events e "
+                      "LEFT JOIN devices d ON d.mac=e.mac LEFT JOIN devices p ON p.mac=e.peer "
+                      "LEFT JOIN device_meta m ON m.mac=e.mac WHERE e.type != 'new_probe' ORDER BY e.id DESC LIMIT 30")
         return {"kinds": kinds, "events": events, "now": now}
 
-    @app.get("/api/timeline")
+    @app.get("/api/timeline", dependencies=[Depends(current_user)])
     def timeline(hours: float = 24, bucket: int = 0):
         now = time.time()
         bucket = bucket or max(60, int(hours * 3600 / 288) // 60 * 60)
@@ -118,7 +82,7 @@ def create_app(cfg, store):
     # ----------------------------------------------------------------- devices
     def device_filters(kind=None, active=0, q=None, vendor=None, ssid=None, probe=None, bssid=None,
                        channel=None, randomized=None, connected=0, band=None, dev_type=None, brand=None,
-                       os=None, wifi_gen=None, era=None, fp=None):
+                       os=None, wifi_gen=None, era=None, fp=None, known=None, watch=None, group=None):
         where, params = [], []
         if kind:
             ks = [k for k in kind.split(",") if k in KINDS]
@@ -130,8 +94,8 @@ def create_app(cfg, store):
         if q:
             like = f"%{q.strip()}%"
             where.append("(d.mac LIKE ? OR d.name LIKE ? OR d.ssid LIKE ? OR d.vendor LIKE ? OR d.brand LIKE ? "
-                         "OR d.model LIKE ?)")
-            params += [like] * 6
+                         "OR d.model LIKE ? OR m.label LIKE ? OR m.notes LIKE ?)")
+            params += [like] * 8
         if vendor:
             if vendor == "Unknown":
                 where.append("d.vendor IS NULL")
@@ -173,35 +137,48 @@ def create_app(cfg, store):
             params.append(int(randomized))
         if connected:
             where.append("d.mac IN (SELECT mac FROM sessions WHERE type='assoc' AND open=1)")
+        if known is not None:
+            where.append("COALESCE(m.known, 0) = ?")
+            params.append(int(known))
+        if watch:
+            where.append("m.watch = 1")
+        if group is not None:
+            where.append("m.group_id = ?")
+            params.append(group)
         return (" WHERE " + " AND ".join(where)) if where else "", params
 
-    @app.get("/api/devices")
+    @app.get("/api/devices", dependencies=[Depends(current_user)])
     def devices(kind: str = None, active: int = 0, q: str = None, vendor: str = None, ssid: str = None,
                 probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
                 connected: int = 0, band: str = None, dev_type: str = None, brand: str = None, os: str = None,
-                wifi_gen: int = None, era: int = None, fp: str = None, sort: str = "last_seen", order: str = "desc", limit: int = 100,
-                offset: int = 0):
+                wifi_gen: int = None, era: int = None, fp: str = None, known: int = None, watch: int = 0,
+                group: int = None, sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0):
         where, params = device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected,
-                                       band, dev_type, brand, os, wifi_gen, era, fp)
-        sort = sort if sort in SORTABLE else "last_seen"
+                                       band, dev_type, brand, os, wifi_gen, era, fp, known, watch, group)
+        sort = "m.label" if sort == "label" else f"d.{sort if sort in SORTABLE else 'last_seen'}"
         order = "ASC" if order.lower() == "asc" else "DESC"
         limit = max(1, min(limit, 1000))
-        total = one(f"SELECT COUNT(*) n FROM devices d{where}", params)["n"]
+        meta_join = " LEFT JOIN device_meta m ON m.mac = d.mac"
+        total = one(f"SELECT COUNT(*) n FROM devices d{meta_join}{where}", params)["n"]
         items = rows(
-            f"SELECT d.*, a.ssid AS bssid_ssid, "
+            f"SELECT d.*, a.ssid AS bssid_ssid, m.label, m.known, m.watch, m.group_id, g.name AS group_name, "
             f"EXISTS(SELECT 1 FROM sessions s WHERE s.mac=d.mac AND s.type='assoc' AND s.open=1) AS connected, "
             f"(SELECT COUNT(*) FROM sessions s WHERE s.peer=d.mac AND s.type='assoc' AND s.open=1) AS clients_now "
-            f"FROM devices d LEFT JOIN devices a ON a.mac = d.bssid{where} "
-            f"ORDER BY d.{sort} {order} NULLS LAST LIMIT ? OFFSET ?", params + [limit, offset])
+            f"FROM devices d LEFT JOIN devices a ON a.mac = d.bssid{meta_join} LEFT JOIN groups g ON g.id = m.group_id"
+            f"{where} ORDER BY {sort} {order} NULLS LAST LIMIT ? OFFSET ?", params + [limit, offset])
         return {"total": total, "items": [_dev(i) for i in items], "now": time.time()}
 
-    @app.get("/api/devices/{mac}")
+    @app.get("/api/devices/{mac}", dependencies=[Depends(current_user)])
     def device(mac: str):
         mac = mac.lower()
         d = _dev(one("SELECT d.*, a.ssid AS bssid_ssid FROM devices d LEFT JOIN devices a ON a.mac=d.bssid "
                      "WHERE d.mac=?", (mac,)))
         if not d:
             raise HTTPException(404, "device not found")
+        d["meta"] = one("SELECT m.*, g.name AS group_name FROM device_meta m LEFT JOIN groups g ON g.id=m.group_id "
+                        "WHERE m.mac=?", (mac,))
+        d["sightings"] = rows("SELECT w.sensor, w.last_seen, w.rssi, s.name, s.room FROM sightings w LEFT JOIN sensors s "
+                              "ON s.id = w.sensor WHERE w.mac=? ORDER BY w.last_seen DESC", (mac,))
         agg = "SELECT COUNT(*) n, COALESCE(SUM(end_ts-start_ts),0) total, MAX(end_ts-start_ts) longest, " \
               "AVG(end_ts-start_ts) avg, MIN(start_ts) first FROM sessions WHERE mac=? AND type=?"
         d["presence"] = one(agg, (mac, "presence"))
@@ -234,7 +211,7 @@ def create_app(cfg, store):
         d["now"] = time.time()
         return d
 
-    @app.get("/api/devices/{mac}/rssi")
+    @app.get("/api/devices/{mac}/rssi", dependencies=[Depends(current_user)])
     def device_rssi(mac: str, hours: float = 24):
         now = time.time()
         bucket = max(60, int(hours * 3600 / 500) // 60 * 60)
@@ -243,7 +220,7 @@ def create_app(cfg, store):
             "MAX(rssi_max) max, SUM(packets) packets FROM samples WHERE mac=? AND minute>=? GROUP BY t ORDER BY t",
             (bucket, bucket, mac.lower(), now - hours * 3600))}
 
-    @app.get("/api/devices/{mac}/sessions")
+    @app.get("/api/devices/{mac}/sessions", dependencies=[Depends(current_user)])
     def device_sessions(mac: str, hours: float = 168, as_peer: int = 0):
         since = time.time() - hours * 3600
         col = "s.peer" if as_peer else "s.mac"
@@ -253,7 +230,7 @@ def create_app(cfg, store):
             f"LEFT JOIN devices a ON a.mac={join} WHERE {col}=? AND s.end_ts>=? ORDER BY s.start_ts LIMIT 5000",
             (mac.lower(), since))}
 
-    @app.get("/api/devices/{mac}/clients")
+    @app.get("/api/devices/{mac}/clients", dependencies=[Depends(current_user)])
     def device_clients(mac: str, hours: float = 24):
         now = time.time()
         bucket = max(300, int(hours * 3600 / 200) // 300 * 300)
@@ -263,7 +240,7 @@ def create_app(cfg, store):
         pts = overlap_counts([(s["mac"], s["start_ts"], s["end_ts"]) for s in sess], since, now, bucket)
         return {"bucket": bucket, "t": [t for t, _ in pts], "n": [n for _, n in pts]}
 
-    @app.get("/api/devices/{mac}/heatmap")
+    @app.get("/api/devices/{mac}/heatmap", dependencies=[Depends(current_user)])
     def device_heatmap(mac: str, days: int = 28, tz: int = 0):
         since = time.time() - days * 86400
         grid = [[0] * 24 for _ in range(7)]
@@ -274,7 +251,7 @@ def create_app(cfg, store):
         return {"days": days, "grid": grid}
 
     # ------------------------------------------------------------------- stats
-    @app.get("/api/stats")
+    @app.get("/api/stats", dependencies=[Depends(current_user)])
     def stats(days: float = 7, tz: int = 0):
         now = time.time()
         since = now - days * 86400
@@ -335,7 +312,7 @@ def create_app(cfg, store):
             "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT 15", (since,))
         return out
 
-    @app.get("/api/events")
+    @app.get("/api/events", dependencies=[Depends(current_user)])
     def events(type: str = None, mac: str = None, kind: str = None, before: int = 0, limit: int = 100):
         where, params = [], []
         if type:
@@ -351,8 +328,9 @@ def create_app(cfg, store):
             where.append("e.id < ?")
             params.append(before)
         w = (" WHERE " + " AND ".join(where)) if where else ""
-        return {"items": rows(f"SELECT e.*, d.kind, d.name, d.vendor, d.ssid, p.ssid peer_ssid FROM events e "
-                              f"LEFT JOIN devices d ON d.mac=e.mac LEFT JOIN devices p ON p.mac=e.peer{w} "
+        return {"items": rows(f"SELECT e.*, d.kind, d.name, d.vendor, d.ssid, p.ssid peer_ssid, m.label FROM events e "
+                              f"LEFT JOIN devices d ON d.mac=e.mac LEFT JOIN devices p ON p.mac=e.peer "
+                              f"LEFT JOIN device_meta m ON m.mac=e.mac{w} "
                               f"ORDER BY e.id DESC LIMIT ?", params + [max(1, min(limit, 500))]),
                 "types": [r["type"] for r in rows("SELECT DISTINCT type FROM events ORDER BY type")]}
 
@@ -366,14 +344,14 @@ def create_app(cfg, store):
         return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                                  headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
-    @app.get("/api/export/devices.csv")
+    @app.get("/api/export/devices.csv", dependencies=[Depends(current_user)])
     def export_devices():
         cols = ["mac", "kind", "vendor", "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "name", "ssid",
                 "channel", "band", "freq", "enc", "bssid", "randomized", "packets",
                 "last_rssi", "best_rssi", "first_seen", "last_seen"]
         return _csv("devices.csv", cols, rows("SELECT * FROM devices ORDER BY last_seen DESC"))
 
-    @app.get("/api/export/sessions.csv")
+    @app.get("/api/export/sessions.csv", dependencies=[Depends(current_user)])
     def export_sessions(days: float = 7):
         cols = ["id", "mac", "type", "peer", "start_ts", "end_ts", "packets", "rssi_min", "rssi_max", "open",
                 "end_reason"]
@@ -381,6 +359,13 @@ def create_app(cfg, store):
                                                (time.time() - days * 86400,)))
 
     # ------------------------------------------------------------------ static
+    for mod in (auth, manage, alerts, security, survey, health, metrics, sensors, reports):
+        app.include_router(mod.routes(ctx))
+
+    @app.get("/login")
+    def login_page():
+        return FileResponse(static / "login.html")
+
     if vendor_dir.exists():
         app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
     app.mount("/static", StaticFiles(directory=static), name="static")

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS devices(
   vendor TEXT, name TEXT, ssid TEXT, channel INTEGER, freq INTEGER, band TEXT, enc TEXT,
   bssid TEXT, randomized INTEGER DEFAULT 0, packets INTEGER DEFAULT 0,
   last_rssi INTEGER, best_rssi INTEGER, extra TEXT, brand TEXT, model TEXT, dev_type TEXT, os TEXT,
-  wifi_gen INTEGER, era INTEGER, fp_hash TEXT, ident TEXT);
+  wifi_gen INTEGER, era INTEGER, fp_hash TEXT, ident TEXT, room TEXT, pos_x REAL, pos_y REAL);
 CREATE INDEX IF NOT EXISTS idx_devices_kind ON devices(kind, last_seen);
 CREATE INDEX IF NOT EXISTS idx_devices_last ON devices(last_seen);
 CREATE INDEX IF NOT EXISTS idx_devices_ssid ON devices(ssid);
@@ -50,22 +50,64 @@ CREATE TABLE IF NOT EXISTS probes(
   mac TEXT NOT NULL, ssid TEXT NOT NULL, first_seen REAL, last_seen REAL, count INTEGER DEFAULT 0,
   PRIMARY KEY(mac, ssid)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_probes_ssid ON probes(ssid);
+CREATE TABLE IF NOT EXISTS device_meta(
+  mac TEXT PRIMARY KEY, label TEXT, notes TEXT, known INTEGER DEFAULT 0, watch INTEGER DEFAULT 0,
+  group_id INTEGER, updated REAL);
+CREATE TABLE IF NOT EXISTS groups(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT DEFAULT 'person', notes TEXT,
+  watch INTEGER DEFAULT 0, created REAL);
+CREATE TABLE IF NOT EXISTS sightings(
+  mac TEXT NOT NULL, sensor TEXT NOT NULL, last_seen REAL, rssi REAL, PRIMARY KEY(mac, sensor)) WITHOUT ROWID;
 """
 
 DEVICE_COLS = ("mac", "kind", "first_seen", "last_seen", "vendor", "name", "ssid", "channel",
                "freq", "band", "enc", "bssid", "randomized", "packets", "last_rssi", "best_rssi", "extra",
-               "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "ident")
+               "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "ident", "room", "pos_x", "pos_y")
 JSON_COLS = ("extra", "ident")
 # Columns added after the first release: name -> SQL type (added by _migrate on old databases).
 ADDED_COLS = {"band": "TEXT", "brand": "TEXT", "model": "TEXT", "dev_type": "TEXT", "os": "TEXT",
-              "wifi_gen": "INTEGER", "era": "INTEGER", "fp_hash": "TEXT", "ident": "TEXT"}
+              "wifi_gen": "INTEGER", "era": "INTEGER", "fp_hash": "TEXT", "ident": "TEXT", "room": "TEXT",
+              "pos_x": "REAL", "pos_y": "REAL"}
 
 WIFI_KINDS = ("ap", "wifi_client")
 BT_KINDS = ("ble", "bt_classic")
 # Within a radio family a device can be "upgraded" (a client that starts beaconing is an AP,
 # a BLE address that answers an inquiry is dual-mode classic).
 KIND_RANK = {"wifi_client": 1, "ap": 2, "ble": 1, "bt_classic": 2}
-DEDUPE_EVENTS = {"deauth_broadcast": 60, "deauth": 30}
+DEDUPE_EVENTS = {"deauth_broadcast": 60, "deauth": 30, "deauth_flood": 300, "rogue_ap": 3600, "karma_ap": 3600,
+                 "moved": 600}
+
+
+class IgnoreRules:
+    """Devices / networks dropped before anything is stored (admin ignore list + IGNORE_MACS)."""
+
+    def __init__(self, macs=(), prefixes=(), ssids=()):
+        self.macs = {m.lower() for m in macs}
+        self.prefixes = tuple(p.lower().rstrip(":*") for p in prefixes if p)
+        self.ssids = {e["ssid"]: bool(e.get("clients")) for e in ssids if e.get("ssid")}
+        self.bssids = {}  # bssid -> also drop its clients (learned from beacons of ignored SSIDs)
+
+    def mac(self, mac):
+        return mac in self.macs or (self.prefixes and mac.startswith(self.prefixes))
+
+    def drop(self, o):
+        mac = o["mac"]
+        if self.mac(mac):
+            return True
+        t = o["t"]
+        if t == "wifi_ap":
+            ssid = o.get("ssid")
+            if ssid in self.ssids:
+                self.bssids[mac] = self.ssids[ssid]
+                return True
+            return mac in self.bssids
+        if t == "wifi_client":
+            b = o.get("bssid")
+            if b and (self.mac(b) or self.bssids.get(b)):
+                return True
+            if o.get("probe") in self.ssids and self.ssids[o["probe"]]:
+                return True
+        return False
 
 
 def is_randomized_mac(mac):
@@ -137,6 +179,15 @@ class Store:
         self.probe_updates = {}  # (mac, ssid) -> [first, last, count]
         self.known_probes = set()
         self._last_event = {}
+        self.ignore = IgnoreRules(cfg.ignore_macs)
+        self.important = set()  # labelled / watched / grouped devices: always log their events
+        self.mac_group = {}     # mac -> group id
+        self.group_names = {}
+        self.group_present = {}  # group id -> set of present member macs
+        self.sightings = {}     # (mac, sensor) -> [last_seen, rssi ewma]
+        self.sightings_dirty = set()
+        self.hooks = []         # plugins with optional observe(store, o, dev) / sweep(store, now) / flush(store, c)
+        self.listeners = []     # called with newly committed events (list of dicts)
 
     def _migrate(self):
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(devices)")}
@@ -172,6 +223,46 @@ class Store:
             log.info("Re-identified %d devices (identification rules v%d)", len(rows), identify.IDENT_VERSION)
 
     # ------------------------------------------------------------------ input
+    def command(self, fn):
+        """Run fn(store) on the writer thread (keeps in-memory state consistent)."""
+        self.q.put({"t": "_cmd", "fn": fn, "mac": "-"})
+
+    def set_ignore(self, macs, prefixes, ssids, known_bssids=()):
+        rules = IgnoreRules(set(macs) | set(self.cfg.ignore_macs), prefixes, ssids)
+        for bssid, ssid in known_bssids:
+            if ssid in rules.ssids:
+                rules.bssids[bssid] = rules.ssids[ssid]
+        self.ignore = rules
+
+    def set_meta(self, rows, groups):
+        """rows: (mac, label, known, watch, group_id); groups: {id: name}."""
+        self.important = {r[0] for r in rows if r[1] or r[2] or r[3] or r[4]}
+        self.mac_group = {r[0]: r[4] for r in rows if r[4]}
+        self.group_names = dict(groups)
+
+    def forget(self, macs):
+        """Drop devices from memory and delete their stored history (writer thread only)."""
+        macs = set(macs)
+        for table in (self.presence, self.assoc):
+            for m in [m for m in table if m in macs]:
+                del table[m]
+        self.closed = [s for s in self.closed if s.mac not in macs]
+        for m in macs:
+            self.devices.pop(m, None)
+            self.dirty.discard(m)
+        self.buckets = {k: v for k, v in self.buckets.items() if k[0] not in macs}
+        self.events = [e for e in self.events if e[1] not in macs]
+        self.probe_updates = {k: v for k, v in self.probe_updates.items() if k[0] not in macs}
+        c = self.conn
+        c.execute("BEGIN")
+        for m in macs:
+            for sql in ("DELETE FROM devices WHERE mac=?", "DELETE FROM sessions WHERE mac=? OR peer=?",
+                        "DELETE FROM samples WHERE mac=?", "DELETE FROM events WHERE mac=? OR peer=?",
+                        "DELETE FROM probes WHERE mac=?", "DELETE FROM sightings WHERE mac=?"):
+                c.execute(sql, (m, m) if sql.count("?") == 2 else (m,))
+        c.execute("COMMIT")
+        log.info("Purged %d ignored devices", len(macs))
+
     def put(self, obs):
         try:
             self.q.put_nowait(obs)
@@ -210,11 +301,28 @@ class Store:
 
     # ------------------------------------------------------------- processing
     def process(self, o):
+        t = o["t"]
+        if t == "_cmd":
+            o["fn"](self)
+            return
+        if t == "chan":
+            for h in self.hooks:
+                if hasattr(h, "observe"):
+                    h.observe(self, o, None)
+            return
         mac = o.get("mac")
-        if not mac or mac in self.cfg.ignore_macs:
+        if not mac or self.ignore.drop(o):
             return
         self.processed += 1
-        t, ts, rssi = o["t"], o["ts"], o.get("rssi")
+        ts, rssi = o["ts"], o.get("rssi")
+        if rssi is not None:
+            k = (mac, o.get("sensor") or "local")
+            sg = self.sightings.get(k)
+            if sg is None:
+                self.sightings[k] = [ts, float(rssi)]
+            else:
+                sg[0], sg[1] = max(sg[0], ts), sg[1] * 0.7 + rssi * 0.3
+            self.sightings_dirty.add(k)
 
         if t == "wifi_ap":
             dev = self._device(mac, "ap", ts, rssi, o, ("ssid", "channel", "freq", "band", "enc", "vendor"))
@@ -261,6 +369,12 @@ class Store:
         elif t == "event":
             dev = self.devices.get(mac)
             self._event(ts, mac, o["type"], o.get("peer"), o.get("detail"), dev=dev, always=True)
+
+        if self.hooks:
+            dev = self.devices.get(mac)
+            for h in self.hooks:
+                if hasattr(h, "observe"):
+                    h.observe(self, o, dev)
 
     def _device(self, mac, kind, ts, rssi, o, field_names):
         dev = self.devices.get(mac)
@@ -335,6 +449,12 @@ class Store:
             self.presence[mac] = s
             if ts - (dev["first_seen"] or ts) > 1:
                 self._event(ts, mac, "arrived", None, None, dev=dev)
+            g = self.mac_group.get(mac)
+            if g:
+                members = self.group_present.setdefault(g, set())
+                if not members:
+                    self._event(ts, mac, "group_arrived", f"group:{g}", self.group_names.get(g), always=True)
+                members.add(mac)
         s.touch(ts, rssi)
         self._sample(mac, ts, rssi)
 
@@ -383,7 +503,8 @@ class Store:
             b[4] = rssi if b[4] is None else max(b[4], rssi)
 
     def _event(self, ts, mac, type_, peer, detail, dev=None, always=False):
-        if not always and not self.cfg.events_for_randomized and dev is not None and dev.get("randomized"):
+        if not always and not self.cfg.events_for_randomized and dev is not None and dev.get("randomized") \
+                and mac not in self.important:
             return
         window = DEDUPE_EVENTS.get(type_)
         if window:
@@ -419,6 +540,16 @@ class Store:
             if now - s.last > (bt_to if s.bt else wifi_to):
                 self._close(s, "timeout")
                 self._event(s.last, s.mac, "left", None, None, dev=self.devices.get(s.mac))
+                g = self.mac_group.get(s.mac)
+                members = self.group_present.get(g)
+                if members and s.mac in members:
+                    members.discard(s.mac)
+                    if not members:
+                        self._event(s.last, s.mac, "group_left", f"group:{g}", self.group_names.get(g),
+                                    always=True)
+        for h in self.hooks:
+            if hasattr(h, "sweep"):
+                h.sweep(self, now)
         # Evict idle devices from the cache.
         for mac in [m for m, d in self.devices.items()
                     if m not in self.presence and m not in self.assoc and m not in self.dirty
@@ -434,7 +565,8 @@ class Store:
         c = self.conn
         sessions = [s for s in list(self.presence.values()) + list(self.assoc.values()) if s.dirty]
         sessions += self.closed
-        if not (self.dirty or sessions or self.buckets or self.events or self.probe_updates):
+        if not (self.dirty or sessions or self.buckets or self.events or self.probe_updates or
+                self.sightings_dirty or any(getattr(h, "pending", False) for h in self.hooks)):
             return
         c.execute("BEGIN")
         try:
@@ -471,15 +603,31 @@ class Store:
                 "ON CONFLICT(mac,ssid) DO UPDATE SET last_seen=MAX(last_seen,excluded.last_seen), "
                 "count=count+excluded.count",
                 [(m, s, *u) for (m, s), u in self.probe_updates.items()])
+            c.executemany("INSERT OR REPLACE INTO sightings(mac, sensor, last_seen, rssi) VALUES(?,?,?,?)",
+                          [(m, sn, *self.sightings[(m, sn)]) for m, sn in self.sightings_dirty
+                           if (m, sn) in self.sightings])
+            for h in self.hooks:
+                if hasattr(h, "flush"):
+                    h.flush(self, c)
             c.execute("COMMIT")
         except Exception:
             c.execute("ROLLBACK")
             raise
+        new_events = [{"ts": e[0], "mac": e[1], "type": e[2], "peer": e[3], "detail": e[4]} for e in self.events]
         self.dirty.clear()
         self.closed.clear()
         self.buckets.clear()
         self.events.clear()
         self.probe_updates.clear()
+        self.sightings_dirty.clear()
+        if len(self.sightings) > 100_000:
+            cutoff = time.time() - 3600
+            self.sightings = {k: v for k, v in self.sightings.items() if v[0] > cutoff}
+        for fn in self.listeners:
+            try:
+                fn(new_events)
+            except Exception:
+                log.exception("Event listener failed")
 
     def prune(self, now):
         cutoff = now - self.cfg.retention_days * 86400
@@ -489,7 +637,11 @@ class Store:
         c.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM sessions WHERE open=0 AND end_ts < ?", (cutoff,))
         c.execute("DELETE FROM probes WHERE last_seen < ?", (cutoff,))
-        c.execute("DELETE FROM devices WHERE last_seen < ?", (cutoff,))
+        c.execute("DELETE FROM devices WHERE last_seen < ? AND mac NOT IN (SELECT mac FROM device_meta)", (cutoff,))
+        c.execute("DELETE FROM sightings WHERE last_seen < ?", (cutoff,))
+        for h in self.hooks:
+            if hasattr(h, "prune"):
+                h.prune(self, c, cutoff)
         c.execute("COMMIT")
         c.execute("PRAGMA optimize")
 
