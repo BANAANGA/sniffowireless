@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS findings(
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, last_seen);
 """
 SECURITY_EVENTS = ("rogue_ap", "deauth_flood", "karma_ap", "deauth_broadcast", "security_finding", "rogue_dhcp",
-                   "arp_spoof")
+                   "arp_spoof", "tracker_following")
 
 
 class SecurityMonitor:
@@ -62,7 +62,7 @@ class SecurityMonitor:
             c.execute("INSERT INTO findings(key, type, severity, mac, ssid, title, detail, first_seen, last_seen, count) "
                       "VALUES(:key,:type,:severity,:mac,:ssid,:title,:detail,:first_seen,:last_seen,:count) "
                       "ON CONFLICT(key) DO UPDATE SET last_seen=excluded.last_seen, count=count+excluded.count, "
-                      "detail=excluded.detail, severity=excluded.severity, "
+                      "title=excluded.title, detail=excluded.detail, severity=excluded.severity, "
                       "status=CASE WHEN status='resolved' THEN 'open' ELSE status END", f)
         self.pending.clear()
 

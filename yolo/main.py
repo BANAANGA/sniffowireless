@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import time
 
@@ -65,6 +66,9 @@ def build(cfg):
     """Create the store, plugins and shared context for server mode."""
     from .alerts import AlertEngine
     from .auth import Auth
+    from .backup import BackupScheduler, apply_staged_restore
+    from .interference import InterferenceDetector
+    from .trackers import TrackerMonitor
     from .context import Ctx
     from .lan import LanMonitor
     from .manage import apply_ignore, apply_meta
@@ -75,6 +79,8 @@ def build(cfg):
     from .store import Store, connect
     from .survey import SurveyCollector
 
+    os.makedirs(cfg.data_dir, exist_ok=True)
+    apply_staged_restore(cfg)  # a full restore staged from the UI is applied before the database is opened
     store = Store(cfg, VendorLookup(cfg.manuf_path))
     ctx = Ctx(cfg, store, Settings(lambda: connect(cfg.db_path)))
     ctx.auth = Auth(cfg, ctx.wdb)
@@ -84,7 +90,10 @@ def build(cfg):
     ctx.location = LocationTracker(ctx)
     ctx.reports = ReportScheduler(ctx)
     ctx.lan = LanMonitor(ctx)
-    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan]
+    ctx.interference = InterferenceDetector(ctx)
+    ctx.trackers = TrackerMonitor(ctx)
+    ctx.backups = BackupScheduler(ctx)
+    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers]
     store.listeners.append(ctx.alerts.on_events)
     apply_ignore(ctx)
     apply_meta(ctx)
@@ -106,6 +115,7 @@ def main():
     stop = threading.Event()
     ctx.alerts.start(stop)
     ctx.reports.start(stop)
+    ctx.backups.start(stop)
     if cfg.demo:
         from .demo import DemoGenerator
         demo = DemoGenerator(cfg, store, ctx)

@@ -251,8 +251,10 @@ addRoute('/security', async () => {
           <td><span class="tag ${(b.enc || '').includes('OPN') ? 'bad' : ''}">${esc(b.enc || '—')}</span></td><td class="muted trunc">${esc(b.vendor || '—')}</td><td class="num muted">${ago(b.first_seen)}</td>
           <td>${isAdmin() ? `<label class="switch"><input type="checkbox" data-trust="${b.mac}" ${b.trusted ? 'checked' : ''}><span></span></label>` : (b.trusted ? 'yes' : 'no')}</td></tr>`).join(''),
         'No access points with your SSIDs seen yet')}</div></section>
+      <section class="panel span-3" id="trackers"></section>
       <section class="panel"><header><h2>Security events</h2></header><div class="body flush">${s.events.length ? `<ul class="events">${s.events.slice(0, 30).map(e => eventRow(e)).join('')}</ul>` : '<div class="empty">None in the last 7 days</div>'}</div></section>
     </div>`;
+  loadTrackers(document.getElementById('trackers'));
   app.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => { await send('POST', `/api/security/findings/${b.dataset.f}`, { status: b.dataset.s }); route(); });
   app.querySelectorAll('[data-trust]').forEach(c => c.onchange = async () => {
     await send('POST', '/api/security/trust', { bssids: [c.dataset.trust], trust: c.checked });
@@ -281,9 +283,11 @@ addRoute('/channels', async (_, params) => {
         c.channels.map(x => `<tr class="link" data-freq="${x.freq}"><td>${chText(x.channel, x.band)} <span class="faint">${x.freq} MHz</span></td><td class="num">${x.aps}</td><td class="num">${x.strongest != null ? x.strongest + ' dBm' : '—'}</td>
           <td class="num"><span class="meter"><i style="width:${Math.round((x.utilization || 0) * 100)}%"></i></span> ${x.utilization != null ? Math.round(x.utilization * 100) + '%' : '—'}</td>
           <td class="num">${x.retry_rate != null ? (x.retry_rate * 100).toFixed(1) + '%' : '—'}</td><td class="num muted">${x.noise != null ? x.noise + ' dBm' : '—'}</td><td class="num muted">${x.fps ?? '—'}</td></tr>`).join(''), 'No measurements')}</div></section>
+      <section class="panel span-3" id="intf"></section>
       <section class="panel span-3" id="ch-hist" hidden><header><h2 id="ch-hist-title">History</h2></header><div class="body"><div class="chart-box short"><canvas id="ch-tl"></canvas></div></div></section>
     </div>`;
   onSeg(app, 'hours', v => { location.hash = hrefWith('/channels', { hours: v }); });
+  loadInterference(document.getElementById('intf'), Math.max(1, Math.min(30, hours / 24)));
   ['2.4', '5', '6'].forEach(b => {
     const rows = c.channels.filter(x => x.band === b);
     const el = document.getElementById(`ch-${b.replace('.', '')}`);
@@ -452,7 +456,7 @@ addRoute('/reports', async (_, params) => {
 
 // ===================================================================== settings
 const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'],
-  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['tokens', 'API tokens']];
+  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['tokens', 'API tokens'], ['backup', 'Backup']];
 
 addRoute('/settings', async (_, params) => {
   const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'ignore'].includes(k));

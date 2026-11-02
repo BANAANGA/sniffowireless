@@ -312,3 +312,5 @@ ul.plain li { padding: 4px 0; }
 .ev-rogue_dhcp, .ev-arp_spoof { color: var(--bad); }
 .split { display: flex; gap: 12px; }
 .scroll-box { max-height: 180px; overflow-y: auto; }
+.ev-interference { color: var(--warn); }
+.ev-tracker_following { color: var(--bad); }

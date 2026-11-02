@@ -37,10 +37,11 @@ EVENT_TYPES = {
     "moved": "Moved to another room", "rogue_ap": "Rogue / evil-twin access point", "deauth_flood": "Deauthentication flood",
     "karma_ap": "KARMA-style access point", "deauth_broadcast": "Broadcast deauthentication",
     "security_finding": "Security finding on my networks", "rogue_dhcp": "Rogue / extra DHCP server",
-    "arp_spoof": "ARP spoofing",
+    "arp_spoof": "ARP spoofing", "tracker_following": "Unknown tracker following someone",
+    "interference": "Radio interference episode",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
-            "rogue_dhcp": "high", "arp_spoof": "high",
+            "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
             "deauth_broadcast": "medium", "new_device": "low"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
@@ -53,7 +54,8 @@ SECRET_FIELDS = {"token", "bot_token", "webhook_url", "secret_header", "password
 MASK = "••••••••"
 DEFAULT_RULES = [
     ("Watched devices arrive or leave", ["arrived", "left", "group_arrived", "group_left"], {"mode": "watchlist"}, {}),
-    ("Security alerts", ["rogue_ap", "deauth_flood", "karma_ap", "security_finding", "rogue_dhcp", "arp_spoof"],
+    ("Security alerts", ["rogue_ap", "deauth_flood", "karma_ap", "security_finding", "rogue_dhcp", "arp_spoof",
+                         "tracker_following"],
      {"mode": "any"}, {}),
     ("Unknown device at night", ["new_device", "arrived"], {"mode": "unknown"},
      {"start": "23:00", "end": "06:00"}),
@@ -171,6 +173,8 @@ def describe(ev, dev, meta, group):
         "deauth_flood": "Deauthentication flood detected", "karma_ap": f"KARMA access point {ev['mac']}",
         "deauth_broadcast": f"Broadcast deauth from {name}", "security_finding": f"Security: {ev.get('detail')}",
         "rogue_dhcp": f"Rogue DHCP server {ev['mac']}", "arp_spoof": f"ARP spoofing by {name}",
+        "tracker_following": f"{ev.get('detail') or 'Unknown tracker following someone'}",
+        "interference": f"Interference: {ev.get('detail')}",
     }
     lines = [time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:
