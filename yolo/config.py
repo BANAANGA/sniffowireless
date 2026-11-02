@@ -163,6 +163,9 @@ class Config:
     bt_inquiry_interval: int = 60
     bt_resolve_names: bool = True
 
+    eth_interfaces: list = field(default_factory=list)
+    eth_promisc: bool = True
+    lan_session_timeout: int = 900
     wifi_session_timeout: int = 300
     bt_session_timeout: int = 180
     active_window: int = 300
@@ -206,6 +209,9 @@ class Config:
             bt_inquiry=_bool("BT_INQUIRY", True),
             bt_inquiry_interval=_int("BT_INQUIRY_INTERVAL", 60),
             bt_resolve_names=_bool("BT_RESOLVE_NAMES", True),
+            eth_interfaces=_list("ETH_INTERFACES"),
+            eth_promisc=_bool("ETH_PROMISC", True),
+            lan_session_timeout=_int("LAN_SESSION_TIMEOUT", 900),
             wifi_session_timeout=_int("WIFI_SESSION_TIMEOUT", 300),
             bt_session_timeout=_int("BT_SESSION_TIMEOUT", 180),
             active_window=_int("ACTIVE_WINDOW", 300),

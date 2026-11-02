@@ -68,14 +68,15 @@ main { max-width: 1480px; width: 100%; margin: 0 auto; padding: 24px 28px; min-w
 
 /* layout */
 .grid { display: grid; gap: 16px; }
+.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .span-2 { grid-column: span 2; }
 .span-3 { grid-column: span 3; }
 .span-all { grid-column: 1 / -1; }
-@media (max-width: 1100px) { .cols-4 { grid-template-columns: repeat(2, 1fr); } .cols-3 { grid-template-columns: 1fr 1fr; } .span-3 { grid-column: 1 / -1; } }
-@media (max-width: 760px) { .cols-4, .cols-3, .cols-2 { grid-template-columns: 1fr; } .span-2, .span-3 { grid-column: auto; } main { padding: 16px; } }
+@media (max-width: 1100px) { .cols-5 { grid-template-columns: repeat(3, 1fr); } .cols-4 { grid-template-columns: repeat(2, 1fr); } .cols-3 { grid-template-columns: 1fr 1fr; } .span-3 { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .cols-5, .cols-4, .cols-3, .cols-2 { grid-template-columns: 1fr; } .span-2, .span-3 { grid-column: auto; } main { padding: 16px; } }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
 .panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); min-height: 45px; }
@@ -191,7 +192,7 @@ td.trunc { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .sensor:last-child { border-bottom: 0; }
 .sensor .err { color: var(--bad); font-size: 12px; white-space: normal; }
 .bars-list { list-style: none; margin: 0; padding: 0; }
-.bars-list li { display: grid; grid-template-columns: 1fr 48px; gap: 12px; padding: 6px 0; cursor: pointer; }
+.bars-list li { display: grid; grid-template-columns: 1fr 68px; gap: 12px; padding: 6px 0; cursor: pointer; }
 .bars-list li:hover .name { color: #fff; }
 .bars-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .bars-list .track { height: 4px; background: var(--panel-2); border-radius: 2px; margin-top: 4px; display: flex; overflow: hidden; }
@@ -307,3 +308,7 @@ ul.plain li { padding: 4px 0; }
   main { padding: 0; max-width: none; }
   .panel, .card { break-inside: avoid; }
 }
+
+.ev-rogue_dhcp, .ev-arp_spoof { color: var(--bad); }
+.split { display: flex; gap: 12px; }
+.scroll-box { max-height: 180px; overflow-y: auto; }

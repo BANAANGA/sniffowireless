@@ -5,6 +5,7 @@ const KINDS = {
   wifi_client: { label: 'Wi-Fi clients', short: 'Wi-Fi client', color: '#3ecf8e' },
   ble: { label: 'BLE devices', short: 'BLE', color: '#f5b84a' },
   bt_classic: { label: 'Bluetooth classic', short: 'BT classic', color: '#ef6f6c' },
+  lan: { label: 'LAN devices', short: 'LAN', color: '#a8b3c2' },
 };
 const TEXT = '#e6e7e9', MUTED = '#8a8f98', FAINT = '#5b6068', GRID = '#1f2227';
 const TZ = new Date().getTimezoneOffset();
@@ -97,7 +98,7 @@ const DEV_TYPES = {
   console: 'Game console', controller: 'Game controller', printer: 'Printer', camera: 'Camera', tag: 'Tracker tag',
   sensor: 'Sensor', iot: 'IoT device', light: 'Smart light', input: 'Keyboard / mouse', car: 'Car',
   router: 'Router / access point', hotspot: 'Mobile hotspot', smart_home: 'Smart home', beacon: 'Beacon',
-  sbc: 'Single-board computer', media: 'Media device', network: 'Network device',
+  sbc: 'Single-board computer', media: 'Media device', network: 'Network device', nas: 'NAS / storage', server: 'Server',
 };
 const genLabel = g => g == null ? 'Unknown' : g === 66 ? 'Wi-Fi 6E' : g === 3 ? 'Legacy a/b/g' : `Wi-Fi ${g}`;
 const eraLabel = y => y == null ? 'Unknown' : y <= 2003 ? 'before ~2010' : `${y} or newer`;
@@ -231,7 +232,7 @@ setInterval(pollStatus, 10000);
 async function viewOverview() {
   app.innerHTML = `
     <div class="page-head"><div><h1>Overview</h1><div class="sub">Devices seen within the last 5 minutes are counted as active.</div></div></div>
-    <div class="grid cols-4" id="cards"></div>
+    <div class="grid cols-5" id="cards"></div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2">
         <header><h2>Active devices over time</h2>${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</header>
@@ -465,6 +466,7 @@ async function viewDevice(mac, params) {
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
       ${trackPanel(d)}
+      ${lanPanel(d)}
       ${identPanel(d)}
       <section class="panel span-2"><header><h2>Signal strength</h2><span class="legend"><span><span class="swatch" style="background:${m.color}"></span>avg</span><span><span class="swatch" style="background:${m.color}44"></span>min–max</span></span></header>
         <div class="body"><div class="chart-box"><canvas id="rssi"></canvas></div></div></section>
@@ -478,6 +480,7 @@ async function viewDevice(mac, params) {
     </div>`;
 
   bindTrackPanel(d);
+  bindLanPanel(d);
   // facts / static sections
   const peers = document.getElementById('peers');
   peers.innerHTML = d.peers.length ? `<table><thead><tr><th>${isAp ? 'Client' : 'Access point / adapter'}</th><th>${isAp ? 'Vendor' : 'SSID'}</th><th class="num">Sessions</th><th class="num">Total time</th><th class="num">First</th><th class="num">Last</th></tr></thead><tbody>
@@ -520,6 +523,10 @@ async function viewDevice(mac, params) {
   onSeg(app, 'stype', v => { stype = v; renderSessions(); });
 
   async function loadRssi() {
+    if (d.kind === 'lan') {
+      document.getElementById('rssi').parentElement.innerHTML = '<div class="empty">Wired / LAN device: no radio signal</div>';
+      return;
+    }
     const r = await api(`/api/devices/${enc(mac)}/rssi?hours=${hours}`);
     const now = Date.now() / 1000, span = hours * 3600;
     const pts = r.points.filter(p => p.avg != null);

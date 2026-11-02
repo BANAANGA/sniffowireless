@@ -230,6 +230,60 @@ FLOORPLAN_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640
 <text x="730" y="440">Bedroom</text></g></svg>"""
 
 
+# ---------------------------------------------------------------- LAN / Ethernet demo
+GW = "e0:28:6d:00:00:01"
+APPLE_PRL = "1,121,3,6,15,108,114,119,252,95,44,46"
+WIN_PRL = "1,3,6,15,31,33,43,44,46,47,119,121,249,252"
+LINUX_PRL = "1,28,2,3,15,6,119,12,44,47,26,121,42"
+DESTS = {  # name -> (ip, dns name, port, proto, KB in per active minute, KB out)
+    "netflix": ("45.57.90.1", "nflxvideo.net", 443, 6, 28000, 300), "youtube": ("142.250.179.14", "googlevideo.com", 443, 17, 9000, 200),
+    "icloud": ("17.248.190.1", "icloud.com", 443, 6, 300, 120), "push": ("17.57.144.20", "courier.push.apple.com", 5223, 6, 4, 3),
+    "whatsapp": ("157.240.201.60", "whatsapp.net", 443, 6, 80, 40), "spotify": ("35.186.224.25", "audio-ak.spotifycdn.com", 443, 6, 1200, 30),
+    "alexa": ("52.94.233.129", "avs-alexa-eu.amazon.com", 443, 6, 6, 4), "google": ("142.250.179.196", "www.google.com", 443, 17, 200, 40),
+    "github": ("140.82.121.4", "github.com", 443, 6, 400, 150), "office": ("52.113.194.132", "teams.microsoft.com", 443, 17, 1500, 1100),
+    "windowsupdate": ("13.107.4.50", "download.windowsupdate.com", 80, 6, 2500, 20), "quickconnect": ("52.28.104.1", "quickconnect.to", 443, 6, 15, 10),
+    "tuya": ("3.122.66.79", "a1.tuyaeu.com", 8883, 6, 1, 1), "ntp": ("162.159.200.123", "pool.ntp.org", 123, 17, 1, 1),
+    "hue": ("52.57.88.10", "diagnostics.meethue.com", 443, 6, 2, 2), "steam": ("155.133.248.34", "cache1-ams1.steamcontent.com", 80, 6, 20000, 300),
+    "psn": ("23.32.165.1", "np.playstation.net", 443, 6, 3000, 200), "dns": ("9.9.9.9", "dns.quad9.net", 53, 17, 3, 2),
+}
+WIRED = [  # mac, ip, hostname, schedule, lan fingerprint, destinations
+    (GW, "192.168.1.1", "fritz.box", "always", {"ssdp": {"server": "FRITZ!Box 7590 UPnP/1.0 AVM FRITZ!Box 7590 154.07.57",
+                                                          "nt": ["urn:schemas-upnp-org:device:InternetGatewayDevice:2"]}}, ["dns", "ntp"]),
+    ("24:a4:3c:00:00:99", "192.168.1.2", None, "always", {"lldp": {"sysname": "US-8-60W", "sysdesc": "UniFi Switch US-8-60W, 6.6.55",
+                                                                  "port": "Port 1"}}, []),
+    ("00:11:32:00:00:01", "192.168.1.10", "DiskStation", "always", {"mdns": {"services": ["_smb._tcp", "_afpovertcp._tcp", "_http._tcp"],
+                                                                             "txt": {"model": "DS920+"}},
+                                                                    "ssdp": {"server": "Synology/DSM/192.168.1.10"}}, ["quickconnect", "ntp"]),
+    ("d8:bb:c1:00:00:01", "192.168.1.20", "GAMING-PC", "evening", {"dhcp": {"vendor": "MSFT 5.0", "prl": WIN_PRL}},
+     ["steam", "windowsupdate", "google"]),
+    ("00:17:88:00:00:01", "192.168.1.40", "Philips-hue", "always", {"mdns": {"services": ["_hue._tcp", "_hap._tcp"],
+                                                                              "txt": {"md": "BSB002"}}}, ["hue"]),
+    ("00:80:77:00:00:01", "192.168.1.41", "BRW008077000001", "always", {"mdns": {"services": ["_ipp._tcp", "_uscan._tcp", "_printer._tcp"],
+                                                                                 "txt": {"ty": "Brother HL-L2350DW series", "usb_mfg": "Brother"}}}, []),
+    ("dc:a6:32:00:00:01", "192.168.1.42", "homeassistant", "always", {"dhcp": {"prl": LINUX_PRL},
+                                                                      "mdns": {"services": ["_home-assistant._tcp", "_ssh._tcp"]}}, ["tuya", "github"]),
+    ("bc:33:29:00:00:01", "192.168.1.43", "PS5-417", "evening", {"dhcp": {"vendor": "PS5"}}, ["psn"]),
+]
+WIFI_LAN = {  # Wi-Fi clients bridged onto the LAN: ip, hostname, fingerprint, destinations
+    "a4:83:e7:01:00:01": ("192.168.1.21", "Sams-iPhone", {"dhcp": {"prl": APPLE_PRL}, "mdns": {"services": ["_companion-link._tcp"], "txt": {"model": "iPhone15,2"}}},
+                          ["icloud", "push", "whatsapp", "youtube", "spotify"]),
+    "a4:83:e7:01:00:02": ("192.168.1.24", "Robins-MacBook-Pro", {"dhcp": {"prl": APPLE_PRL}, "mdns": {"services": ["_companion-link._tcp"], "txt": {"model": "MacBookPro18,3"}}},
+                          ["icloud", "github", "push", "google"]),
+    "5c:0a:5b:01:00:03": ("192.168.1.22", "Galaxy-S23", {"dhcp": {"vendor": "android-dhcp-14", "prl": "1,3,6,15,26,28,51,58,59,43,114,108"}},
+                          ["whatsapp", "youtube", "google"]),
+    "a0:a8:cd:01:00:04": ("192.168.1.23", "LAPTOP-8K3J2QH9", {"dhcp": {"vendor": "MSFT 5.0", "prl": WIN_PRL}}, ["office", "github", "windowsupdate"]),
+    "fc:65:de:01:00:08": ("192.168.1.30", "amazon-3f2a1c", {"dhcp": {"vendor": "udhcp 1.31.1"}}, ["alexa", "spotify"]),
+    "5c:aa:fd:01:00:09": ("192.168.1.31", "SonosZP", {"mdns": {"services": ["_sonos._tcp", "_spotify-connect._tcp"]},
+                                                     "ssdp": {"server": "Linux UPnP/1.0 Sonos/79.1-52010 (ZPS27)"}}, ["spotify"]),
+    "f4:f5:d8:01:00:0a": ("192.168.1.32", "Google-Nest-Mini", {"mdns": {"services": ["_googlecast._tcp"], "txt": {"md": "Google Nest Mini"}}}, ["google"]),
+    "5c:0a:5b:01:00:0f": ("192.168.1.33", "Samsung-TV", {"ssdp": {"server": "SAMSUNG-Linux/4.1, UPnP/1.0, Samsung UPnP SDK/1.0",
+                                                                  "nt": ["urn:schemas-upnp-org:device:MediaRenderer:1"]}}, ["netflix", "youtube"]),
+    "b8:27:eb:01:00:05": ("192.168.1.5", "pihole", {"dhcp": {"vendor": "dhcpcd-9.4.1", "prl": LINUX_PRL}}, ["dns", "ntp"]),
+}
+LOCAL_FLOWS = [("d8:bb:c1:00:00:01", "192.168.1.10", 445, 6, 4000, 600), ("5c:0a:5b:01:00:0f", "192.168.1.10", 32400, 6, 6000, 100),
+               ("dc:a6:32:00:00:01", "192.168.1.40", 80, 6, 3, 2)]
+
+
 def room_of(mac, t):
     if mac in CARRIED_BY:
         return room_of(CARRIED_BY[mac], t)
@@ -327,6 +381,7 @@ class DemoGenerator:
         ctx = self.ctx
         if ctx.settings.get("networks")["ssids"]:
             return
+        ctx.settings.set("lan", {"trusted_dhcp": [GW]})
         ctx.settings.set("networks", {"ssids": ["HomeNet", "HomeNet-IoT"], "trusted_bssids": [
             "24:a4:3c:10:00:01", "24:a4:3c:10:00:02", "24:a4:3c:10:00:09", "50:c7:bf:20:00:03"]})
         now = time.time()
@@ -389,7 +444,50 @@ class DemoGenerator:
             for i in range(40):
                 extra.append({"t": "wifi_client", "ts": t + i * 0.2, "mac": "a4:83:e7:01:00:01",
                               "bssid": "24:a4:3c:10:00:01", "frame": "deauth", "reason": 7, "rssi": None})
+        extra += self.lan(t, out)
         return extra
+
+    def lan(self, t, out):
+        """Ethernet-side observations: discovery, DHCP, DNS, traffic summaries and staged LAN attacks."""
+        rng = self.rng
+        res, items, hosts = [], [], {}
+        minute = int(t // 60)
+        present_wifi = {o["mac"] for o in out if o.get("t") == "wifi_client" and o.get("bssid")}
+        hour = ((t + 3600) % 86400) / 3600
+        evening = 18 <= hour or hour < 1
+        devices = [(m, ip, h, present(sched, m, t) if sched != "always" else True, fp, dests)
+                   for m, ip, h, sched, fp, dests in WIRED]
+        devices += [(m, ip, h, m in present_wifi, fp, dests) for m, (ip, h, fp, dests) in WIFI_LAN.items()]
+        for mac, ip, host, here, fp, dests in devices:
+            if not here:
+                continue
+            hosts[mac] = ip
+            if minute % 60 == _h(mac) % 60 or minute % 1440 == 0:  # hourly re-announcement (DHCP / mDNS / SSDP / LLDP)
+                res.append({"t": "lan", "ts": t + 2, "mac": mac, "ip": ip, "name": host, "src": "dhcp", "fp": {"lan": fp}})
+            for d in dests:
+                ip_d, name, port, proto, kin, kout = DESTS[d]
+                busy = (0.6 + 0.8 * evening) if kin > 1000 else 1
+                if kin > 1000 and rng.random() > 0.35 * busy:
+                    continue  # streaming / downloads only some minutes
+                f = rng.uniform(0.5, 1.5) * busy
+                items.append((mac, ip_d, proto, port, int(kout * 1024 * f), int(kin * 1024 * f), int(kin * f) + 3, name))
+                if minute % 10 == _h(mac, d) % 10:
+                    res.append({"t": "lan", "ts": t + 5, "mac": mac, "ip": ip, "dns": name, "src": "dns"})
+        for mac, peer, port, proto, kin, kout in LOCAL_FLOWS:
+            if mac in hosts and rng.random() < 0.3:
+                items.append((mac, peer, proto, port, kout * 1024, kin * 1024, kin, None))
+        res.append({"t": "lan_traffic", "ts": t + 50, "mac": "-", "items": items, "hosts": hosts})
+        if minute % 30 == 0:
+            res.append({"t": "dhcp_server", "ts": t + 1, "mac": GW, "ip": "192.168.1.1", "msg": "ack",
+                        "client": "a4:83:e7:01:00:01", "router": "192.168.1.1"})
+        day, mod = int((t + 3600) // 86400), int(((t + 3600) % 86400) // 60)
+        if day % 3 == 2 and 15 * 60 <= mod < 15 * 60 + 20 and mod % 5 == 0:  # a travel router plugged in, handing out leases
+            res.append({"t": "dhcp_server", "ts": t + 3, "mac": "50:c7:bf:00:00:66", "ip": "192.168.0.1", "msg": "offer",
+                        "client": "5c:0a:5b:01:00:03", "router": "192.168.0.1"})
+        if day % 4 == 1 and mod == 2 * 60 + 30:  # ARP spoofing of the gateway
+            for i, m in enumerate([GW, "0a:66:00:00:00:66"] * 3):
+                res.append({"t": "lan", "ts": t + i, "mac": m, "ip": "192.168.1.1", "src": "arp"})
+        return res
 
     def backfill(self, hours):
         if not hours:

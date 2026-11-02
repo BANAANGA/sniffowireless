@@ -36,9 +36,11 @@ EVENT_TYPES = {
     "connected": "Connected to a network", "disconnected": "Disconnected", "roamed": "Roamed between APs",
     "moved": "Moved to another room", "rogue_ap": "Rogue / evil-twin access point", "deauth_flood": "Deauthentication flood",
     "karma_ap": "KARMA-style access point", "deauth_broadcast": "Broadcast deauthentication",
-    "security_finding": "Security finding on my networks",
+    "security_finding": "Security finding on my networks", "rogue_dhcp": "Rogue / extra DHCP server",
+    "arp_spoof": "ARP spoofing",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
+            "rogue_dhcp": "high", "arp_spoof": "high",
             "deauth_broadcast": "medium", "new_device": "low"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
@@ -51,7 +53,8 @@ SECRET_FIELDS = {"token", "bot_token", "webhook_url", "secret_header", "password
 MASK = "••••••••"
 DEFAULT_RULES = [
     ("Watched devices arrive or leave", ["arrived", "left", "group_arrived", "group_left"], {"mode": "watchlist"}, {}),
-    ("Security alerts", ["rogue_ap", "deauth_flood", "karma_ap", "security_finding"], {"mode": "any"}, {}),
+    ("Security alerts", ["rogue_ap", "deauth_flood", "karma_ap", "security_finding", "rogue_dhcp", "arp_spoof"],
+     {"mode": "any"}, {}),
     ("Unknown device at night", ["new_device", "arrived"], {"mode": "unknown"},
      {"start": "23:00", "end": "06:00"}),
 ]
@@ -167,6 +170,7 @@ def describe(ev, dev, meta, group):
         "moved": f"{name} moved", "rogue_ap": f"Rogue access point: {ev.get('detail') or name}",
         "deauth_flood": "Deauthentication flood detected", "karma_ap": f"KARMA access point {ev['mac']}",
         "deauth_broadcast": f"Broadcast deauth from {name}", "security_finding": f"Security: {ev.get('detail')}",
+        "rogue_dhcp": f"Rogue DHCP server {ev['mac']}", "arp_spoof": f"ARP spoofing by {name}",
     }
     lines = [time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:
