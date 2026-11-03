@@ -14,6 +14,8 @@ DEFAULTS = {
     "floorplan": {"image": None, "width": None, "height": None},
     "lan": {"trusted_dhcp": []},
     "backup": {"enabled": False, "hour": 3, "keep": 7, "last_run": 0},
+    # Networks under investigation: [{"ssid", "note", "added"}]
+    "investigate": {"ssids": []},
 }
 
 

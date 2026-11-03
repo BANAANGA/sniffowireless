@@ -241,3 +241,25 @@ def test_logs_admin_only_and_redacted(env):
     assert c.put("/api/logs/level", json={"level": "TRACE"}, headers=H).status_code == 422
     c.put("/api/logs/level", json={"level": "INFO"}, headers=H)
     assert HANDLER.buf.maxlen == 5000
+
+
+def test_investigations_api(env):
+    ctx, c = env
+    ctx.store.process({"t": "wifi_ap", "ts": time.time(), "mac": "0a:00:00:00:00:01", "ssid": "Café <b>", "enc": "OPN"})
+    ctx.store.flush()
+    login(c)
+    assert c.put("/api/settings/investigate", json={"ssids": [{"ssid": "x" * 100}]}, headers=H).status_code == 422
+    r = c.put("/api/settings/investigate", json={"ssids": [{"ssid": "Café <b>", "note": "who?\x07"}, {"ssid": "Café <b>"}]},
+              headers=H)
+    assert r.json()["count"] == 1
+    entry = c.get("/api/settings/investigate").json()["ssids"][0]
+    assert entry["note"] == "who?" and entry["added"]
+    lst = c.get("/api/investigations").json()["items"]
+    assert lst[0]["ssid"] == "Café <b>" and lst[0]["aps"] == 1
+    d = c.get("/api/investigations/" + "Caf%C3%A9%20%3Cb%3E").json()
+    assert d["investigated"] and d["aps"][0]["mac"] == "0a:00:00:00:00:01"
+    assert [x["ssid"] for x in c.get("/api/ssids?q=caf").json()["items"]] == ["Café <b>"]
+    c.post("/api/auth/logout", headers=H)
+    login(c, "viewer")
+    assert c.get("/api/investigations").status_code == 200
+    assert c.put("/api/settings/investigate", json={"ssids": []}, headers=H).status_code == 403

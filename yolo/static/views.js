@@ -455,11 +455,11 @@ addRoute('/reports', async (_, params) => {
 });
 
 // ===================================================================== settings
-const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'],
+const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'],
   ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['tokens', 'API tokens'], ['backup', 'Backup']];
 
 addRoute('/settings', async (_, params) => {
-  const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'ignore'].includes(k));
+  const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore'].includes(k));
   let tab = params.get('tab') || 'account';
   app.innerHTML = `<div class="page-head"><div><h1>Settings</h1></div></div><div class="settings"><nav class="subnav">${tabs.map(([k, l]) => `<a href="${hrefWith('/settings', { tab: k })}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</nav><div id="set-body" class="set-body"></div></div>`;
   const el = document.getElementById('set-body');
@@ -495,26 +495,7 @@ const SETTINGS_VIEWS = {
     el.querySelectorAll('[data-role]').forEach(s => s.onchange = async () => { await send('POST', `/api/users/${s.dataset.role}/role`, { role: s.value }); toast('Role changed'); });
     el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (confirm('Delete this user?')) { try { await send('DELETE', `/api/users/${b.dataset.del}`); SETTINGS_VIEWS.users(el); } catch (e) { toast(e.message, true); } } });
   },
-  async networks(el) {
-    const [n, st] = await Promise.all([api('/api/settings/networks'), api('/api/stats?days=30')]);
-    let ssids = [...n.ssids];
-    const render = () => {
-      el.innerHTML = `<section class="panel"><header><h2>My networks</h2></header><div class="body">
-        <p class="muted">SSIDs you own. Enables the <a href="#/mynet">My networks</a> health view, evil-twin detection and configuration checks on the <a href="#/security">Security</a> page.</p>
-        <div class="chips">${ssids.map((s, i) => `<span class="chip">${esc(s)}${isAdmin() ? `<a href="#" data-rm="${i}">✕</a>` : ''}</span>`).join('') || '<span class="faint">None yet</span>'}</div>
-        ${isAdmin() ? `<form id="add-ssid" class="row" style="margin-top:12px"><input name="ssid" list="seen-ssids" placeholder="SSID" required><datalist id="seen-ssids">${st.ssids.map(x => `<option value="${esc(x.ssid)}">`).join('')}</datalist><button class="btn">Add</button></form>
-        <div style="margin-top:16px"><button class="btn primary" id="save-net">Save</button></div>` : ''}
-        ${n.bssids.length ? `<h3 class="subhead">Access points broadcasting them</h3>${tableHtml('<th>BSSID</th><th>SSID</th><th>Channel</th><th>Security</th><th>Trusted</th>',
-          n.bssids.map(b => `<tr><td>${devLink(b.mac)}</td><td>${esc(b.ssid)}</td><td>${chText(b.channel, b.band)}</td><td class="muted">${esc(b.enc || '')}</td><td>${n.trusted_bssids.includes(b.mac) ? '<span class="tag on">yes</span>' : '<span class="tag">no</span>'}</td></tr>`).join(''))}
-          <p class="faint small-text">Mark trusted access points on the <a href="#/security">Security</a> page.</p>` : ''}</div></section>`;
-      el.querySelectorAll('[data-rm]').forEach(a => a.onclick = e => { e.preventDefault(); ssids.splice(+a.dataset.rm, 1); render(); });
-      const f = el.querySelector('#add-ssid');
-      if (f) f.onsubmit = e => { e.preventDefault(); const v = fv(f, 'ssid'); if (v && !ssids.includes(v)) ssids.push(v); render(); };
-      const sv = el.querySelector('#save-net');
-      if (sv) sv.onclick = async () => { await send('PUT', '/api/settings/networks', { ssids, trusted_bssids: n.trusted_bssids }); toast('Saved'); };
-    };
-    render();
-  },
+  // networks: see investigations.js (shares the SSID picker)
   async ignore(el) {
     const ig = await api('/api/settings/ignore');
     const ro = !isAdmin();
@@ -523,7 +504,7 @@ const SETTINGS_VIEWS = {
       <form id="ig" class="form-narrow">
         <label class="field">Devices (MAC addresses, one per line)<textarea name="macs" rows="4" ${ro ? 'readonly' : ''} placeholder="aa:bb:cc:dd:ee:ff">${esc(ig.macs.join('\n'))}</textarea></label>
         <label class="field">Vendor prefixes (first 3–5 bytes, one per line)<textarea name="prefixes" rows="3" ${ro ? 'readonly' : ''} placeholder="24:0a:c4">${esc(ig.prefixes.join('\n'))}</textarea></label>
-        <div class="field">Networks (SSIDs)<div id="ig-ssids"></div>${ro ? '' : '<button type="button" class="btn small" id="add-ig">Add network</button>'}</div>
+        <div class="field">Networks (SSIDs)<div id="ig-ssids"></div>${ro ? '' : '<div class="row"><button type="button" class="btn small" id="pick-ig">Choose networks…</button><button type="button" class="btn small" id="add-ig">Type a name</button></div>'}</div>
         ${ro ? '' : `<label class="check"><input type="checkbox" name="purge"> Also delete data already stored for matching devices</label>
         <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><span class="faint small-text" id="ig-preview"></span></div>`}
       </form></div></section>`;
@@ -539,6 +520,15 @@ const SETTINGS_VIEWS = {
     draw();
     if (ro) return;
     el.querySelector('#add-ig').onclick = () => { rows.push({ ssid: '', clients: false }); draw(); };
+    el.querySelector('#pick-ig').onclick = async () => {
+      const r = await pickSsids({ title: 'Ignore networks', selected: rows.map(x => x.ssid).filter(Boolean),
+        hint: 'Ticked networks are dropped before anything is stored. Tick “also ignore its clients” afterwards to drop the devices connected to them too.' });
+      if (!r) return;
+      const old = Object.fromEntries(rows.map(x => [x.ssid, x]));
+      rows.splice(0, rows.length, ...r.map(s => old[s] || { ssid: s, clients: false }));
+      draw();
+      form.dispatchEvent(new Event('change'));
+    };
     const form = el.querySelector('#ig');
     const body = () => ({ macs: fv(form, 'macs').split(/\s+/).filter(Boolean), prefixes: fv(form, 'prefixes').split(/\s+/).filter(Boolean),
       ssids: rows.filter(r => r.ssid), purge: fv(form, 'purge') });

@@ -35,7 +35,7 @@ from .settings import DEFAULTS
 log = logging.getLogger("yolo.backup")
 
 FORMAT = "yolo-config"
-CONFIG_TABLES = ["device_meta", "groups", "alert_rules", "notifiers", "sensors"]
+CONFIG_TABLES = ["device_meta", "groups", "alert_rules", "notifiers", "sensors"]  # settings (incl. investigate) too
 STAGED = "restore-pending.tar.gz"
 NAME_RX = re.compile(r"^yolo-\d{8}-\d{6}\.tar\.gz$")
 
@@ -127,6 +127,8 @@ def import_config(ctx, data):
     ctx.security.reload()
     ctx.location.reload()
     ctx.lan.reload()
+    if ctx.investigate:
+        ctx.investigate.reload()
     return {t: len(tables.get(t) or []) for t in CONFIG_TABLES + ["users"] if t in tables}
 
 

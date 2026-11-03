@@ -349,3 +349,13 @@ mark { background: rgba(245,184,74,.22); color: inherit; border-radius: 2px; pad
 .lg-warning .lg-l { color: var(--warn); }
 .lg-error .lg-l, .lg-critical .lg-l, .lg-error .lg-m, .lg-critical .lg-m { color: var(--bad); }
 @media (max-width: 760px) { .lg { grid-template-columns: 70px 1fr; } .lg-l, .lg-s { display: none; } }
+
+/* SSID picker */
+.sp-list { max-height: 50vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.sp-list th, .sp-list td { padding: 6px 8px; }
+.modal-body { min-width: 0; overflow-wrap: anywhere; }
+.modal.wide { max-width: min(860px, calc(100vw - 32px)); }
+.sp-list table th { position: sticky; top: 0; }
+.sp-list tbody tr { cursor: pointer; }
+.sp-list tbody tr:hover td { background: var(--panel-2); }
+.ev-investigated_seen, .ev-investigated_connect, .ev-investigated_probe { color: var(--warn); }

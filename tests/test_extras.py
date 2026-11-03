@@ -145,3 +145,32 @@ def test_bad_backup_rejected(tmp_path):
         tar.add(p, arcname="../../etc/x")
     with pytest.raises(ValueError):
         validate_full_backup(str(bad))
+
+
+# -------------------------------------------------------------- investigations
+def test_investigation_events_and_catalogue(ctx):
+    from yolo.investigate import ssid_catalogue
+    s = ctx.store
+    ctx.settings.set("investigate", {"ssids": [{"ssid": "FreeWiFi", "note": "rogue?", "added": 1}]})
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
+    t = time.time()
+    s.process({"t": "wifi_ap", "ts": t, "mac": "0a:00:00:00:00:01", "ssid": "FreeWiFi", "enc": "OPN", "channel": 6})
+    s.process({"t": "wifi_ap", "ts": t + 30, "mac": "0a:00:00:00:00:01", "ssid": "FreeWiFi", "enc": "OPN"})  # no repeat
+    s.process({"t": "wifi_ap", "ts": t, "mac": "24:a4:3c:00:00:01", "ssid": "HomeNet", "enc": "WPA2/PSK"})
+    s.process({"t": "wifi_client", "ts": t + 5, "mac": PHONE, "bssid": "0a:00:00:00:00:01", "frame": "data"})
+    s.process({"t": "wifi_client", "ts": t + 6, "mac": PHONE, "bssid": "0a:00:00:00:00:01", "frame": "data"})  # no repeat
+    s.process({"t": "wifi_client", "ts": t + 7, "mac": "da:00:00:00:00:02", "frame": "probe", "probe": "FreeWiFi"})
+    s.process({"t": "wifi_client", "ts": t + 8, "mac": "da:00:00:00:00:02", "frame": "probe", "probe": "OtherNet"})
+    s.flush()
+    ev = [(r["type"], r["mac"], r["peer"]) for r in ctx.rows(
+        "SELECT type, mac, peer FROM events WHERE type LIKE 'investigated_%' ORDER BY id")]
+    assert ev == [("investigated_seen", "0a:00:00:00:00:01", "ssid:FreeWiFi"),
+                  ("investigated_connect", PHONE, "ssid:FreeWiFi"),
+                  ("investigated_probe", "da:00:00:00:00:02", "ssid:FreeWiFi")]
+    cat = {x["ssid"]: x for x in ssid_catalogue(ctx)}
+    assert cat["FreeWiFi"]["investigated"] and cat["FreeWiFi"]["aps"] == 1 and cat["FreeWiFi"]["probers"] == 1
+    assert cat["HomeNet"]["mine"] and cat["OtherNet"]["aps"] == 0 and cat["OtherNet"]["probers"] == 1
+    assert ctx.one("SELECT name FROM alert_rules WHERE name='Networks under investigation'")  # rule added once
+    ctx.alerts.handle({"type": "investigated_seen", "mac": "0a:00:00:00:00:01", "ts": t, "peer": "ssid:FreeWiFi",
+                       "detail": "“FreeWiFi” on the air"})
+    assert ctx.one("SELECT rule_name FROM alert_log")["rule_name"] == "Networks under investigation"
