@@ -68,6 +68,7 @@ def build(cfg):
     from .auth import Auth
     from .backup import BackupScheduler, apply_staged_restore
     from .interference import InterferenceDetector
+    from .investigate import InvestigationMonitor
     from .trackers import TrackerMonitor
     from .context import Ctx
     from .lan import LanMonitor
@@ -93,7 +94,8 @@ def build(cfg):
     ctx.interference = InterferenceDetector(ctx)
     ctx.trackers = TrackerMonitor(ctx)
     ctx.backups = BackupScheduler(ctx)
-    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers]
+    ctx.investigate = InvestigationMonitor(ctx)
+    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate]
     store.listeners.append(ctx.alerts.on_events)
     apply_ignore(ctx)
     apply_meta(ctx)

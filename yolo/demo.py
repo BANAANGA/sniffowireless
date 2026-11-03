@@ -391,6 +391,9 @@ class DemoGenerator:
         if ctx.settings.get("networks")["ssids"]:
             return
         ctx.settings.set("lan", {"trusted_dhcp": [GW]})
+        ctx.settings.set("investigate", {"ssids": [
+            {"ssid": "Linksys", "note": "Open network next door; check which of our devices join it", "added": time.time()},
+            {"ssid": "Starbucks", "note": "Name used by a KARMA-style hotspot nearby", "added": time.time()}]})
         ctx.settings.set("networks", {"ssids": ["HomeNet", "HomeNet-IoT"], "trusted_bssids": [
             "24:a4:3c:10:00:01", "24:a4:3c:10:00:02", "24:a4:3c:10:00:09", "50:c7:bf:20:00:03"]})
         now = time.time()

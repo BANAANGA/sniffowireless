@@ -40,6 +40,8 @@ EVENT_TYPES = {
     "karma_ap": "KARMA-style access point", "deauth_broadcast": "Broadcast deauthentication",
     "security_finding": "Security finding on my networks", "rogue_dhcp": "Rogue / extra DHCP server",
     "arp_spoof": "ARP spoofing", "tracker_following": "Unknown tracker following someone",
+    "investigated_seen": "Investigated network on the air", "investigated_connect": "Device joined an investigated network",
+    "investigated_probe": "Device looked for an investigated network",
     "interference": "Radio interference episode",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
@@ -62,6 +64,12 @@ DEFAULT_RULES = [
     ("Unknown device at night", ["new_device", "arrived"], {"mode": "unknown"},
      {"start": "23:00", "end": "06:00"}),
 ]
+
+
+LATER_RULES = {
+    "investigations": ("Networks under investigation",
+                       ["investigated_seen", "investigated_connect", "investigated_probe"], {"mode": "any"}, {}),
+}
 
 
 # --------------------------------------------------------------- notifiers
@@ -177,6 +185,8 @@ def describe(ev, dev, meta, group):
         "rogue_dhcp": f"Rogue DHCP server {ev['mac']}", "arp_spoof": f"ARP spoofing by {name}",
         "tracker_following": f"{ev.get('detail') or 'Unknown tracker following someone'}",
         "interference": f"Interference: {ev.get('detail')}",
+        "investigated_seen": f"Investigated network: {ev.get('detail')}",
+        "investigated_connect": f"{name} {ev.get('detail')}", "investigated_probe": f"{name} is {ev.get('detail')}",
     }
     lines = [time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:
@@ -207,6 +217,13 @@ class AlertEngine:
                     c.execute("INSERT INTO alert_rules(name, enabled, events, target, schedule, notifiers, cooldown, "
                               "created) VALUES(?,?,?,?,?,?,?,?)", (name, 1, json.dumps(evs), json.dumps(target),
                                                                      json.dumps(sched), "[]", 300, time.time()))
+            # Rules added in later versions are created once, also on existing installations.
+            for key, (name, evs, target, sched) in LATER_RULES.items():
+                if not c.execute("SELECT 1 FROM meta WHERE key=?", (f"rule:{key}",)).fetchone():
+                    c.execute("INSERT INTO alert_rules(name, enabled, events, target, schedule, notifiers, cooldown, "
+                              "created) VALUES(?,?,?,?,?,?,?,?)", (name, 1, json.dumps(evs), json.dumps(target),
+                                                                     json.dumps(sched), "[]", 300, time.time()))
+                    c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?, '1')", (f"rule:{key}",))
 
     def invalidate(self):
         self.rules_cache = None

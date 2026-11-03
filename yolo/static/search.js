@@ -24,8 +24,8 @@ function searchItem(sec, x, q) {
       return [`#/device/${enc(x.mac)}`, hl(title, q), meta.join(' · ')];
     }
     case 'groups': return [`#/group/${x.id}`, hl(x.name, q), [x.kind, x.notes ? hl(x.notes, q) : ''].filter(Boolean).join(' · ')];
-    case 'networks': return [hrefWith('/devices', { ssid: x.ssid }), hl(x.ssid, q), `${x.aps} access point${x.aps === 1 ? '' : 's'} · ${esc(x.enc || '')} · ${ago(x.last_seen)}`];
-    case 'probes': return [hrefWith('/devices', { probe: x.ssid }), hl(x.ssid, q), `probed by ${x.devices} device${x.devices === 1 ? '' : 's'} · ${ago(x.last_seen)}`];
+    case 'networks': return [`#/investigation/${enc(x.ssid)}`, hl(x.ssid, q), `${x.aps} access point${x.aps === 1 ? '' : 's'} · ${esc(x.enc || '')} · ${ago(x.last_seen)}`];
+    case 'probes': return [`#/investigation/${enc(x.ssid)}`, hl(x.ssid, q), `probed by ${x.devices} device${x.devices === 1 ? '' : 's'} · ${ago(x.last_seen)}`];
     case 'dns': return ['#/lan', hl(x.name, q), `looked up by ${x.devices} device${x.devices === 1 ? '' : 's'} · ${ago(x.last_seen)}`];
     case 'events': return [(x.mac || '').startsWith('rf:') ? '#/channels' : `#/device/${enc(x.mac)}`,
       `<span class="ev ev-${esc(x.type)}">${esc(x.type.replace(/_/g, ' '))}</span> ${hl(x.label || x.name || x.ssid || x.mac, q)}`,

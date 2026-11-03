@@ -530,6 +530,31 @@ Under **Settings → Ignore list** an admin can drop these before anything is st
 
 Ignored traffic never reaches the database, the UI or alerts. Tick *Also delete data already stored* to purge existing history for matching devices. The page shows how many stored devices match before you save.
 
+### Choosing networks
+
+The **My networks**, **Investigations** and **Ignore list** settings share a network picker (*Choose networks…*). It lists every SSID yolo has seen in the last 90 days with:
+- its access points, connected clients and the devices that looked for it
+- security and when it was last seen
+- whether it is already one of yours, ignored or under investigation
+
+Search it, tick networks and apply. Networks that are only *looked for* by devices (never broadcast nearby) can be included with a checkbox, and a name that hasn't been seen yet can be typed in.
+
+### Networks under investigation
+
+Put SSIDs you want to keep an eye on under **Settings → Investigations**: an unknown network that appeared nearby, a suspected rogue hotspot, or a network one of your devices keeps joining. Add a note on why. You can also click **Investigate** on any network's dossier; open one from search or from an access point's page (*dossier →*). yolo then records:
+
+| Event | When |
+|---|---|
+| *Investigated network on the air* | an access point starts broadcasting the name, including a KARMA-style hotspot that rotates through names |
+| *Device joined an investigated network* | a device connects to it |
+| *Device looked for an investigated network* | a device probes for it (at most once per device per 6 h) |
+
+These events feed the alert rule *Networks under investigation*, which is created automatically; attach a notification channel to it under Alerts → Rules. The **Investigations** page (under Wi-Fi) shows one card per network. Each network's **dossier** has:
+- a timeline of when its access points were on the air and when devices were connected
+- every access point that broadcast it (vendor, channel, security, signal, room)
+- the devices that connected to it and those that looked for it
+- all related events
+
 ### Labels, watch list and groups
 
 On any device page an admin can set a **label** ("Sam's iPhone") and notes, and mark the device:
@@ -739,6 +764,8 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/status` | Sensor and store health |
 | `GET /api/export/devices.csv`, `/api/export/sessions.csv?days=7` | CSV export |
 | `GET /api/search?q=&section=&limit=` | Search all records (devices, groups, networks, probes, dns, events, alerts, findings, sensors) |
+| `GET /api/ssids?q=` | All seen SSIDs with access points, clients, devices looking for them, and mine/ignored/investigated flags |
+| `GET /api/investigations` · `GET /api/investigations/{ssid}` · `PUT /api/settings/investigate` | Networks under investigation, per-network dossier, and the list itself (admin) |
 | `GET /api/groups`, `/api/groups/{id}` | Groups and combined presence |
 | `GET /api/alerts`, `/api/alert-rules` | Alert history and rules |
 | `GET /api/security` | Findings, my-network BSSIDs, security events |
@@ -825,6 +852,7 @@ yolo/
   trackers.py   unknown tracker-tag ("following") detection
   backup.py     configuration / full backups, staged restore, scheduler
   logs.py       in-memory log buffer, live log stream, runtime log level
+  investigate.py  networks under investigation (events, dossiers) and the SSID catalogue for pickers
   reports.py    occupancy analytics and weekly email
   metrics.py    Prometheus endpoint
   web.py        FastAPI app and device/statistics API
