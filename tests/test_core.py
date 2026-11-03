@@ -246,3 +246,23 @@ def test_beacon_csa_and_ht_primary():
     p = frame(Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=AP, addr3=AP)
               / Dot11Beacon(cap="ESS") / Dot11Elt(ID=0, info=b"Radar") / Dot11Elt(ID=60, info=bytes([0, 115, 44, 3])))
     assert parse_frame(p)[0]["csa"] == {"mode": 0, "op_class": 115, "new_channel": 44, "count": 3}
+
+
+def test_6ghz_mislabelled_by_driver():
+    from yolo.wifi import radio_freq
+
+    def beacon(present, **rt):
+        p = RadioTap(present=present, dBm_AntSignal=-60, **rt) / \
+            Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=AP, addr3=AP) / \
+            Dot11Beacon(cap="ESS") / Dot11Elt(ID=0, info=b"Six")
+        p = RadioTap(bytes(p))
+        p.time = 1000.0
+        return p
+    # driver puts 6 GHz channel 37 in the 5 GHz band (5185 MHz): the tuned frequency wins
+    (o,) = parse_frame(beacon("Channel+dBm_AntSignal", ChannelFrequency=5185), tuned=6135)
+    assert (o["band"], o["channel"], o["freq"], o["ssid"]) == ("6", 37, 6135, "Six")
+    # no frequency in radiotap at all
+    (o,) = parse_frame(beacon("dBm_AntSignal"), tuned=6135)
+    assert (o["band"], o["channel"]) == ("6", 37)
+    # a genuine frame from another channel (straggler after a hop) is left alone
+    assert radio_freq(5180, 6135) == 5180 and radio_freq(6135, 6135) == 6135 and radio_freq(2437, None) == 2437

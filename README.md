@@ -130,6 +130,19 @@ To see 6 GHz networks you need a **6E-capable adapter** whose driver allows moni
 
 yolo reads each adapter's supported frequencies at startup and gives 6 GHz channels only to adapters that can tune them. A 2.4/5 GHz adapter and a 6E adapter can therefore share one channel list. 6 GHz clients nearly always use randomized MACs (WPA3 + MAC privacy are mandatory there), but connection sessions are still tracked per network.
 
+**Channel tunes but no 6 GHz networks show up?** The Sensors panel on the Overview lists the frames received per band (`frames 2.4G … · 5G … · 6G …`). Then run the diagnostic on the machine with the adapter. It tunes each 6 GHz channel, listens for a few seconds, and prints frames, beacons, access points, SSIDs and the frequency the driver reported:
+
+```bash
+docker compose stop yolo
+docker compose run --rm yolo python -m yolo.diag            # 6 GHz PSCs on the first WIFI_INTERFACES adapter
+docker compose run --rm yolo python -m yolo.diag wlan1 --channels 6g:37 --dwell 10
+docker compose start yolo
+```
+
+- **0 frames everywhere:** the driver or firmware doesn't receive on 6 GHz in monitor mode. Update the kernel (≥ 6.1) and `linux-firmware`, and check the antennas.
+- **Frames but the driver reports another band:** some mt76 builds label 6 GHz frames as 5 GHz (channel 37 → 5185 MHz). yolo now uses the tuned frequency in that case, and the Sensors panel counts the corrected frames.
+- **Beacons on one channel only:** normal. An access point beacons on its primary 20 MHz channel only, even at 160/320 MHz.
+
 > **Don't use the adapter your host relies on for its own network.** Putting it in monitor mode disconnects it. Use a dedicated USB adapter. Two adapters (for example one locked to 2.4 GHz and one hopping 5 GHz) give much better coverage than one adapter that hops across everything.
 
 ### Bluetooth adapters
