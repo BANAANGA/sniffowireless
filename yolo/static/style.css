@@ -314,3 +314,24 @@ ul.plain li { padding: 4px 0; }
 .scroll-box { max-height: 180px; overflow-y: auto; }
 .ev-interference { color: var(--warn); }
 .ev-tracker_following { color: var(--bad); }
+
+/* global search */
+.gsearch { position: relative; padding: 0 2px; }
+.gsearch input { width: 100%; padding: 6px 28px 6px 10px; font-size: 12px; background: var(--panel); }
+.gsearch kbd { position: absolute; right: 9px; top: 6px; font: 11px var(--mono); color: var(--faint); border: 1px solid var(--border-2); border-radius: 3px; padding: 0 4px; pointer-events: none; }
+.gsearch input:focus + kbd { display: none; }
+.gsearch-pop { position: fixed; z-index: 40; width: 420px; max-height: 70vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border-2); border-radius: 8px; box-shadow: 0 16px 40px rgba(0,0,0,.5); padding: 6px; }
+.sr-sec { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding: 8px 8px 4px; }
+a.sr { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: var(--radius); }
+a.sr:hover, a.sr.on { background: var(--panel-2); }
+.sr-t { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-m { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-all { margin-top: 4px; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); color: var(--muted); flex-direction: row !important; justify-content: space-between; }
+.sr-empty { padding: 12px 8px; color: var(--faint); }
+mark { background: rgba(245,184,74,.22); color: inherit; border-radius: 2px; padding: 0 1px; }
+.sr-list { list-style: none; margin: 0; padding: 0; }
+.sr-list li a { display: flex; flex-direction: column; gap: 2px; padding: 9px 16px; border-bottom: 1px solid var(--border); }
+.sr-list li:last-child a { border-bottom: 0; }
+.sr-list li a:hover { background: var(--panel-2); }
+@media (max-width: 900px) { .gsearch { flex: 0 0 160px; } .gsearch kbd { display: none; } .gsearch-pop { width: min(420px, calc(100vw - 32px)); } }
