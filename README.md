@@ -224,13 +224,88 @@ yolo talks to the adapter over a raw HCI socket. It can run **alongside** the ho
 
 Requirements: Linux host, Docker Engine ≥ 20.10 with the compose plugin, and the adapters set up as above.
 
+### 1. Get the code
+
 ```bash
 git clone https://github.com/BANAANGA/yolo.git
+```
+
+```bash
 cd yolo
+```
+
+### 2. Tell yolo which adapters to use
+
+yolo reads its settings from a file called `.env` in the `yolo` folder. The easiest way to create it is the helper script. It lists the adapters it finds and asks which ones to use:
+
+```bash
+./scripts/configure.sh
+```
+
+```
+Wi-Fi adapters found:
+    wlan0            e0:8f:4c:..  driver=iwlwifi <- this machine's own network connection
+    wlan1            00:c0:ca:..  driver=mt76x2u
+  Use a dedicated adapter: monitor mode disconnects it from any network.
+WIFI_INTERFACES (comma-separated, empty = no Wi-Fi) [wlan1]:
+...
+Saved to /home/you/yolo/.env:
+    WIFI_INTERFACES=wlan1
+    BT_DEVICES=hci0
+```
+
+Press Enter to accept a suggestion in `[brackets]`, or type your own (e.g. `wlan1,wlan2`). Run it again whenever you add or swap an adapter.
+
+**Or do it by hand.** First find your adapter names:
+
+```bash
+iw dev                 # Wi-Fi adapters: the "Interface" lines, e.g. wlan1 or wlx00c0ca123456
+```
+
+```bash
+ip -br link            # all network adapters, incl. wired ones (eth1, enp3s0, enx…)
+```
+
+```bash
+ls /sys/class/bluetooth   # Bluetooth adapters: hci0, hci1 …
+```
+
+Then copy the example file and open it in an editor:
+
+```bash
 cp .env.example .env
-$EDITOR .env          # set WIFI_INTERFACES and BT_DEVICES
+```
+
+```bash
+nano .env
+```
+
+`cp` prints nothing when it works. Files starting with a dot are hidden, so use `ls -a` to see `.env`. In the editor, change these lines to your adapter names, then save (in nano: Ctrl+O, Enter, Ctrl+X):
+
+```ini
+WIFI_INTERFACES=wlan1      # comma-separated Wi-Fi adapters to capture on; empty = no Wi-Fi
+BT_DEVICES=hci0            # Bluetooth adapters; empty = no Bluetooth
+TZ=Europe/Amsterdam
+```
+
+Don't pick the adapter your machine uses for its own network connection (the one with an IP address in `ip -br addr`): monitor mode takes it offline. You can leave everything empty and start with `DEMO_MODE=1` to just look around.
+
+### 3. Start it
+
+```bash
 docker compose up -d --build
+```
+
+```bash
 docker compose logs -f
+```
+
+The log should show a line like `Wi-Fi sensor on wlan1` for each adapter, and the setup code for the admin account. Press Ctrl+C to stop following the log; yolo keeps running.
+
+To change adapters later, edit `.env` (or run `./scripts/configure.sh` again) and apply it with:
+
+```bash
+docker compose up -d
 ```
 
 Open **http://<host>:8080**. On the first visit you create the admin account (see [Accounts & access](#accounts--access)). Data is stored in `./data` (`yolo.db` plus an uploaded floor plan). Back up that folder to keep your history.
@@ -648,6 +723,8 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 
 | Symptom | Fix |
 |---|---|
+| `cp .env.example .env` seems to do nothing | It worked: `cp` is silent and `.env` is hidden. Check with `ls -a` or `cat .env`. |
+| Settings in `.env` are ignored | `.env` must be in the `yolo` folder next to `docker-compose.yml`, and you have to run `docker compose up -d` again after editing it. `docker compose config` shows the values compose actually uses. |
 | `interface wlan1 not found` | Check `iw dev` on the host, make sure the container uses `network_mode: host`, and pin the name with udev. |
 | `driver refused monitor mode` | The chipset/driver doesn't support it (common for onboard Broadcom and many Realtek chips with in-kernel drivers). Use an adapter from the table above. |
 | Adapter keeps leaving monitor mode | NetworkManager / wpa_supplicant is managing it. See [step 2](#2-keep-networkmanager--wpa_supplicant-away-from-it). |
@@ -713,6 +790,7 @@ yolo/
   demo.py       synthetic data generator
   static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, lan.js, extras.js, login.html
 contrib/monitoring/  Prometheus + Grafana stack and dashboard
+scripts/configure.sh  interactive helper that detects adapters and writes .env
 tests/          parser, session, auth, alert, security, survey, location and report tests
 ```
 
