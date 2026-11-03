@@ -60,3 +60,30 @@ async function loadAppearance() {
   const go = () => { if (cached) applyAppearance(cached, { cache: false }); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
 })();
+
+// ------------------------------------------------------------------ clock (12 / 24 hour)
+// This browser's choice (Settings → Account) wins over the admin default (Settings → Appearance); 'auto' follows
+// the browser's locale.
+function clockMode() {
+  let mine = null;
+  try { mine = localStorage.getItem('yolo.clock'); } catch { /* private mode */ }
+  const m = mine || (APPEARANCE && APPEARANCE.clock) || 'auto';
+  return ['12', '24'].includes(m) ? m : 'auto';
+}
+function uses12h() {
+  const m = clockMode();
+  if (m !== 'auto') return m === '12';
+  try { return /h1[12]/.test(new Intl.DateTimeFormat([], { hour: 'numeric' }).resolvedOptions().hourCycle || ''); } catch { return false; }
+}
+// Options for toLocale*String with the chosen hour cycle.
+function clockOpts(opts = {}) {
+  const m = clockMode();
+  return m === 'auto' ? opts : { ...opts, hourCycle: m === '12' ? 'h12' : 'h23' };
+}
+// An hour of the day: "13:00" or "1 PM"; short: "13" or "1p" (axis labels).
+function hourLabel(h, short = false) {
+  h = ((+h % 24) + 24) % 24;
+  if (!uses12h()) return short ? String(h) : `${String(h).padStart(2, '0')}:00`;
+  const n = h % 12 || 12, ap = h < 12 ? 'AM' : 'PM';
+  return short ? `${n}${ap[0].toLowerCase()}` : `${n} ${ap}`;
+}
