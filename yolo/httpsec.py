@@ -12,7 +12,7 @@ UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sand
 DOCS_PATHS = ("/api/docs", "/api/openapi.json")  # Swagger UI needs inline script + its CDN
 
 MB = 1024 * 1024
-BODY_LIMITS = [("/api/backup/restore", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB),
+BODY_LIMITS = [("/api/backup/restore", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB), ("/api/appearance/icon", 1 * MB),
                ("/api/backup/config", 16 * MB)]
 DEFAULT_BODY_LIMIT = 1 * MB
 # Query parameters that size work on the server: (min, max)
@@ -31,7 +31,7 @@ def headers_for(path, scheme_https):
     h = [(b"x-content-type-options", b"nosniff"), (b"referrer-policy", b"no-referrer"),
          (b"x-frame-options", b"DENY"), (b"cross-origin-opener-policy", b"same-origin"),
          (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), usb=(), interest-cohort=()")]
-    if path.startswith("/api/floorplan/image"):
+    if path.startswith(("/api/floorplan/image", "/api/appearance/icon")):
         h.append((b"content-security-policy", UPLOAD_CSP.encode()))
     elif not path.startswith(DOCS_PATHS):
         h.append((b"content-security-policy", CSP.encode()))
