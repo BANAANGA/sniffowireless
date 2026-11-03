@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-IDENT_VERSION = 2
+IDENT_VERSION = 3
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -18,7 +18,7 @@ TYPE_LABELS = {
     "sensor": "Sensor", "iot": "IoT device", "light": "Smart light", "input": "Keyboard / mouse",
     "car": "Car", "router": "Router / access point", "hotspot": "Mobile hotspot", "smart_home": "Smart home",
     "beacon": "Beacon", "sbc": "Single-board computer", "media": "Media device", "network": "Network device",
-    "nas": "NAS / storage", "server": "Server",
+    "nas": "NAS / storage", "server": "Server", "bike": "Bike / e-bike",
 }
 WIFI_GEN_YEAR = {4: 2009, 5: 2013, 6: 2019, 7: 2024}
 WIFI_6E_YEAR = 2021
@@ -171,6 +171,8 @@ BLE_UUIDS = {  # 16-bit service UUID -> (label, type, brand, confidence)
     "feaa": ("Eddystone beacon", "beacon", None, 70), "fd5a": ("Samsung SmartTag", "tag", "Samsung", 85),
     "feed": ("Tile tracker", "tag", "Tile", 85), "feec": ("Tile tracker", "tag", "Tile", 85),
     "180d": ("Heart rate", "wearable", None, 55), "1812": ("HID (keyboard/mouse/remote)", "input", None, 60),
+    "1816": ("Cycling speed & cadence", "bike", None, 70), "1818": ("Cycling power", "bike", None, 70),
+    "1826": ("Fitness machine", "wearable", None, 40),
     "fe95": ("Xiaomi MiBeacon", "iot", "Xiaomi", 60), "fcd2": ("BTHome sensor", "sensor", None, 75),
     "181a": ("Environmental sensing", "sensor", None, 60), "fe9f": ("Google", None, "Google", 50),
     "fe07": ("Sonos", "speaker", "Sonos", 80), "fe03": ("Amazon", None, "Amazon", 50),
@@ -180,7 +182,9 @@ BLE_UUIDS = {  # 16-bit service UUID -> (label, type, brand, confidence)
 APPEARANCE_TYPES = {"phone": "phone", "computer": "computer", "watch": "watch", "clock": "smart_home",
                     "display": "tv", "remote": "input", "tag": "tag", "keyring": "tag", "media player": "media",
                     "thermometer": "sensor", "heart rate": "wearable", "blood pressure": "wearable", "HID": "input",
-                    "glucose": "wearable", "running sensor": "wearable", "cycling sensor": "wearable",
+                    "glucose": "wearable", "running sensor": "wearable",
+                    # Bluetooth "Cycling" appearance: bike computers, speed/cadence/power sensors and e-bikes
+                    "cycling sensor": "bike",
                     "light": "light", "audio sink": "headphones", "audio source": "media", "sensor": "sensor"}
 COD_MINOR = {
     1: {1: "desktop", 2: "computer", 3: "laptop", 4: "tablet", 5: "tablet", 6: "watch", 7: "tablet"},
@@ -418,6 +422,11 @@ NAME_RULES = [
     (r"\bFitbit\b|\b(Charge|Versa|Sense|Inspire) \d\b", "Fitbit", "wearable", None, True, None),
     (r"\b(Garmin|Forerunner|f[eē]nix|Venu|vivoactive)\b", "Garmin", "watch", None, False, None),
     (r"\bTile\b", "Tile", "tag", None, False, None),
+    # e-bikes: VanMoof S3/X3 advertise as ES3-/EX3-<serial>, newer models with the brand name
+    (r"^E[SX][345]-[0-9A-Fa-f]{4,}|\bVan ?Moof\b|^VM[SAX]\d", "VanMoof", "bike", None, False, None),
+    (r"\bCowboy\b", "Cowboy", "bike", None, False, None),
+    (r"\b(Gazelle|Stromer|Specialized|Bosch eBike|Shimano STEPS|Ampler|Rad ?Power|Super73)\b", None, "bike", None, False,
+     None),
     (r"\bSmartTag\b", "Samsung", "tag", None, False, None),
     (r"^GV[HM]\d+", "Govee", "sensor", None, False, None),
     (r"\bRuuvi\b", "Ruuvi", "sensor", None, False, None),

@@ -112,6 +112,8 @@ def build(cfg):
     ctx.trackers = TrackerMonitor(ctx)
     ctx.backups = BackupScheduler(ctx)
     ctx.investigate = InvestigationMonitor(ctx)
+    from .matching import SCHEMA as MATCHING_SCHEMA
+    store.conn.executescript(MATCHING_SCHEMA)
     ctx.dfs = DfsMonitor(ctx)
     store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs]
     store.listeners.append(ctx.alerts.on_events)

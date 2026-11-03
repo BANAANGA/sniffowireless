@@ -135,7 +135,11 @@ addRoute('/investigations', async (_, params) => {
   onSeg(app, 'days', v => { location.hash = hrefWith('/investigations', { days: v }); });
 });
 
-addRoute('/investigation/', async (ssid, params) => {
+addRoute('/investigation/', (ssid, params) => renderSsid(ssid, params, 'investigation'));
+addRoute('/ssid/', (ssid, params) => renderSsid(ssid, params, 'ssid'));
+
+// Dossier for any SSID; `base` decides where the breadcrumb and range links point.
+async function renderSsid(ssid, params, base) {
   const days = +(params.get('days') || 30);
   const d = await api(`/api/investigations/${enc(ssid)}?days=${days}`);
   const lanes = [];
@@ -149,7 +153,7 @@ addRoute('/investigation/', async (ssid, params) => {
   Object.entries(byClient).slice(0, 25).forEach(([m, ss]) => lanes.push([`<a href="#/device/${enc(m)}" title="${esc(m)}">${esc(cname[m] || m)}</a>`,
     ss.map(s => ({ s: s.start_ts, e: s.end_ts, color: KINDS.wifi_client.color, title: `Connected ${dt(s.start_ts)} → ${dt(s.end_ts)}` }))]));
   const who = x => x.label ? `<b>${esc(x.label)}</b>` : esc(x.name || x.ident || x.vendor || '');
-  app.innerHTML = `<div class="page-head"><div><div class="crumbs"><a href="#/investigations">Investigations</a></div>
+  app.innerHTML = `<div class="page-head"><div><div class="crumbs">${base === 'ssid' ? '<a href="#/ssids">Networks</a>' : '<a href="#/investigations">Investigations</a>'}</div>
       <h1>${esc(d.ssid)} ${d.investigated ? '<span class="tag warn">under investigation</span>' : ''} ${d.mine ? '<span class="tag on">my network</span>' : ''}</h1>
       <div class="sub">${d.entry && d.entry.note ? esc(d.entry.note) : `${d.aps.length} access point${d.aps.length === 1 ? '' : 's'} · ${d.clients.length} client${d.clients.length === 1 ? '' : 's'} · ${d.probers.length} device${d.probers.length === 1 ? '' : 's'} looked for it`}</div></div>
     <div class="row">${seg('days', [[1, '24h'], [7, '7d'], [30, '30d']], days)}
@@ -174,7 +178,7 @@ addRoute('/investigation/', async (ssid, params) => {
       <section class="panel span-3"><header><h2>Events</h2>${d.investigated ? '' : '<span class="faint">recorded while the network is under investigation</span>'}</header><div class="body flush">${d.events.length ? `<ul class="events wide">${d.events.map(e => eventRow(e, true)).join('')}</ul>` : '<div class="empty">No events yet</div>'}</div></section>
     </div>`;
   linkRows(app);
-  onSeg(app, 'days', v => { location.hash = hrefWith(`/investigation/${enc(ssid)}`, { days: v }); });
+  onSeg(app, 'days', v => { location.hash = hrefWith(`/${base}/${enc(ssid)}`, { days: v }); });
   const tg = document.getElementById('inv-toggle');
   if (tg) tg.onclick = async () => {
     const cfg = await api('/api/settings/investigate');
@@ -188,4 +192,4 @@ addRoute('/investigation/', async (ssid, params) => {
     try { await send('PUT', '/api/settings/investigate', { ssids: list }); toast(d.investigated ? 'Removed from investigations' : 'Now under investigation'); route(); }
     catch (e) { toast(e.message, true); }
   };
-});
+}

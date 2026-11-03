@@ -248,6 +248,16 @@ def test_beacon_csa_and_ht_primary():
     assert parse_frame(p)[0]["csa"] == {"mode": 0, "op_class": 115, "new_channel": 44, "count": 3}
 
 
+def test_identify_bikes():
+    r = identify({"kind": "ble", "name": "ES3-4F2A1C", "extra": {}})
+    assert (r["brand"], r["dev_type"]) == ("VanMoof", "bike")
+    r = identify({"kind": "ble", "name": None, "extra": {"appearance": "cycling sensor"}})
+    assert r["dev_type"] == "bike"  # Bluetooth "Cycling" appearance is a bike, not a wearable
+    r = identify({"kind": "ble", "extra": {"fp": {"ble": {"uuids": ["1816"]}}}})
+    assert r["dev_type"] == "bike"
+    assert identify({"kind": "ble", "name": "Cowboy 4", "extra": {}})["brand"] == "Cowboy"
+
+
 def test_6ghz_mislabelled_by_driver():
     from yolo.wifi import radio_freq
 
