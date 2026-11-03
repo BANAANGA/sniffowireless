@@ -391,5 +391,7 @@ mark { background: rgba(245,184,74,.22); color: inherit; border-radius: 2px; pad
 /* overview: active devices per band */
 .band-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
 .band-cell { min-width: 0; }
-.band-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.band-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; margin-bottom: 4px; }
+.band-head .legend { gap: 10px; }
+.band-note { margin: 12px 0 0; }
 @media (max-width: 760px) { .band-grid { grid-template-columns: 1fr; } }

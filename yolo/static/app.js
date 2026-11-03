@@ -322,15 +322,17 @@ async function viewOverview() {
     }
     // By band: one small chart per Wi-Fi band on a shared scale, plus Bluetooth & LAN (no band).
     document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
-      + sw(TEXT, 'Connected clients', true) + '<span class="faint">· clients count on the band they were last heard on; connected clients on the band of their access point</span>';
+      + sw(TEXT, 'Connected clients', true);
     const bands = t.bands || {};
     const ymax = Math.max(1, ...BAND_PANELS.flatMap(([b]) => ['ap', 'wifi_client', 'connected'].flatMap(k => (bands[b] || {})[k] || [0])));
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
-        <span class="faint small-text">${num(now(b, 'ap'))} APs · ${num(now(b, 'wifi_client'))} clients · ${num(now(b, 'connected'))} connected</span></div>
+        <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} · ${num(now(b, 'connected'))} connected</span></div>
         <div class="chart-box short"><canvas id="tl-${b.replace('.', '')}"></canvas></div></div>`).join('')}
-      <div class="band-cell"><div class="band-head"><b>Bluetooth &amp; LAN</b><span class="faint small-text">no Wi-Fi band</span></div>
-        <div class="chart-box short"><canvas id="tl-other"></canvas></div></div></div>`;
+      <div class="band-cell"><div class="band-head"><b>Bluetooth &amp; LAN</b>
+        <span class="legend small-text">${['ble', 'bt_classic', 'lan'].map(k => sw(KINDS[k].color, KINDS[k].label)).join('')}</span></div>
+        <div class="chart-box short"><canvas id="tl-other"></canvas></div></div></div>
+      <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to.</p>`;
     BAND_PANELS.forEach(([b]) => {
       const v = bands[b] || {};
       chart(document.getElementById(`tl-${b.replace('.', '')}`), { type: 'line', data: { datasets: [
@@ -339,7 +341,6 @@ async function viewOverview() {
     });
     chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: ['ble', 'bt_classic', 'lan'].map(k =>
       line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
-    document.getElementById('tl-legend').innerHTML += ['ble', 'bt_classic', 'lan'].map(k => sw(KINDS[k].color, KINDS[k].label)).join('');
   }
 
   await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), pollStatus()]);
