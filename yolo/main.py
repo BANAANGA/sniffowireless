@@ -103,6 +103,8 @@ def build(cfg):
 def main():
     cfg = Config.from_env()
     logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    from .logs import install as install_log_buffer
+    install_log_buffer(cfg.log_level)  # keeps recent log lines for the live Logs page
     if cfg.mode == "sensor":
         return run_sensor(cfg)
 

@@ -1,16 +1,18 @@
 """HTTP API + static single-page UI."""
 import csv
+import hashlib
 import io
 import json
+import re
 import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (alerts, auth, backup, health, interference, lan, manage, metrics, reports, search, security, sensors,
-               status, survey, trackers)
+from . import (alerts, auth, backup, health, interference, lan, logs, manage, metrics, reports, search, security,
+               sensors, status, survey, trackers)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -369,12 +371,25 @@ def create_app(ctx):
 
     # ------------------------------------------------------------------ static
     for mod in (auth, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, trackers,
-                backup, search):
+                backup, search, logs):
         app.include_router(mod.routes(ctx))
+
+    # Cache-busting: reference static files as /static/x.js?v=<content hash>, so browsers pick up new
+    # versions right after an update instead of running a stale cached copy.
+    def versioned(name):
+        html = (static / name).read_text()
+
+        def tag(m):
+            f = static / m.group(1)
+            digest = hashlib.sha256(f.read_bytes()).hexdigest()[:10] if f.exists() else "0"
+            return f'/static/{m.group(1)}?v={digest}"'
+        return re.sub(r'/static/([\w.-]+\.(?:js|css))"', tag, html)
+
+    pages = {"index": versioned("index.html"), "login": versioned("login.html")}
 
     @app.get("/login")
     def login_page():
-        return FileResponse(static / "login.html")
+        return HTMLResponse(pages["login"])
 
     @app.get("/vendor/chart.umd.min.js")
     def chart_js():
@@ -386,6 +401,6 @@ def create_app(ctx):
 
     @app.get("/")
     def index():
-        return FileResponse(static / "index.html")
+        return HTMLResponse(pages["index"])
 
     return app

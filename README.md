@@ -495,6 +495,12 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
 - **Statistics:** device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
+- **Logs** (admins only): the application log, live. New lines stream in as they happen. You can:
+  - filter by level, source module or text, pause, follow or wrap lines
+  - download what's shown
+  - switch the log level to **Debug** without restarting, e.g. to see why an adapter misbehaves; set it back to Info afterwards
+
+  The last 5,000 lines are kept in memory, and the setup code and API tokens are masked.
 - **Groups:** people or things made of several devices. A group's page shows the combined presence (when *any* of its devices was around), one timeline lane per device, and its events.
 - **Map:** your floor plan with sensors and devices on it, plus a per-room device count. See [Multiple sensors & the map](#multiple-sensors--the-map).
 - **Reports:** occupancy, meaning estimated people present per hour, a typical-week heatmap, unique/new/returning visitors per day and median visit length. *Print / PDF* gives a clean light-themed printout, and a weekly summary can be emailed (Settings → Weekly report). People are estimated from Wi-Fi phones present for at least 5 minutes; a "person" group counts once.
@@ -747,6 +753,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/backup/config` · `POST /api/backup/config` | Download / restore the configuration (admin) |
 | `POST /api/backup/full` · `GET /api/backup/list` · `GET /api/backup/files/{name}` | Create, list and download full backups (admin) |
 | `POST /api/backup/files/{name}/restore` · `POST /api/backup/restore` | Restore a stored / uploaded full backup, then restart (admin) |
+| `GET /api/logs?after=` · `GET /api/logs/stream` · `PUT /api/logs/level` | Recent log lines, live log stream (Server-Sent Events) and runtime log level (admin) |
 | `GET /metrics` | Prometheus metrics |
 | `POST /api/ingest` | Remote sensors push observations here (sensor token) |
 
@@ -817,6 +824,7 @@ yolo/
   interference.py  non-Wi-Fi interference episodes from the channel survey
   trackers.py   unknown tracker-tag ("following") detection
   backup.py     configuration / full backups, staged restore, scheduler
+  logs.py       in-memory log buffer, live log stream, runtime log level
   reports.py    occupancy analytics and weekly email
   metrics.py    Prometheus endpoint
   web.py        FastAPI app and device/statistics API
