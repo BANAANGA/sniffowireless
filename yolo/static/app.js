@@ -233,14 +233,17 @@ async function pollStatus() {
 setInterval(pollStatus, 10000);
 
 // ------------------------------------------------------------------ overview
+let tlView = (() => { try { return localStorage.getItem('yolo.tlview') || 'band'; } catch { return 'band'; } })();
+const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
+
 async function viewOverview() {
   app.innerHTML = `
     <div class="page-head"><div><h1>Overview</h1><div class="sub">Devices seen within the last 5 minutes are counted as active.</div></div></div>
     <div class="grid cols-5" id="cards"></div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2">
-        <header><h2>Active devices over time</h2>${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</header>
-        <div class="body"><div class="legend" id="tl-legend" style="margin-bottom:10px"></div><div class="chart-box tall"><canvas id="tl"></canvas></div></div>
+        <header><h2>Active devices over time</h2><div class="row">${seg('tlview', [['band', 'By band'], ['type', 'By type']], tlView)}${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</div></header>
+        <div class="body"><div class="legend" id="tl-legend" style="margin-bottom:10px"></div><div id="tl-box"></div></div>
       </section>
       <section class="panel"><header><h2>Sensors</h2><span class="muted mono" id="dbsize"></span></header><div class="body flush" id="sensors"></div></section>
       <section class="panel span-2">
@@ -251,10 +254,9 @@ async function viewOverview() {
     </div>`;
   let hours = 24;
   onSeg(app, 'range', v => { hours = +v; loadTimeline(); });
+  onSeg(app, 'tlview', v => { tlView = v; try { localStorage.setItem('yolo.tlview', v); } catch { /* private mode */ } loadTimeline(); });
 
-  const legend = Object.entries(KINDS).map(([k, m]) => `<span><span class="swatch" style="background:${m.color}"></span>${m.label}</span>`).join('')
-    + `<span><span class="swatch" style="background:${TEXT}"></span>Connected clients</span>`;
-  document.getElementById('tl-legend').innerHTML = legend;
+
 
   async function loadSummary() {
     const s = await api('/api/summary');
@@ -298,21 +300,49 @@ async function viewOverview() {
   async function loadTimeline() {
     const t = await api(`/api/timeline?hours=${hours}`);
     const span = hours * 3600;
-    const ds = Object.entries(KINDS).map(([k, m]) => ({
-      label: m.label, data: t.t.map((x, i) => ({ x, y: (t.series[k] || [])[i] || 0 })),
-      borderColor: m.color, fill: false, borderWidth: 1.5, pointRadius: 0, tension: .3,
-    }));
-    ds.push({ label: 'Connected clients', data: t.t.map((x, i) => ({ x, y: t.connected[i] })), borderColor: TEXT,
-      borderDash: [4, 4], borderWidth: 1.2, pointRadius: 0, fill: false, tension: .3 });
-    chart(document.getElementById('tl'), {
-      type: 'line', data: { datasets: ds },
-      options: {
-        maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-        scales: { x: { ...timeScale(span), min: t.t[0], max: t.t[t.t.length - 1] }, y: yScale() },
-        plugins: { tooltip: { callbacks: { title: i => dt(i[0].parsed.x) } } },
-      },
+    const box = document.getElementById('tl-box');
+    const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, fill: false, borderWidth: 1.5,
+      pointRadius: 0, tension: .3, ...extra });
+    const xy = arr => t.t.map((x, i) => ({ x, y: (arr || [])[i] || 0 }));
+    const dashed = { borderDash: [4, 4], borderWidth: 1.2 };
+    const opts = (ymax, small) => ({
+      maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: { x: { ...timeScale(span), min: t.t[0], max: t.t[t.t.length - 1], ticks: { ...timeScale(span).ticks, maxTicksLimit: small ? 4 : 8 } },
+        y: yScale(ymax ? { suggestedMax: ymax } : {}) },
+      plugins: { tooltip: { callbacks: { title: i => dt(i[0].parsed.x) } } },
     });
+    const sw = (c, label, dash) => `<span><span class="swatch" style="background:${c}${dash ? ';opacity:.6' : ''}"></span>${label}</span>`;
+    if (tlView === 'type') {
+      document.getElementById('tl-legend').innerHTML = Object.entries(KINDS).map(([, m]) => sw(m.color, m.label)).join('') + sw(TEXT, 'Connected clients', true);
+      box.innerHTML = '<div class="chart-box tall"><canvas id="tl"></canvas></div>';
+      const ds = Object.entries(KINDS).map(([k, m]) => line(m.label, xy(t.series[k]), m.color));
+      ds.push(line('Connected clients', xy(t.connected), TEXT, dashed));
+      chart(document.getElementById('tl'), { type: 'line', data: { datasets: ds }, options: opts() });
+      return;
+    }
+    // By band: one small chart per Wi-Fi band on a shared scale, plus Bluetooth & LAN (no band).
+    document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
+      + sw(TEXT, 'Connected clients', true);
+    const bands = t.bands || {};
+    const ymax = Math.max(1, ...BAND_PANELS.flatMap(([b]) => ['ap', 'wifi_client', 'connected'].flatMap(k => (bands[b] || {})[k] || [0])));
+    const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
+    box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
+        <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} · ${num(now(b, 'connected'))} connected</span></div>
+        <div class="chart-box short"><canvas id="tl-${b.replace('.', '')}"></canvas></div></div>`).join('')}
+      <div class="band-cell"><div class="band-head"><b>Bluetooth &amp; LAN</b>
+        <span class="legend small-text">${['ble', 'bt_classic', 'lan'].map(k => sw(KINDS[k].color, KINDS[k].label)).join('')}</span></div>
+        <div class="chart-box short"><canvas id="tl-other"></canvas></div></div></div>
+      <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to.</p>`;
+    BAND_PANELS.forEach(([b]) => {
+      const v = bands[b] || {};
+      chart(document.getElementById(`tl-${b.replace('.', '')}`), { type: 'line', data: { datasets: [
+        line('Access points', xy(v.ap), KINDS.ap.color), line('Wi-Fi clients', xy(v.wifi_client), KINDS.wifi_client.color),
+        line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(ymax, true) });
+    });
+    chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: ['ble', 'bt_classic', 'lan'].map(k =>
+      line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
   }
+
   await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), pollStatus()]);
   every(10000, () => { loadSummary(); loadSensors(); loadConnected(); });
   every(60000, loadTimeline);

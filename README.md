@@ -483,7 +483,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - DNS lookups, events, alerts, security findings and sensors
 
   Results appear as you type; use the arrow keys and Enter to open one, or press Enter for the full results page with a filter per record type.
-- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d), currently connected clients with the network they're on, sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
+- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band, plus Bluetooth & LAN), *By type* shows all device types in one chart, currently connected clients with the network they're on, sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
 - **Devices:** a searchable, sortable list showing what each device was identified as. Filter by radio type, device type, recency or band (2.4 / 5 / 6 GHz), and hide randomized MACs. Drill-downs add filters for brand, OS, Wi-Fi generation, age and probe fingerprint. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
   - key facts, total time present, visits, average and longest visit, time connected
