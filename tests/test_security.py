@@ -212,3 +212,32 @@ def test_clean_str():
     assert clean_str("a\x00b‮c\r\nd") == "abcd"
     assert clean_str("x" * 500, 10) == "x" * 10
     assert clean_str(None) is None and clean_str("\x01") is None
+
+
+def test_logs_admin_only_and_redacted(env):
+    import logging
+
+    from yolo.logs import HANDLER, install
+    install("INFO")
+    _, c = env
+    logging.getLogger("yolo.auth").warning("No accounts exist yet ... setup code: ABCD-1234-EF56")
+    logging.getLogger("yolo.test").info("token yolo_%s used", "x" * 30)
+    logging.getLogger("yolo.test").info("ssid <script>alert(1)</script>")
+    assert c.get("/api/logs").status_code == 401
+    login(c, "viewer")
+    assert c.get("/api/logs").status_code == 403 and c.get("/api/logs/stream").status_code == 403
+    c.post("/api/auth/logout", headers=H)
+    login(c)
+    items = c.get("/api/logs?limit=50").json()["items"]
+    text = "\n".join(i["msg"] for i in items)
+    assert "ABCD-1234-EF56" not in text and "setup code: ••••" in text and "yolo_xxx" not in text
+    assert "<script>alert(1)</script>" in text  # raw in JSON; the page renders it as text, never HTML
+    after = items[-1]["id"]
+    logging.getLogger("yolo.test").error("fresh line")
+    new = c.get(f"/api/logs?after={after}").json()["items"]
+    assert [i["msg"] for i in new][-1] == "fresh line" and all(i["id"] > after for i in new)
+    assert c.put("/api/logs/level", json={"level": "DEBUG"}, headers=H).json() == {"level": "DEBUG"}
+    assert logging.getLogger().level == logging.DEBUG
+    assert c.put("/api/logs/level", json={"level": "TRACE"}, headers=H).status_code == 422
+    c.put("/api/logs/level", json={"level": "INFO"}, headers=H)
+    assert HANDLER.buf.maxlen == 5000

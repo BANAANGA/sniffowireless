@@ -158,12 +158,14 @@ function hrefWith(path, params) {
 }
 
 // --------------------------------------------------------- page lifecycle
-let timers = [], charts = [], routeId = 0;
+let timers = [], charts = [], leaveFns = [], routeId = 0;
 function cleanup() {
   timers.forEach(clearInterval); timers = [];
   charts.forEach(c => c.destroy()); charts = [];
+  leaveFns.forEach(fn => { try { fn(); } catch { /* ignore */ } }); leaveFns = [];
 }
 function every(ms, fn) { timers.push(setInterval(fn, ms)); }
+function onLeave(fn) { leaveFns.push(fn); }  // run when navigating away (close streams etc.)
 function chart(canvas, cfg) {
   if (!window.Chart) { canvas.parentElement.innerHTML = '<div class="empty">Chart library unavailable</div>'; return null; }
   const prev = Chart.getChart(canvas);

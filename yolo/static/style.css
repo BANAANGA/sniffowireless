@@ -335,3 +335,17 @@ mark { background: rgba(245,184,74,.22); color: inherit; border-radius: 2px; pad
 .sr-list li:last-child a { border-bottom: 0; }
 .sr-list li a:hover { background: var(--panel-2); }
 @media (max-width: 900px) { .gsearch { flex: 0 0 160px; } .gsearch kbd { display: none; } .gsearch-pop { width: min(420px, calc(100vw - 32px)); } }
+
+/* live logs */
+.logview { height: calc(100vh - 260px); min-height: 320px; overflow: auto; font: 12px/1.55 var(--mono); padding: 8px 0; background: var(--bg); border-radius: var(--radius); }
+.lg { display: grid; grid-template-columns: 96px 70px minmax(90px, 160px) 1fr; gap: 10px; padding: 1px 14px; white-space: pre; }
+.logview.wrap .lg { white-space: pre-wrap; word-break: break-word; }
+.lg:hover { background: var(--panel-2); }
+.lg-t { color: var(--faint); }
+.lg-s { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.lg-m { color: var(--text); }
+.lg-l { color: var(--muted); }
+.lg-debug .lg-l, .lg-debug .lg-m { color: var(--faint); }
+.lg-warning .lg-l { color: var(--warn); }
+.lg-error .lg-l, .lg-critical .lg-l, .lg-error .lg-m, .lg-critical .lg-m { color: var(--bad); }
+@media (max-width: 760px) { .lg { grid-template-columns: 70px 1fr; } .lg-l, .lg-s { display: none; } }
