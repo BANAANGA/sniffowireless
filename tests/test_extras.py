@@ -211,3 +211,40 @@ def test_dfs_radar_events(ctx):
     d = TestClient(create_app(ctx), base_url="http://yolo.test").get("/api/dfs?days=1").json()
     per = {c["channel"]: c for c in d["channels"]}
     assert per[100]["radar"] == 1 and per[52]["radar"] == 1 and per[100]["closed_until"] and d["mine_radar"] == 1
+
+
+# ------------------------------------------------------------------ BT ↔ Wi-Fi matching
+def test_bt_wifi_matching(ctx):
+    from yolo.matching import mac_adjacent, name_score, suggestions
+    assert mac_adjacent("5c:0a:5b:01:00:03", "5c:0a:5b:01:00:04") and not mac_adjacent("5c:0a:5b:01:00:03", "5c:0a:5b:01:00:99")
+    assert name_score("Sam's iPhone", "Sams-iPhone") == 1.0 and name_score("MacBook Pro", "Robins-MacBook-Pro") >= 0.7
+    s = ctx.store
+    base = time.time() - 4 * 3600
+    wifi, bt, buds, other_bt = "a4:83:e7:01:00:01", "a4:83:e7:01:00:02", "4c:11:aa:02:00:01", "6e:11:aa:02:00:99"
+    for start in (base, base + 7200):  # two visits of 50 minutes
+        for i in range(0, 3000, 60):
+            t = start + i
+            rs = -50 - (i // 300)  # walking away: both radios fade together
+            s.process({"t": "wifi_client", "ts": t, "mac": wifi, "frame": "probe", "rssi": rs, "vendor": "Apple"})
+            s.process({"t": "bt", "kind": "bt_classic", "ts": t + 5, "mac": bt, "name": "Sam's iPhone", "rssi": rs - 8})
+            s.process({"t": "bt", "kind": "ble", "ts": t + 7, "mac": buds, "name": "AirPods Pro", "rssi": rs,
+                       "extra": {"appearance": "audio sink"}})
+        s.sweep(start + 3000 + 400)
+    for i in range(0, 3000, 60):  # an unrelated phone, present at other times
+        s.process({"t": "bt", "kind": "ble", "ts": base + 4000 + i, "mac": other_bt, "rssi": -70,
+                   "fp": {"ble": {"company": 0x004C, "apple": [0x0C, 0x10]}}})
+    s.sweep(base + 7600)
+    s.flush()
+    sug = suggestions(ctx)
+    pairs = {(x["bt"]["mac"], x["wifi"]["mac"]): x for x in sug}
+    assert (bt, wifi) in pairs and pairs[(bt, wifi)]["level"] == "high"
+    assert any("adjacent hardware addresses" in r for r in pairs[(bt, wifi)]["reasons"])
+    assert not any(x["bt"]["mac"] == buds for x in sug)  # earbuds move with the phone but are a separate device
+    assert not any(x["bt"]["mac"] == other_bt for x in sug)
+    with ctx.wdb() as c:
+        gid = c.execute("INSERT INTO groups(name, kind) VALUES('Sam', 'person')").lastrowid
+        c.execute("INSERT INTO device_meta(mac, known, group_id) VALUES(?, 1, ?)", (wifi, gid))
+    from fastapi.testclient import TestClient  # noqa: F401  (route logic exercised directly below)
+    from yolo.matching import pair
+    ctx.execute("INSERT INTO device_links VALUES(?,?,?,?,?)", (*pair(bt, wifi), "rejected", 0.9, time.time()))
+    assert not any((x["bt"]["mac"], x["wifi"]["mac"]) == (bt, wifi) for x in suggestions(ctx))  # rejected stays hidden

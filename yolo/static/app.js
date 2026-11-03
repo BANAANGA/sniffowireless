@@ -98,7 +98,7 @@ const DEV_TYPES = {
   console: 'Game console', controller: 'Game controller', printer: 'Printer', camera: 'Camera', tag: 'Tracker tag',
   sensor: 'Sensor', iot: 'IoT device', light: 'Smart light', input: 'Keyboard / mouse', car: 'Car',
   router: 'Router / access point', hotspot: 'Mobile hotspot', smart_home: 'Smart home', beacon: 'Beacon',
-  sbc: 'Single-board computer', media: 'Media device', network: 'Network device', nas: 'NAS / storage', server: 'Server',
+  sbc: 'Single-board computer', media: 'Media device', network: 'Network device', nas: 'NAS / storage', server: 'Server', bike: 'Bike / e-bike',
 };
 const genLabel = g => g == null ? 'Unknown' : g === 66 ? 'Wi-Fi 6E' : g === 3 ? 'Legacy a/b/g' : `Wi-Fi ${g}`;
 const eraLabel = y => y == null ? 'Unknown' : y <= 2003 ? 'before ~2010' : `${y} or newer`;
@@ -473,6 +473,7 @@ async function viewDevice(mac, params) {
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
       ${trackPanel(d)}
+      ${matchPanel(d)}
       ${lanPanel(d)}
       ${identPanel(d)}
       <section class="panel span-2"><header><h2>Signal strength</h2><span class="legend"><span><span class="swatch" style="background:${m.color}"></span>avg</span><span><span class="swatch" style="background:${m.color}44"></span>min–max</span></span></header>
@@ -488,6 +489,7 @@ async function viewDevice(mac, params) {
 
   bindTrackPanel(d);
   bindLanPanel(d);
+  bindMatchPanel(d);
   // facts / static sections
   const peers = document.getElementById('peers');
   peers.innerHTML = d.peers.length ? `<table><thead><tr><th>${isAp ? 'Client' : 'Access point / adapter'}</th><th>${isAp ? 'Vendor' : 'SSID'}</th><th class="num">Sessions</th><th class="num">Total time</th><th class="num">First</th><th class="num">Last</th></tr></thead><tbody>

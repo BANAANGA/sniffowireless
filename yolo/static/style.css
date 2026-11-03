@@ -387,3 +387,16 @@ mark { background: rgba(245,184,74,.22); color: inherit; border-radius: 2px; pad
 .pie-legend .pl-n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
 .pie-legend .pl-p { color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
 @media (max-width: 420px) { .pie-wrap { grid-template-columns: 1fr; } .pie-box { max-width: 160px; margin: 0 auto; } }
+
+/* device matching */
+.mt-card { display: grid; grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) auto; gap: 6px 16px; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid var(--border); }
+.mt-card:last-child { border-bottom: 0; }
+.mt-side { min-width: 0; overflow: hidden; }
+.mt-side b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; max-width: 100%; vertical-align: bottom; }
+.mt-mid { text-align: center; }
+.mt-mid::before { content: "⟷"; display: block; color: var(--faint); font-size: 16px; }
+.mt-why { grid-column: 1 / 4; margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; columns: 2; }
+.mt-act { grid-column: 4; grid-row: 1; white-space: nowrap; }
+@media (max-width: 760px) { .mt-card { grid-template-columns: 1fr 60px 1fr; } .mt-act { grid-column: 1 / 4; grid-row: auto; } .mt-why { columns: 1; } }
+.page-head > .row { flex-wrap: wrap; justify-content: flex-end; }

@@ -466,6 +466,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
 | **Microsoft CDP beacons (BLE)** | Windows desktop/laptop/tablet, Xbox, Android/iPhone running Microsoft apps |
 | **BLE services / appearance** | Tile, SmartTag, Fast Pair, Eddystone, heart-rate/fitness, HID keyboards/mice, Xiaomi/BTHome sensors… |
 | **Bluetooth class of device** | Phone, laptop, headphones, car audio, speaker, watch, … |
+| **Bikes** | Bluetooth "Cycling" appearance or cycling speed/cadence/power services, and names such as VanMoof `ES3-…`/`EX3-…` or Cowboy → *Bike / e-bike* |
 | **Names / SSIDs** | “iPhone”, “Galaxy Watch5”, “DESKTOP-XXXXXXX” (Windows), “[TV] Samsung…”, “DIRECT-xx-HP…” printers, phone hotspots, car hotspots |
 | **MAC vendor (OUI)** | Brand, plus a type hint for single-purpose vendors (Espressif → IoT, Sonos → speaker, Hikvision → camera…) |
 
@@ -540,6 +541,21 @@ The **My networks**, **Investigations** and **Ignore list** settings share a net
 - whether it is already one of yours, ignored or under investigation
 
 Search it, tick networks and apply. Networks that are only *looked for* by devices (never broadcast nearby) can be included with a checkbox, and a name that hasn't been seen yet can be typed in.
+
+### Networks
+
+**Networks** (sidebar under Wi-Fi) lists every SSID seen: broadcast nearby, only looked for by devices, or both. Each shows its access points, clients, devices looking for it, security, bands, best signal and last seen, plus tags if it's yours, ignored or investigated. Click a network for its dossier: a timeline, every access point broadcasting it, connected devices, devices that looked for it, and events. It's the same view as for investigated networks, and **Investigate** adds it to that list.
+
+### Bluetooth ↔ Wi-Fi matching
+
+Phones, tablets and laptops have both radios, so yolo sees them twice. **Matching** (sidebar under Devices) guesses which Bluetooth address belongs to which Wi-Fi address from the last 7 days. It weighs:
+- being present at the same minutes, and arriving and leaving together
+- signal strength rising and falling together
+- adjacent hardware addresses (vendors usually allocate both next to each other)
+- similar names, e.g. Bluetooth "Sam's iPhone" and DHCP hostname `Sams-iPhone`
+- the brand: the same brand counts for a pair, a different known brand counts strongly against
+
+Earbuds, watches, tags and bikes are left out: they move with a phone but are separate devices. Click **Link** to confirm a pair, or **Not the same** to hide it for good. Linked devices share their group and "known" status. Each phone, tablet or laptop page also has a **Same device, other radio** panel with its link or best candidates. Phones rotate their Bluetooth addresses, so a link may need renewing.
 
 ### Networks under investigation
 
@@ -782,6 +798,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/status` | Sensor and store health |
 | `GET /api/export/devices.csv`, `/api/export/sessions.csv?days=7` | CSV export |
 | `GET /api/search?q=&section=&limit=` | Search all records (devices, groups, networks, probes, dns, events, alerts, findings, sensors) |
+| `GET /api/matching` · `GET /api/devices/{mac}/matches` · `POST /api/links` · `DELETE /api/links/{a}/{b}` | Bluetooth↔Wi-Fi match suggestions, per-device matches, and confirming/rejecting/removing a link (admin) |
 | `GET /api/ssids?q=` | All seen SSIDs with access points, clients, devices looking for them, and mine/ignored/investigated flags |
 | `GET /api/investigations` · `GET /api/investigations/{ssid}` · `PUT /api/settings/investigate` | Networks under investigation, per-network dossier, and the list itself (admin) |
 | `GET /api/groups`, `/api/groups/{id}` | Groups and combined presence |
@@ -873,6 +890,7 @@ yolo/
   backup.py     configuration / full backups, staged restore, scheduler
   logs.py       in-memory log buffer, live log stream, runtime log level
   investigate.py  networks under investigation (events, dossiers) and the SSID catalogue for pickers
+  matching.py   Bluetooth ↔ Wi-Fi same-device matching and links
   reports.py    occupancy analytics and weekly email
   metrics.py    Prometheus endpoint
   web.py        FastAPI app and device/statistics API

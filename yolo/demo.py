@@ -100,7 +100,8 @@ BLE_FPS = {
     "5b:77:00:02:00:08": {"company": 0x0006, "ms_type": 15},
     "6c:88:11:02:00:09": {"company": 0x004C, "apple": [0x12]},
     "cb:99:22:02:00:0a": {"company": 0x0499, "ext_adv": True},
-    "7b:4f:3a:02:00:0b": {"company": 0x004C, "apple": [0x12]},  # unknown AirTag following Alex every other day
+    "7b:4f:3a:02:00:0b": {"company": 0x004C, "apple": [0x12]},
+    "6e:11:aa:02:00:0c": {"company": 0x004C, "apple": [0x0C, 0x10]},  # unknown AirTag following Alex every other day
 }
 
 APS = [
@@ -169,12 +170,15 @@ BLE = [
     ("6c:88:11:02:00:09", None, 0x004C, "visitor", -73, "random-resolvable", "phone"),
     ("cb:99:22:02:00:0a", "Ruuvi 3F2C", 0x0499, "always", -75, "random-static", "sensor"),
     ("7b:4f:3a:02:00:0b", None, 0x004C, "follow:5c:0a:5b:01:00:03", -74, "random-resolvable", None),
+    ("6e:11:aa:02:00:0c", None, 0x004C, "with:a4:83:e7:01:00:01", -58, "random-static", None),   # Sam's iPhone (BLE)
+    ("f2:5c:77:02:00:0d", "ES3-4F2A1C", 0x0000, "with:a0:a8:cd:01:00:04", -72, "random-static", "cycling sensor"),
 ]
 
 CLASSIC = [
     ("00:1b:66:03:00:01", "Sennheiser MOMENTUM 4", "evening", -59, "audio/video", True, "0x240418"),
     ("00:1c:d7:03:00:02", "Car Multimedia", "worker", -80, "audio/video", False, "0x200420"),
-    ("ac:bc:32:03:00:03", "MacBook Pro", "worker", -54, "computer", False, "0x5a010c"),
+    ("ac:bc:32:03:00:03", "MacBook Pro", "with:a4:83:e7:01:00:02", -54, "computer", False, "0x5a010c"),
+    ("5c:0a:5b:01:00:04", "Galaxy S23", "with:5c:0a:5b:01:00:03", -63, "phone", False, "0x5a020c"),
 ]
 
 
@@ -367,8 +371,8 @@ class DemoGenerator:
                 out.append({"t": "bt", "kind": "ble", "fp": {"ble": BLE_FPS[mac]} if mac in BLE_FPS and n == 0 else None, "ts": t + rng.random() * 55, "mac": mac, "name": name,
                             "rssi": self._rssi(base), "randomized": atype.startswith("random-") and
                             atype != "random-static", "addr_random": atype != "public",
-                            "vendor": bt_company(cid) if atype != "public" else "Govee",
-                            "extra": {"addr_type": atype, "company": bt_company(cid), "appearance": app,
+                            "vendor": (bt_company(cid) if cid else None) if atype != "public" else "Govee",
+                            "extra": {"addr_type": atype, "company": bt_company(cid) if cid else None, "appearance": app,
                                       "connectable": True}})
         minute = int(t // 60)
         for mac, name, sched, base, cls, connects, cod in CLASSIC:
