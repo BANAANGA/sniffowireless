@@ -2,6 +2,7 @@
 let setup = false;
 const f = document.getElementById('form');
 const $ = id => document.getElementById(id);
+loadAppearance();
 fetch('/api/auth/state').then(r => r.json()).then(st => {
   if (st.user) { location.href = '/'; return; }
   setup = st.setup;

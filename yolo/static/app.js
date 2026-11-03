@@ -7,22 +7,42 @@ const KINDS = {
   bt_classic: { label: 'Bluetooth classic', short: 'BT classic', color: '#ef6f6c' },
   lan: { label: 'LAN devices', short: 'LAN', color: '#a8b3c2' },
 };
-const TEXT = '#e6e7e9', MUTED = '#8a8f98', FAINT = '#5b6068', GRID = '#1f2227';
+let TEXT = '#e6e7e9', MUTED = '#8a8f98', FAINT = '#5b6068', GRID = '#1f2227';
 const TZ = new Date().getTimezoneOffset();
 const app = document.getElementById('app');
 
 if (window.Chart) {
-  Chart.defaults.color = MUTED;
-  Chart.defaults.borderColor = GRID;
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
   Chart.defaults.font.size = 11;
   Chart.defaults.plugins.legend.display = false;
-  Chart.defaults.plugins.tooltip.backgroundColor = '#16181c';
-  Chart.defaults.plugins.tooltip.borderColor = '#2a2e35';
   Chart.defaults.plugins.tooltip.borderWidth = 1;
-  Chart.defaults.plugins.tooltip.titleColor = TEXT;
-  Chart.defaults.plugins.tooltip.bodyColor = MUTED;
   Chart.defaults.animation = false;
+}
+
+// Take the (possibly admin-customised) colours from the CSS variables into the JS palettes and chart defaults.
+function themeToJs() {
+  const cs = getComputedStyle(document.documentElement), v = (n, d) => (cs.getPropertyValue(n) || '').trim() || d;
+  TEXT = v('--text', TEXT); MUTED = v('--muted', MUTED); FAINT = v('--faint', FAINT); GRID = v('--border', GRID);
+  Object.keys(KINDS).forEach(k => { KINDS[k].color = v(`--${k}`, KINDS[k].color); });
+  const ap = KINDS.ap.color, custom = APPEARANCE && (APPEARANCE.custom_colors || []).includes('ap');
+  BANDS['2.4'].color = ap;
+  BANDS['5'].color = custom ? mixHex(ap, '#ffffff', 0.37) : '#8fd8ff';
+  BANDS['6'].color = custom ? mixHex(ap, '#ffffff', 0.75) : '#d2efff';
+  if (window.Chart) {
+    Chart.defaults.color = MUTED;
+    Chart.defaults.borderColor = GRID;
+    Chart.defaults.plugins.tooltip.backgroundColor = v('--panel-2', '#16181c');
+    Chart.defaults.plugins.tooltip.borderColor = v('--border-2', '#2a2e35');
+    Chart.defaults.plugins.tooltip.titleColor = TEXT;
+    Chart.defaults.plugins.tooltip.bodyColor = MUTED;
+  }
+}
+const PANEL = () => (getComputedStyle(document.documentElement).getPropertyValue('--panel') || '').trim() || '#111316';
+function mixHex(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  if (!/^#[0-9a-f]{6}$/i.test(a)) return a;
+  const x = p(a), y = p(b);
+  return '#' + x.map((c, i) => Math.round(c + (y[i] - c) * t).toString(16).padStart(2, '0')).join('');
 }
 
 // ------------------------------------------------------------------ helpers
@@ -233,6 +253,28 @@ async function pollStatus() {
 setInterval(pollStatus, 10000);
 
 // ------------------------------------------------------------------ overview
+// System resources: one meter per resource; the value is always printed, colour only adds emphasis above 80 / 95 %.
+function renderSystem(sys) {
+  const el = document.getElementById('system');
+  if (!el || !sys) return;
+  const pct = v => v == null ? null : Math.max(0, Math.min(100, v));
+  const meter = (label, p, value, detail, title = '') => {
+    const lvl = p == null ? '' : p >= 95 ? 'bad' : p >= 80 ? 'warn' : '';
+    return `<div class="sysm ${lvl}" title="${esc(title)}"><div class="sysm-top"><span class="muted">${label}</span><b class="mono">${value}</b></div>
+      <div class="sysm-track" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p == null ? '' : Math.round(p)}"><i style="width:${p == null ? 0 : p}%"></i></div>
+      <div class="faint small-text">${detail}</div></div>`;
+  };
+  const c = sys.cpu || {}, m = sys.memory || {}, d = sys.disk, db = sys.db || {};
+  const load = Array.isArray(c.load) ? c.load.map(x => Number(x).toFixed(2)).join(' · ') : '—';
+  const memP = m.total && m.used != null ? m.used / m.total * 100 : null;
+  const diskP = d && d.total ? d.used / d.total * 100 : null;
+  el.innerHTML = meter('CPU', pct(c.percent), c.percent == null ? '…' : `${Number(c.percent).toFixed(0)}%`,
+      `load ${load} · ${num(c.cores)} cores${c.yolo_percent != null ? ` · yolo ${Number(c.yolo_percent).toFixed(1)}%` : ''}`, 'Host CPU use; load average over 1, 5 and 15 minutes')
+    + meter('Memory', pct(memP), memP == null ? '—' : `${memP.toFixed(0)}%`,
+      `${m.used != null ? bytes(m.used) : '—'} of ${m.total ? bytes(m.total) : '—'}${m.yolo_rss ? ` · yolo ${bytes(m.yolo_rss)}` : ''}`, 'Host memory in use (excluding cache)')
+    + meter('Database', pct(diskP), bytes(db.bytes || 0),
+      d ? `${bytes(d.free)} free on the data disk (${diskP.toFixed(0)}% used)` : 'data disk size unknown', `Database ${bytes(db.main || 0)} + write-ahead log ${bytes(db.wal || 0)}; the bar shows the data disk`);
+}
 let tlView = (() => { try { return localStorage.getItem('yolo.tlview') || 'band'; } catch { return 'band'; } })();
 const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
 
@@ -245,7 +287,10 @@ async function viewOverview() {
         <header><h2>Active devices over time</h2><div class="row">${seg('tlview', [['band', 'By band'], ['type', 'By type']], tlView)}${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</div></header>
         <div class="body"><div class="legend" id="tl-legend" style="margin-bottom:10px"></div><div id="tl-box"></div></div>
       </section>
-      <section class="panel"><header><h2>Sensors</h2><span class="muted mono" id="dbsize"></span></header><div class="body flush" id="sensors"></div></section>
+      <div class="stack">
+        <section class="panel"><header><h2>System</h2><span class="faint small-text" id="sys-note"></span></header><div class="body" id="system"></div></section>
+        <section class="panel"><header><h2>Sensors</h2></header><div class="body flush" id="sensors"></div></section>
+      </div>
       <section class="panel span-2">
         <header><h2>Connected right now</h2><a class="muted" href="#/devices?connected=1">View all →</a></header>
         <div class="body flush table-wrap" id="connected"></div>
@@ -287,7 +332,7 @@ async function viewOverview() {
   }
   async function loadSensors() {
     const s = await api('/api/status');
-    document.getElementById('dbsize').textContent = bytes(s.store.db_bytes);
+    renderSystem(s.system);
     const list = s.sensors;
     document.getElementById('sensors').innerHTML = (list.length ? list.map(x => `<div class="sensor">
       <div><div><span class="state-dot ${x.state === 'error' ? '' : 'on'}"></span><b>${esc(x.name)}</b>
@@ -344,6 +389,7 @@ async function viewOverview() {
   }
 
   await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), pollStatus()]);
+  setTimeout(() => { if (document.getElementById('system')) loadSensors(); }, 1500);  // CPU % needs a second sample
   every(10000, () => { loadSummary(); loadSensors(); loadConnected(); });
   every(60000, loadTimeline);
 }
@@ -666,7 +712,6 @@ async function viewDevice(mac, params) {
 // last→first wrap distinct for protan/deutan readers); identity never relies on color alone: the legend names each
 // slice with its count and share. Anything past the top 5 folds into a neutral gray "Other".
 const PIE_COLORS = ['#3690e3', '#d46a34', '#05a388', '#c34f4b', '#97902a'];
-const PIE_OTHER = '#5b6068';
 const PIE_TOP = PIE_COLORS.length;
 const BREAKDOWN_KINDS = [['ble', 'BLE'], ['wifi_client', 'Wi-Fi clients'], ['bt_classic', 'BT classic'], ['ap', 'Access points'], ['lan', 'LAN']];
 
@@ -698,7 +743,7 @@ function breakdown(el, s, kind) {
     const top = known.slice(0, PIE_TOP);
     const rest = known.slice(PIE_TOP).reduce((a, [, n]) => a + n, 0) + unknown;
     const slices = top.map(([k, n], j) => ({ k, n, name: label(k), color: PIE_COLORS[j] }));
-    if (rest) slices.push({ k: known.length > PIE_TOP ? null : '', n: rest, name: known.length > PIE_TOP ? (unknown ? 'Other / unknown' : 'Other') : 'Unknown', color: PIE_OTHER });
+    if (rest) slices.push({ k: known.length > PIE_TOP ? null : '', n: rest, name: known.length > PIE_TOP ? (unknown ? 'Other / unknown' : 'Other') : 'Unknown', color: FAINT });
     const sum = slices.reduce((a, x) => a + x.n, 0);
     const pct = n => `${Math.round(n / sum * 100)}%`;
     const href = x => x.k === null ? null : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
@@ -710,7 +755,7 @@ function breakdown(el, s, kind) {
     chart(document.getElementById(`pie-${i}`), {
       type: 'doughnut',
       data: { labels: slices.map(x => x.name), datasets: [{ data: slices.map(x => x.n), backgroundColor: slices.map(x => x.color),
-        borderColor: '#111316', borderWidth: 2, hoverBorderColor: '#111316', hoverOffset: 4, borderRadius: 2 }] },
+        borderColor: PANEL(), borderWidth: 2, hoverBorderColor: PANEL(), hoverOffset: 4, borderRadius: 2 }] },
       options: { maintainAspectRatio: false, cutout: '64%', animation: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.label}: ${num(c.parsed)} (${pct(c.parsed)})` } } },
         onHover: (e, els) => { e.native.target.style.cursor = els.length && href(slices[els[0].index]) ? 'pointer' : 'default'; },
@@ -743,7 +788,7 @@ async function viewStats(params) {
     <section class="panel"><header><h2>Shared fingerprints</h2><span class="faint">same probe layout = same model / OS</span></header><div class="body flush table-wrap" id="st-fp"></div></section>
     <section class="panel"><header><h2>AP channels</h2><span class="legend" id="bandlegend"></span></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
     <section class="panel"><header><h2>Events</h2></header><div class="body flush table-wrap" id="evtypes"></div></section>
-    <section class="panel span-3"><header><h2>Networks (SSIDs)</h2><span class="faint">${s.ssids.length} seen</span></header><div class="body flush table-wrap" id="ssids"></div></section>
+    <section class="panel span-3"><header><h2>Networks (SSIDs)</h2><span class="row"><span class="faint" id="ssids-count"></span><button class="btn small" id="ssids-more" hidden></button></span></header><div class="body flush table-wrap" id="ssids"></div></section>
     <section class="panel"><header><h2>Most connected clients</h2></header><div class="body flush table-wrap" id="topc"></div></section>
     <section class="panel"><header><h2>Busiest access points</h2></header><div class="body flush table-wrap" id="topap"></div></section>
     <section class="panel"><header><h2>Probed SSIDs</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
@@ -852,11 +897,21 @@ async function viewStats(params) {
   };
   table('evtypes', '<th>Type</th><th class="num">Count</th>', s.events.map(e => `<tr class="link" data-href="#/events?type=${enc(e.type)}">
     <td class="ev ev-${esc(e.type)}">${esc(e.type.replace(/_/g, ' '))}</td><td class="num">${num(e.n)}</td></tr>`).join(''));
-  table('ssids', '<th>SSID</th><th class="num">BSSIDs</th><th class="num">Clients</th><th class="num">Sessions</th><th>Channels</th><th>Security</th><th>Best signal</th>',
-    s.ssids.map(x => `<tr class="link" data-href="${hrefWith('/devices', { ssid: x.ssid })}"><td class="trunc">${esc(x.ssid)}</td>
-      <td class="num">${x.aps}</td><td class="num">${x.clients}</td><td class="num muted">${num(x.sessions)}</td><td class="muted">${esc(x.channels || '—')}</td>
-      <td>${(x.enc || '').split(',').filter((v, i, a) => v && a.indexOf(v) === i).map(e => `<span class="tag ${e === 'OPN' ? 'bad' : ''}">${esc(e)}</span>`).join(' ') || '—'}</td>
-      <td>${rssiBars(x.rssi)}</td></tr>`).join(''));
+  // Networks: the 20 most recently seen, expandable to the 100 the API returns.
+  const renderSsids = n => {
+    const list = s.ssids.slice(0, n), total = s.ssid_total ?? s.ssids.length;
+    table('ssids', '<th>SSID</th><th class="num">BSSIDs</th><th class="num">Clients</th><th class="num">Sessions</th><th>Channels</th><th>Security</th><th>Best signal</th><th class="num">Last seen</th>',
+      list.map(x => `<tr class="link" data-href="${hrefWith('/devices', { ssid: x.ssid })}"><td class="trunc">${esc(x.ssid)}</td>
+        <td class="num">${x.aps}</td><td class="num">${x.clients}</td><td class="num muted">${num(x.sessions)}</td><td class="muted">${esc(x.channels || '—')}</td>
+        <td>${(x.enc || '').split(',').filter((v, i, a) => v && a.indexOf(v) === i).map(e => `<span class="tag ${e === 'OPN' ? 'bad' : ''}">${esc(e)}</span>`).join(' ') || '—'}</td>
+        <td data-v="${x.rssi ?? ''}">${rssiBars(x.rssi)}</td><td class="num muted" data-v="${x.last_seen || ''}">${ago(x.last_seen)}</td></tr>`).join(''));
+    document.getElementById('ssids-count').textContent = list.length < total ? `last seen ${list.length} of ${num(total)}` : `${num(total)} seen`;
+    const more = document.getElementById('ssids-more');
+    more.hidden = s.ssids.length <= 20;
+    more.textContent = n > 20 ? 'Show 20' : `Show ${Math.min(100, s.ssids.length)}`;
+    more.onclick = () => renderSsids(n > 20 ? 20 : 100);
+  };
+  renderSsids(20);
   table('topc', '<th>Client</th><th class="num">Networks</th><th class="num">Connected</th>', s.top_clients.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
     <td>${kindBadge(x.kind)} <span class="mono" style="margin-left:6px">${esc(x.name || x.vendor || x.mac)}</span></td><td class="num muted">${x.peers}</td><td class="num">${dur(x.secs)}</td></tr>`).join(''));
   table('topap', '<th>Access point</th><th class="num">Clients</th><th class="num">Client-time</th>', s.top_aps.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
@@ -965,6 +1020,8 @@ function openModal(title, body, onSubmit, { submit = 'Save', danger = false, wid
 const fv = (form, name) => { const el = form.elements[name]; return el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : undefined; };
 
 window.addEventListener('DOMContentLoaded', async () => {
+  themeToJs();
+  const appearance = loadAppearance().then(themeToJs);
   try {
     const st = await (await fetch('/api/auth/state')).json();
     if (!st.user) { location.href = '/login'; return; }
@@ -976,6 +1033,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (lo) lo.onclick = async e => { e.preventDefault(); await send('POST', '/api/auth/logout'); location.href = '/login'; };
     document.body.classList.toggle('viewer', !isAdmin());
   } catch { /* offline: route() will show the error */ }
+  const side = document.querySelector('.side'), menu = document.getElementById('menu-btn');
+  const setMenu = open => { side.classList.toggle('open', open); menu.setAttribute('aria-expanded', open); };
+  if (menu) {
+    menu.onclick = () => setMenu(!side.classList.contains('open'));
+    window.addEventListener('hashchange', () => setMenu(false));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
+  }
+  await appearance;
   route();
   pollStatus();
 });

@@ -38,7 +38,7 @@ SCOPES = ("metrics", "sensor", "read", "admin")
 SESSION_DAYS = 14
 COOKIE = "yolo_session"
 PBKDF2_ITERATIONS = 600_000
-PUBLIC_PATHS = ("/login", "/api/auth/", "/api/health", "/static/", "/vendor/", "/favicon")
+PUBLIC_PATHS = ("/login", "/api/auth/", "/api/appearance", "/api/health", "/static/", "/vendor/", "/favicon")
 USERNAME_RX = "^[A-Za-z0-9._@-]{1,64}$"
 FAIL_WINDOW, FAIL_IP, FAIL_USER = 300, 8, 10  # failed logins allowed per IP / per account within the window
 # Verifying against this when the user doesn't exist keeps response times equal (no username enumeration).

@@ -1,6 +1,7 @@
 """Security tests: auth, CSRF/origin, headers/CSP, input validation, ingest sanitising, uploads, limits."""
 import gzip
 import json
+import os
 import time
 
 import pytest
@@ -296,3 +297,60 @@ def test_timeline_per_band(env):
     assert max(b["2.4"]["ap"]) == 1 and max(b["5"]["ap"]) == 1 and max(b["6"]["ap"]) == 1
     assert max(b["2.4"]["connected"]) == 1 and max(b["5"]["connected"]) == 1 and max(b["6"]["connected"]) == 0
     assert max(b["5"]["wifi_client"]) == 1 and max(b["2.4"]["wifi_client"]) == 0  # last heard on 5 GHz
+
+
+def test_appearance(env):
+    ctx, c = env
+    a = c.get("/api/appearance").json()  # public: the sign-in page uses it too
+    assert a["name"] == "yolo" and a["icon"] == "dot" and a["colors"]["ap"] == "#4cc2ff" and a["custom_colors"] == []
+    body = {"name": "Home <b>radar</b>", "icon": "radar", "colors": {"ap": "#FF8800", "bg": "#0b0c0e"}}
+    assert c.put("/api/appearance", json=body, headers=H).status_code == 401
+    login(c, "viewer")
+    assert c.put("/api/appearance", json=body, headers=H).status_code == 403
+    c.cookies.clear()
+    login(c)
+    for bad in ({"colors": {"ap": "red"}}, {"colors": {"ap": "#ff0000;x"}}, {"colors": {"evil": "#ffffff"}},
+                {"icon": "../etc"}, {"name": "x" * 40}, {"icon": "custom"}):
+        assert c.put("/api/appearance", json={**body, **bad}, headers=H).status_code in (400, 422), bad
+    r = c.put("/api/appearance", json=body, headers=H).json()
+    assert r["icon"] == "radar" and r["colors"]["ap"] == "#ff8800" and r["custom_colors"] == ["ap"]  # default bg not stored
+    assert "<" not in r["name"]
+    # icon upload: only real raster images, served with a locked-down CSP
+    assert c.post("/api/appearance/icon", content=b"<svg onload=alert(1)>", headers=H).status_code == 415
+    png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+    assert c.post("/api/appearance/icon", content=b"\x89PNG\r\n\x1a\n" + b"\0" * (300 * 1024), headers=H).status_code == 413
+    r = c.post("/api/appearance/icon", content=png, headers=H).json()
+    assert r["icon"] == "custom" and r["icon_url"].startswith("/api/appearance/icon")
+    c.cookies.clear()
+    ic = c.get("/api/appearance/icon")
+    assert ic.status_code == 200 and ic.headers["content-type"] == "image/png" and "sandbox" in ic.headers["content-security-policy"]
+    # a tampered config backup can't make it serve or delete other files
+    ctx.settings.set("appearance", {**ctx.settings.get("appearance"), "icon_file": "../t.db"})
+    assert c.get("/api/appearance/icon").status_code == 404 and c.get("/api/appearance").json()["icon"] == "dot"
+    login(c)
+    assert c.delete("/api/appearance/icon", headers=H).status_code == 200
+    assert os.path.exists(ctx.cfg.db_path)
+
+
+def test_stats_ssids_capped(env):
+    ctx, c = env
+    now = time.time()
+    for i in range(130):
+        ctx.store.process({"t": "wifi_ap", "ts": now - 3000 + i * 10, "mac": f"24:a4:3c:00:{i // 256:02x}:{i % 256:02x}",
+                           "ssid": f"Net{i:03d}", "freq": 2412, "band": "2.4", "channel": 1})
+    ctx.store.flush()
+    login(c)
+    s = c.get("/api/stats?days=1").json()
+    assert s["ssid_total"] == 130 and len(s["ssids"]) == 100
+    assert s["ssids"][0]["ssid"] == "Net129" and s["ssids"][0]["last_seen"] >= s["ssids"][-1]["last_seen"]
+
+
+def test_status_system(env):
+    ctx, c = env
+    login(c)
+    c.get("/api/status")
+    time.sleep(1.1)
+    s = c.get("/api/status").json()["system"]
+    assert s["cpu"]["cores"] >= 1 and (s["cpu"]["percent"] is None or 0 <= s["cpu"]["percent"] <= 100)
+    assert s["memory"]["total"] and 0 < s["memory"]["used"] <= s["memory"]["total"]
+    assert s["db"]["bytes"] > 0 and s["disk"]["total"] > 0
