@@ -21,6 +21,8 @@ services:
       WEB_PORT: ${WEB_PORT:-8080}
       WEB_USER: ${WEB_USER:-}
       WEB_PASSWORD: ${WEB_PASSWORD:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1}
       DEMO_MODE: ${DEMO_MODE:-0}
       TZ: ${TZ:-UTC}
     volumes:

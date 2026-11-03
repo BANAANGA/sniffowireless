@@ -12,6 +12,7 @@ import sqlite3
 import time
 
 from . import identify
+from .sanitize import clean_str
 
 log = logging.getLogger("yolo.store")
 
@@ -421,6 +422,8 @@ class Store:
                 dev["best_rssi"] = rssi
         for f in field_names:
             v = o.get(f)
+            if isinstance(v, str):
+                v = clean_str(v, 253 if f == "dns" else 128)
             if v is not None and v != "":
                 dev[f] = v
         if o.get("extra"):
@@ -488,6 +491,9 @@ class Store:
         dev["bssid"] = bssid
 
     def _probe(self, dev, ssid, ts):
+        ssid = clean_str(ssid, 64)
+        if not ssid:
+            return
         key = (dev["mac"], ssid)
         u = self.probe_updates.get(key)
         if u is None:

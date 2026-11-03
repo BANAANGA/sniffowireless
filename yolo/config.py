@@ -143,6 +143,8 @@ class Config:
     web_user: str = ""
     web_password: str = ""
     auth_disabled: bool = False
+    allowed_hosts: list = field(default_factory=list)
+    trusted_proxies: str = "127.0.0.1"
     data_dir: str = "/data"
     # "server" (default: capture + store + web UI) or "sensor" (capture only, forward to a server)
     mode: str = "server"
@@ -193,6 +195,8 @@ class Config:
             web_user=_env("WEB_USER"),
             web_password=_env("WEB_PASSWORD"),
             auth_disabled=_bool("AUTH_DISABLED", False),
+            allowed_hosts=_list("ALLOWED_HOSTS"),
+            trusted_proxies=_env("TRUSTED_PROXIES", "127.0.0.1"),
             data_dir=_env("DATA_DIR") or os.path.dirname(os.path.abspath(_env("DB_PATH", "/data/yolo.db"))),
             mode=_env("YOLO_MODE", "server").lower(),
             server_url=_env("SERVER_URL").rstrip("/"),

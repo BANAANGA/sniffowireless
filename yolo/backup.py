@@ -24,10 +24,13 @@ from contextlib import closing
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, Field
 
 from . import __version__
 from .alerts import SECRET_FIELDS
 from .auth import require_admin
+from .sanitize import clean_json
+from .settings import DEFAULTS
 
 log = logging.getLogger("yolo.backup")
 
@@ -35,6 +38,12 @@ FORMAT = "yolo-config"
 CONFIG_TABLES = ["device_meta", "groups", "alert_rules", "notifiers", "sensors"]
 STAGED = "restore-pending.tar.gz"
 NAME_RX = re.compile(r"^yolo-\d{8}-\d{6}\.tar\.gz$")
+
+
+class BackupSettings(BaseModel):
+    enabled: bool = False
+    hour: int = Field(3, ge=0, le=23)
+    keep: int = Field(7, ge=1, le=365)
 
 
 def backups_dir(cfg):
@@ -79,7 +88,8 @@ def import_config(ctx, data):
         c.execute("BEGIN")
         try:
             for k, v in (data.get("settings") or {}).items():
-                c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)", (k, json.dumps(v)))
+                if k in DEFAULTS and isinstance(v, dict):  # only known settings, bounded values
+                    c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)", (k, json.dumps(clean_json(v))))
             for t in CONFIG_TABLES + ["users"]:
                 if t not in tables:
                     continue
@@ -329,12 +339,9 @@ def routes(ctx):
             os.remove(tmp.name)
 
     @r.put("/api/backup/settings")
-    def backup_settings(body: dict, _=Depends(require_admin)):
+    def backup_settings(body: BackupSettings, _=Depends(require_admin)):
         cur = ctx.settings.get("backup")
-        for k in ("enabled", "hour", "keep"):
-            if k in body:
-                cur[k] = body[k]
-        cur["hour"], cur["keep"] = max(0, min(23, int(cur["hour"]))), max(1, min(365, int(cur["keep"])))
+        cur.update(enabled=body.enabled, hour=body.hour, keep=body.keep)
         ctx.settings.set("backup", cur)
         return cur
 

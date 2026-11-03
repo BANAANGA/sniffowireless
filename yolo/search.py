@@ -3,7 +3,7 @@ security findings and sensors."""
 import re
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from .auth import current_user
 
@@ -81,7 +81,8 @@ def routes(ctx):
     r = APIRouter()
 
     @r.get("/api/search")
-    def api_search(q: str = "", limit: int = 8, section: str = None, _=Depends(current_user)):
+    def api_search(q: str = Query("", max_length=200), limit: int = 8, section: str = None,
+                   _=Depends(current_user)):
         secs = (section,) if section in SECTIONS else SECTIONS
         t0 = time.time()
         res = search(ctx, q, max(1, min(limit, 200)), secs)

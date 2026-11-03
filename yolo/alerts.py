@@ -2,6 +2,7 @@
 import json
 import logging
 import queue
+import re
 import smtplib
 import ssl
 import threading
@@ -10,12 +11,13 @@ import urllib.parse
 import urllib.request
 from contextlib import closing
 from email.message import EmailMessage
-from typing import List, Optional
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import current_user, require_admin
+from .sanitize import Name, clean_mac, clean_str
 
 log = logging.getLogger("yolo.alerts")
 
@@ -188,7 +190,8 @@ def describe(ev, dev, meta, group):
         lines.append(f"Peer: {ev['peer']}")
     if ev.get("detail") and typ not in ("group_arrived", "group_left"):
         lines.append(str(ev["detail"]))
-    return titles.get(typ, f"{typ}: {name}"), "\n".join(lines)
+    # Names and SSIDs are chosen by strangers: no control characters (header injection in email / ntfy).
+    return clean_str(titles.get(typ, f"{typ}: {name}"), 200), "\n".join(clean_str(x, 500) or "" for x in lines)
 
 
 class AlertEngine:
@@ -279,20 +282,20 @@ class AlertEngine:
 
 # ------------------------------------------------------------------ routes
 class NotifierIn(BaseModel):
-    name: str
-    type: str
-    config: dict = {}
+    name: Annotated[Name, Field(min_length=1)]
+    type: str = Field(pattern="^(ntfy|telegram|discord|webhook|email)$")
+    config: Dict[str, Optional[str]] = Field({}, max_length=10)
     enabled: bool = True
 
 
 class RuleIn(BaseModel):
-    name: str
+    name: Annotated[Name, Field(min_length=1)]
     enabled: bool = True
-    events: List[str]
+    events: List[str] = Field(max_length=40)
     target: dict = {"mode": "any"}
     schedule: dict = {}
-    notifiers: List[int] = []
-    cooldown: int = 300
+    notifiers: List[int] = Field([], max_length=20)
+    cooldown: int = Field(300, ge=0, le=7 * 86400)
 
 
 def _masked(n):
@@ -324,10 +327,33 @@ def routes(ctx):
     def _save_notifier(body, nid=None):
         if body.type not in NOTIFIER_TYPES:
             raise HTTPException(400, "unknown notifier type")
-        cfg = {k: v for k, v in body.config.items() if k in NOTIFIER_TYPES[body.type]}
+        cfg = {}
+        for k, v in body.config.items():
+            if k not in NOTIFIER_TYPES[body.type] or v in (None, ""):
+                continue
+            v = clean_str(v, 512)
+            if v:
+                cfg[k] = v
         if nid:
             old = json.loads((ctx.one("SELECT config FROM notifiers WHERE id=?", (nid,)) or {}).get("config") or "{}")
             cfg = {k: (old.get(k) if v == MASK else v) for k, v in cfg.items()}
+        for k in ("url", "webhook_url"):  # urllib would also open file:// and other schemes
+            if cfg.get(k) and not re.match(r"^https?://[^\s/]+", cfg[k], re.I):
+                raise HTTPException(400, f"{k} must be an http:// or https:// URL")
+        if cfg.get("bot_token") and not re.match(r"^\d+:[A-Za-z0-9_-]{20,}$", cfg["bot_token"]):
+            raise HTTPException(400, "bot_token doesn't look like a Telegram bot token (123456:ABC…)")
+        if cfg.get("chat_id") and not re.match(r"^-?\d{1,20}$|^@[A-Za-z0-9_]{4,64}$", cfg["chat_id"]):
+            raise HTTPException(400, "chat_id must be a number or @channelname")
+        if cfg.get("topic") and not re.match(r"^[A-Za-z0-9_-]{1,64}$", cfg["topic"]):
+            raise HTTPException(400, "topic: letters, digits, - and _ only")
+        if cfg.get("port") and not re.match(r"^\d{1,5}$", cfg["port"]):
+            raise HTTPException(400, "port must be a number")
+        if cfg.get("security") and cfg["security"] not in ("starttls", "ssl", "none"):
+            raise HTTPException(400, "security must be starttls, ssl or none")
+        for k in ("to", "sender"):
+            for addr in (cfg.get(k) or "").split(","):
+                if addr.strip() and not re.match(r"^[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+$", addr.strip()):
+                    raise HTTPException(400, f"{k}: invalid email address {addr.strip()!r}")
         need = {"ntfy": ["topic"], "telegram": ["bot_token", "chat_id"], "discord": ["webhook_url"],
                 "webhook": ["url"], "email": ["host", "to"]}[body.type]
         missing = [k for k in need if not cfg.get(k)]
@@ -380,10 +406,38 @@ def routes(ctx):
         bad = [e for e in body.events if e not in EVENT_TYPES]
         if bad or not body.events:
             raise HTTPException(400, f"invalid events: {bad or 'none selected'}")
+        sc = {}
         for k in ("start", "end"):
             v = body.schedule.get(k)
-            if v and (len(v) != 5 or v[2] != ":"):
-                raise HTTPException(400, "times must be HH:MM")
+            if v:
+                if not isinstance(v, str) or not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", v):
+                    raise HTTPException(400, "times must be HH:MM")
+                sc[k] = v
+        days = body.schedule.get("days")
+        if days:
+            if not isinstance(days, list) or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
+                raise HTTPException(400, "days must be numbers 0 (Mon) to 6 (Sun)")
+            sc["days"] = sorted(set(days))
+        body.schedule = sc
+        t = body.target
+        mode = t.get("mode", "any")
+        if mode not in ("any", "watchlist", "unknown", "macs", "groups", "kinds"):
+            raise HTTPException(400, "invalid target mode")
+        tgt = {"mode": mode}
+        if mode == "macs":
+            macs = [clean_mac(m) for m in (t.get("macs") or [])][:1000]
+            if None in macs:
+                raise HTTPException(400, "invalid MAC address in target")
+            tgt["macs"] = macs
+        elif mode == "groups":
+            if not all(isinstance(g, int) for g in t.get("groups") or []):
+                raise HTTPException(400, "groups must be group ids")
+            tgt["groups"] = list(t.get("groups") or [])[:500]
+        elif mode == "kinds":
+            tgt["kinds"] = [clean_str(k, 32) for k in (t.get("kinds") or [])][:50]
+        elif mode == "unknown":
+            tgt.update(randomized=bool(t.get("randomized")), aps=bool(t.get("aps")))
+        body.target = tgt
 
     @r.post("/api/alert-rules")
     def add_rule(body: RuleIn, _=Depends(require_admin)):
