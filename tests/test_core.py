@@ -266,3 +266,16 @@ def test_6ghz_mislabelled_by_driver():
     assert (o["band"], o["channel"]) == ("6", 37)
     # a genuine frame from another channel (straggler after a hop) is left alone
     assert radio_freq(5180, 6135) == 5180 and radio_freq(6135, 6135) == 6135 and radio_freq(2437, None) == 2437
+
+
+def test_regulatory_warning(monkeypatch):
+    from yolo import wifi
+    out = "global\ncountry 00: DFS-UNSET\n\t(2402 - 2472 @ 40), (6, 20), (N/A)\n\nphy#1\ncountry US: DFS-FCC\n"
+    monkeypatch.setattr(wifi, "run_cmd", lambda *a: (0, out))
+    assert wifi.global_regdomain() == "00"
+    w = wifi.regulatory_warning("00", "NL", True)
+    assert "still 00" in w and "wireless-regdb" in w
+    assert "Set WIFI_REGDOMAIN" in wifi.regulatory_warning("00", "", True)
+    assert wifi.regulatory_warning("00", "NL", False) is None  # no 6 GHz configured: nothing to warn about
+    assert wifi.regulatory_warning("NL", "NL", True) is None
+    assert "was not applied" in wifi.regulatory_warning("US", "NL", True)

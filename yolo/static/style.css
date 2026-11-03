@@ -478,3 +478,4 @@ th.csort[aria-sort="ascending"]::after { content: " ↑"; }
   #cards.cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   #cards .card { padding: 12px; }
 }
+.warn-text { color: var(--warn); white-space: normal; }

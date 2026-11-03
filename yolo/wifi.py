@@ -318,6 +318,32 @@ def set_regdomain(country):
         log.info("Regulatory domain set to %s", country)
 
 
+def global_regdomain():
+    """The kernel's global regulatory country ('00' = world rules), or None if `iw reg get` fails."""
+    rc, out = run_cmd("iw", "reg", "get")
+    if rc != 0:
+        return None
+    m = re.search(r"global\s*\n\s*country (\w\w):", out)
+    return m.group(1) if m else None
+
+
+def regulatory_warning(country, wanted, want_6ghz):
+    """Explain a regulatory domain that blocks 6 GHz; None when it is fine."""
+    if country is None or not want_6ghz:
+        return None
+    if country == "00":
+        if wanted:
+            return (f"Regulatory domain is still 00 (world rules) although WIFI_REGDOMAIN={wanted}, so 6 GHz is "
+                    "disabled. The host is most likely missing the wireless-regdb package (regulatory.db); install "
+                    "it and reboot, or run ./scripts/configure.sh on the host.")
+        return ("Regulatory domain is 00 (world rules), so 6 GHz is disabled. Set WIFI_REGDOMAIN to your country "
+                "code (e.g. NL) in .env, or run ./scripts/configure.sh on the host.")
+    if wanted and country != wanted:
+        return (f"WIFI_REGDOMAIN={wanted} was not applied: the kernel reports country {country}. Check "
+                "'iw reg get' on the host (another tool may be setting the country).")
+    return None
+
+
 class WifiSensor:
     def __init__(self, iface, channels, cfg, store):
         self.iface, self.channels, self.cfg, self.store = iface, list(channels), cfg, store
