@@ -103,7 +103,9 @@ const DEV_TYPES = {
 const genLabel = g => g == null ? 'Unknown' : g === 66 ? 'Wi-Fi 6E' : g === 3 ? 'Legacy a/b/g' : `Wi-Fi ${g}`;
 const eraLabel = y => y == null ? 'Unknown' : y <= 2003 ? 'before ~2010' : `${y} or newer`;
 const typeLabel = t => t ? (DEV_TYPES[t] || t) : 'Unknown';
-const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v) };
+const ADDR_TYPES = { public: 'Public (fixed)', 'random-static': 'Random static', 'random-resolvable': 'Random resolvable (private)',
+  'random-nonresolvable': 'Random non-resolvable' };
+const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v), addr_type: v => ADDR_TYPES[v] || v };
 function identCell(x) {
   const id = x.ident || {};
   const label = id.label || (x.vendor ? esc(x.vendor) : '');
@@ -335,7 +337,8 @@ function linkRows(root) {
 
 // ------------------------------------------------------------------ devices
 const FILTER_LABELS = { vendor: 'Vendor', brand: 'Brand', dev_type: 'Device type', os: 'OS', wifi_gen: 'Wi-Fi', era: 'Age', fp: 'Fingerprint',
-  ssid: 'SSID', probe: 'Probed', bssid: 'Connected to', channel: 'Channel', connected: 'Connected now' };
+  ssid: 'SSID', probe: 'Probed', bssid: 'Connected to', channel: 'Channel', connected: 'Connected now',
+  addr_type: 'Address type', company: 'Bluetooth company' };
 
 async function viewDevices(params) {
   const st = Object.fromEntries(params.entries());
@@ -628,6 +631,65 @@ async function viewDevice(mac, params) {
 }
 
 // ------------------------------------------------------------------ stats
+// Doughnut breakdowns per device kind (Statistics page).
+// Slice colors: validated for the dark panel surface (OKLCH L 0.48–0.67, chroma >= 0.1, neighbouring slices incl. the
+// last→first wrap distinct for protan/deutan readers); identity never relies on color alone: the legend names each
+// slice with its count and share. Anything past the top 5 folds into a neutral gray "Other".
+const PIE_COLORS = ['#3690e3', '#d46a34', '#05a388', '#c34f4b', '#97902a'];
+const PIE_OTHER = '#5b6068';
+const PIE_TOP = PIE_COLORS.length;
+const BREAKDOWN_KINDS = [['ble', 'BLE'], ['wifi_client', 'Wi-Fi clients'], ['bt_classic', 'BT classic'], ['ap', 'Access points'], ['lan', 'LAN']];
+
+function breakdown(el, s, kind) {
+  if (window.Chart) el.querySelectorAll('canvas').forEach(c => { const p = Chart.getChart(c); if (p) p.destroy(); });
+  const of = (rows, key = 'v') => rows.filter(r => r.kind === kind).map(r => ({ v: r[key], n: r.n }));
+  const charts = [
+    ['Device type', of(s.dev_type), 'dev_type', v => typeLabel(v)],
+    ['Vendor', of(s.vendors, 'vendor').map(r => ({ v: r.v === 'Unknown' ? null : r.v, n: r.n })), 'vendor', v => v],
+    ['Brand', of(s.brand), 'brand', v => v],
+    ['Operating system', of(s.os), 'os', v => v],
+  ];
+  if (kind === 'ble') charts.push(['Address type', of(s.addr_type), 'addr_type', v => ADDR_TYPES[v] || v],
+    ['Bluetooth company', of(s.company), 'company', v => v]);
+  const total = charts[0][1].reduce((a, r) => a + r.n, 0);
+  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices</span>
+      ${seg('bkind', BREAKDOWN_KINDS, kind)}</header>
+    <div class="body">${total ? `<div class="pie-grid">${charts.map((c, i) => `<div class="pie-card"><h3 class="subhead">${c[0]}</h3>
+      <div class="pie-wrap"><div class="pie-box"><canvas id="pie-${i}" role="img" aria-label="${esc(c[0])} breakdown"></canvas><div class="pie-total"><b>${num(total)}</b><span>devices</span></div></div>
+      <ul class="pie-legend" id="pie-leg-${i}"></ul></div></div>`).join('')}</div>` : '<div class="empty">No devices of this kind in this period</div>'}</div>`;
+  onSeg(el, 'bkind', v => breakdown(el, s, v));
+  if (!total) return;
+  charts.forEach(([title, rows, key, label], i) => {
+    const agg = {};
+    rows.forEach(r => { const k = r.v == null || r.v === '' ? '' : String(r.v); agg[k] = (agg[k] || 0) + r.n; });
+    const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
+    // "Unknown" is shown but never takes a color slot ahead of identified values.
+    const known = sorted.filter(([k]) => k !== ''), unknown = agg[''] || 0;
+    const top = known.slice(0, PIE_TOP);
+    const rest = known.slice(PIE_TOP).reduce((a, [, n]) => a + n, 0) + unknown;
+    const slices = top.map(([k, n], j) => ({ k, n, name: label(k), color: PIE_COLORS[j] }));
+    if (rest) slices.push({ k: known.length > PIE_TOP ? null : '', n: rest, name: known.length > PIE_TOP ? (unknown ? 'Other / unknown' : 'Other') : 'Unknown', color: PIE_OTHER });
+    const sum = slices.reduce((a, x) => a + x.n, 0);
+    const pct = n => `${Math.round(n / sum * 100)}%`;
+    const href = x => x.k === null ? null : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
+    document.getElementById(`pie-leg-${i}`).innerHTML = slices.map(x => {
+      const h = href(x);
+      return `<li${h ? ` data-href="${h}"` : ''}><span class="swatch" style="background:${x.color}"></span><span class="pl-name" title="${esc(x.name)}">${x.k === '' ? `<span class="faint">${esc(x.name)}</span>` : esc(x.name)}</span>
+        <span class="pl-n">${num(x.n)}</span><span class="pl-p">${pct(x.n)}</span></li>`;
+    }).join('');
+    chart(document.getElementById(`pie-${i}`), {
+      type: 'doughnut',
+      data: { labels: slices.map(x => x.name), datasets: [{ data: slices.map(x => x.n), backgroundColor: slices.map(x => x.color),
+        borderColor: '#111316', borderWidth: 2, hoverBorderColor: '#111316', hoverOffset: 4, borderRadius: 2 }] },
+      options: { maintainAspectRatio: false, cutout: '64%', animation: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.label}: ${num(c.parsed)} (${pct(c.parsed)})` } } },
+        onHover: (e, els) => { e.native.target.style.cursor = els.length && href(slices[els[0].index]) ? 'pointer' : 'default'; },
+        onClick: (e, els) => { if (els.length) { const h = href(slices[els[0].index]); if (h) location.hash = h; } } },
+    });
+  });
+  bindLi(el);
+}
+
 async function viewStats(params) {
   const days = params.get('days') || '7';
   app.innerHTML = `
@@ -638,6 +700,7 @@ async function viewStats(params) {
   const s = await api(`/api/stats?days=${days}&tz=${TZ}`);
   const root = document.getElementById('stats');
   root.innerHTML = `
+    <section class="panel span-3" id="breakdown"></section>
     <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
@@ -654,6 +717,8 @@ async function viewStats(params) {
     <section class="panel"><header><h2>Most connected clients</h2></header><div class="body flush table-wrap" id="topc"></div></section>
     <section class="panel"><header><h2>Busiest access points</h2></header><div class="body flush table-wrap" id="topap"></div></section>
     <section class="panel"><header><h2>Probed SSIDs</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
+
+  breakdown(document.getElementById('breakdown'), s, 'ble');
 
   // hourly
   const hours = Array.from({ length: 24 }, (_, i) => i);

@@ -60,6 +60,26 @@ def _elts(pkt):
     return out
 
 
+def _chan_elts(pkt):
+    """(csa, ht_primary) from one walk over a beacon / probe response's elements.
+
+    csa: Channel Switch Announcement (IE 37) or Extended CSA (IE 60), which APs on DFS channels send when radar
+    forces them off the channel; ht_primary: the primary channel from HT Operation (IE 61), which 5 GHz beacons
+    carry even when they have no DS Parameter Set."""
+    csa = primary = None
+    elt = pkt.getlayer(Dot11Elt)
+    while elt is not None:
+        info = bytes(elt.info or b"")
+        if csa is None and elt.ID == 37 and len(info) >= 3:
+            csa = {"mode": info[0], "new_channel": info[1], "count": info[2]}
+        elif csa is None and elt.ID == 60 and len(info) >= 4:
+            csa = {"mode": info[0], "op_class": info[1], "new_channel": info[2], "count": info[3]}
+        elif elt.ID == 61 and info:
+            primary = info[0]
+        elt = elt.payload.getlayer(Dot11Elt) if elt.payload else None
+    return csa, primary
+
+
 class FingerprintGate:
     """Only fingerprint a given (device, frame source) every `interval` seconds: beacons arrive ~10/s."""
 
@@ -141,10 +161,11 @@ def parse_frame(pkt, fp_gate=None):
                 stats = {}
             ssid = _elt_ssid(pkt)
             crypto = stats.get("crypto") or set()
-            ap(a2 or a3, rssi, ssid=ssid or None, channel=stats.get("channel"),
+            csa, primary = _chan_elts(pkt)
+            ap(a2 or a3, rssi, ssid=ssid or None, channel=stats.get("channel") or primary,
                enc=",".join(sorted(crypto)) or None,
                extra={"hidden": True} if st == 8 and ssid == "" else None,
-               fp=fingerprint(a2 or a3, "beacon"))
+               fp=fingerprint(a2 or a3, "beacon"), csa=csa)
             if st == 5:
                 client(a1, None, "probe_resp")
         elif st == 4:  # probe request

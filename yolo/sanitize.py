@@ -81,6 +81,20 @@ def clean_json(v, depth=0, max_items=64):
     return None
 
 
+def clean_csa(c):
+    """Channel switch announcement from a remote sensor: {mode, new_channel, count[, op_class]} or None."""
+    if not isinstance(c, dict):
+        return None
+    ch = clean_num(c.get("new_channel"), 1, 233, True)
+    if ch is None:
+        return None
+    r = {"mode": clean_num(c.get("mode"), 0, 255, True) or 0, "new_channel": ch,
+         "count": clean_num(c.get("count"), 0, 255, True) or 0}
+    if c.get("op_class") is not None:
+        r["op_class"] = clean_num(c.get("op_class"), 0, 255, True)
+    return r
+
+
 def remote_observation(o, now):
     """Validate one observation pushed by a remote sensor. Returns a cleaned dict or None."""
     if not isinstance(o, dict):
@@ -123,7 +137,7 @@ def remote_observation(o, now):
         r.update(freq=clean_num(o.get("freq"), 2000, 8000, True), channel=clean_num(o.get("channel"), 1, 233, True),
                  band=o.get("band") if o.get("band") in BANDS else None, vendor=clean_str(o.get("vendor")))
         if t == "wifi_ap":
-            r.update(ssid=clean_str(o.get("ssid"), 64), enc=clean_str(o.get("enc"), 64))
+            r.update(ssid=clean_str(o.get("ssid"), 64), enc=clean_str(o.get("enc"), 64), csa=clean_csa(o.get("csa")))
         else:
             r.update(bssid=clean_mac(o.get("bssid")), frame=o.get("frame") if o.get("frame") in FRAMES else None,
                      probe=clean_str(o.get("probe"), 64), reason=clean_num(o.get("reason"), 0, 65535, True))

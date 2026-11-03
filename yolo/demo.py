@@ -114,7 +114,20 @@ APS = [
     ("f4:f5:d8:50:00:08", "Bakery Guest", 1, "OPN", -80, "Google"),
     ("24:a4:3c:10:00:09", "HomeNet", ("6", 37), "WPA3/SAE", -58, "Ubiquiti"),
     ("9c:7b:ef:60:00:0a", "DIRECT-4F-HP OfficeJet Pro 9010", 6, "WPA2/PSK", -69, "Hewlett Packard"),
+    ("e0:63:da:70:00:0b", "Buren-5G", 100, "WPA2/PSK", -74, "Ubiquiti"),  # on a DFS channel: radar now and then
 ]
+DFS_AP = "e0:63:da:70:00:0b"
+
+
+def dfs_state(t):
+    """Demo radar: in some hours the DFS neighbour hears radar at :10, announces a switch to 36 (or just leaves),
+    sits out the 30-minute non-occupancy period and returns to channel 100 at :45. -> (channel, csa or None)"""
+    hour, minute = int(t // 3600), int(t % 3600 // 60)
+    if _h("radar", hour) % 5 or not 10 <= minute < 45:
+        return 100, None
+    if minute == 10:
+        return 100, ({"mode": 1, "new_channel": 36, "count": 5} if _h("csa", hour) % 3 else None)
+    return 36, None
 
 
 def _freq(ch):
@@ -321,7 +334,10 @@ class DemoGenerator:
         rng = self.rng
         out = []
         for mac, ssid, ch, enc, base, vendor in APS:
-            out.append({"t": "wifi_ap", "ts": t + rng.random() * 50, "mac": mac, "ssid": ssid or None,
+            csa = None
+            if mac == DFS_AP:
+                ch, csa = dfs_state(t)
+            out.append({"csa": csa, "t": "wifi_ap", "ts": t + rng.random() * 50, "mac": mac, "ssid": ssid or None,
                         **_radio(ch), "enc": enc, "rssi": self._rssi(base), "vendor": vendor,
                         "extra": {"hidden": True} if not ssid else None,
                         "fp": {"wifi": WIFI_FPS[mac], "src": "beacon"} if mac in WIFI_FPS else None})

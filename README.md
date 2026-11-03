@@ -11,6 +11,7 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Alerts:** rules for watched or unknown devices, groups arriving/leaving and security events, with quiet hours and cooldowns, delivered via ntfy, Telegram, Discord, webhooks or email
 - **Security monitoring (defensive):** evil-twin / rogue access points for your SSIDs, deauthentication floods, KARMA-style access points, and open/WEP/WPS/no-WPA3 findings on your own networks
 - **Interference detection:** non-Wi-Fi interference episodes (microwave ovens, video senders, baby monitors, radar) found from noise-floor and retry anomalies against each channel's baseline
+- **DFS / radar detection:** passively spots access points that announce a channel switch or leave a 5 GHz DFS channel (52–144) because of radar, per channel, with alerts for your own networks
 - **Unknown tracker detection:** AirTags/Find My, Tiles and SmartTags that move with a person ("possibly following") raise a high-severity alert
 - **Backup & restore:** configuration export/import, full database backups (manual or scheduled), one-click restore
 - **Wi-Fi health:** per-channel airtime, retries and noise with channel recommendations; client health for your own networks (band use, roaming and ping-pong, sticky clients, disconnect reasons)
@@ -493,7 +494,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - for APs: **connected clients over time**, the client list, and other BSSIDs with the same SSID
   - for clients: the APs/networks it connected to, with session counts and total time, and the SSIDs it probes for
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
-- **Statistics:** device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
+- **Statistics:** a **Breakdown** of doughnut charts per radio type (BLE by default; also Wi-Fi clients, Bluetooth classic, access points, LAN). Each shows device type, vendor, brand and OS, and for BLE also the address type (public, random static, private) and the Bluetooth company. The top five values get a slice each, the rest is folded into a gray *Other*. Every slice and legend row has its count and share, and clicking one opens the matching devices. Below that: device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
 - **Logs** (admins only): the application log, live. New lines stream in as they happen. You can:
   - filter by level, source module or text, pause, follow or wrap lines
@@ -515,6 +516,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
+  - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
 - **Settings:**
@@ -569,15 +571,17 @@ A device can also be put in a **group**. *Possibly the same physical device* lis
 
 Events (arrived, left, group arrived/left, new device, connected, roamed, moved room, rogue AP, deauth flood, …) are matched against **rules** (Alerts → Rules). Each rule has:
 - the events it reacts to
-- which devices it covers: any, watched, unknown, specific MACs, groups, or device types
+- which devices it covers: any, watched, unknown, specific MACs, groups, device types, or my networks' access points
 - an optional time window (e.g. 23:00–06:00) and weekdays
 - a per-device cooldown
 - the notification channels to use
 
-Three rules are created on first start and only log to the alert history until you attach a channel:
+These rules are created on first start and only log to the alert history until you attach a channel:
 - watched devices arriving or leaving
 - security alerts
 - unknown devices at night
+- networks under investigation
+- radar (DFS) on my networks
 
 **Channels** (Settings → Notifications):
 
@@ -627,6 +631,20 @@ While the sensor hops channels it records each channel's noise floor and retrans
 - *Non-Wi-Fi interference on 5 GHz:* radar, video links
 
 Episodes are listed on the **Channels** page and can trigger alerts (event type *Radio interference episode*). Detection needs a day of measurements as a baseline. Adapters that don't report a noise level are judged on retransmissions only.
+
+### DFS / radar
+
+5 GHz channels 52–144 are shared with weather, airport and military radar. An access point on one of these **DFS** channels has to listen for radar; when it hears it, it must leave the channel within seconds and stay away for 30 minutes. Most access points warn their clients first with a **Channel Switch Announcement** (CSA) in their beacons. yolo reads these from every beacon it hears, along with each access point's channel, and records:
+
+| Event | When |
+|---|---|
+| *Access point announced a channel switch* | a beacon carries a (extended) CSA |
+| *Access point changed channel* | an access point is seen on a new channel several times in a row |
+| *Radar on a DFS channel* | the switch or move is away from a DFS channel: radar is the likely cause |
+
+Neighbours' access points count too: radar is a property of the location, so their hits tell you which channels to avoid. The **Channels** page shows radar hits per DFS channel, channels that are closed right now, the switch history and the access points currently on DFS channels. The alert rule *Radar (DFS) on my networks* is created automatically; it fires for your own access points (Settings → My networks). If your own access point keeps getting pushed off a DFS channel, pick a non-DFS channel (36–48 or 149–165) or one without hits.
+
+Requires a sensor that hops over (or sits on) the DFS channels in `WIFI_CHANNELS`. A move is only seen while yolo hears the access point both before and after it.
 
 ---
 
@@ -723,7 +741,7 @@ Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since 
 - clients per AP and per SSID
 - presence and signal of watched or labelled devices, and group presence
 - events per type, open findings by severity
-- channel airtime and retry ratios
+- channel airtime and retry ratios, radar hits per DFS channel (`yolo_dfs_radar_24h`) and DFS events (`yolo_dfs_events_total`)
 - sensor frames/s, and store queue/drops
 
 Create a token with scope `metrics` and scrape with it:
@@ -776,6 +794,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/lan?hours=24` | LAN overview: devices online, throughput, top talkers, destinations, services, DNS, DHCP servers |
 | `GET /api/devices/{mac}/lan?hours=24` | Device traffic, peers and DNS lookups |
 | `GET /api/interference?days=7` | Interference episodes |
+| `GET /api/dfs?days=7` | Radar hits per DFS channel, channel switch history and access points on DFS channels |
 | `GET /api/trackers` | Tracker tags and who they move with |
 | `GET /api/backup/config` · `POST /api/backup/config` | Download / restore the configuration (admin) |
 | `POST /api/backup/full` · `GET /api/backup/list` · `GET /api/backup/files/{name}` | Create, list and download full backups (admin) |
@@ -849,6 +868,7 @@ yolo/
   ethernet.py   raw-socket Ethernet capture: fast header parsing + ARP/DHCP/mDNS/SSDP/LLDP/DNS decoding
   lan.py        LAN traffic, conversations, DNS log, DHCP servers, rogue-DHCP / ARP-spoof detection
   interference.py  non-Wi-Fi interference episodes from the channel survey
+  dfs.py        DFS / radar detection from channel switch announcements and channel changes
   trackers.py   unknown tracker-tag ("following") detection
   backup.py     configuration / full backups, staged restore, scheduler
   logs.py       in-memory log buffer, live log stream, runtime log level

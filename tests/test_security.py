@@ -263,3 +263,12 @@ def test_investigations_api(env):
     login(c, "viewer")
     assert c.get("/api/investigations").status_code == 200
     assert c.put("/api/settings/investigate", json={"ssids": []}, headers=H).status_code == 403
+
+
+def test_remote_csa_is_validated():
+    from yolo.sanitize import remote_observation
+    base = {"t": "wifi_ap", "ts": time.time(), "mac": "0a:00:00:00:00:01", "channel": 100}
+    ok = remote_observation({**base, "csa": {"mode": 1, "new_channel": 36, "count": 5, "x": "<script>"}}, time.time())
+    assert ok["csa"] == {"mode": 1, "new_channel": 36, "count": 5}
+    assert remote_observation({**base, "csa": {"new_channel": 999}}, time.time()).get("csa") is None
+    assert remote_observation({**base, "csa": "36"}, time.time()).get("csa") is None

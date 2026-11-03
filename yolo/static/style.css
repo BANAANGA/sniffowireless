@@ -359,3 +359,31 @@ mark { background: rgba(245,184,74,.22); color: inherit; border-radius: 2px; pad
 .sp-list tbody tr { cursor: pointer; }
 .sp-list tbody tr:hover td { background: var(--panel-2); }
 .ev-investigated_seen, .ev-investigated_connect, .ev-investigated_probe { color: var(--warn); }
+
+/* DFS channel strip (Channels page) */
+.dfs-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+.dfs-chip { border: 1px solid var(--border-2); border-radius: var(--radius); padding: 6px 4px; text-align: center; font-size: 11px; color: var(--faint); line-height: 1.35; }
+.dfs-chip b { display: block; color: var(--text); font-size: 13px; font-weight: 500; }
+.dfs-chip span, .dfs-chip i { display: block; font-style: normal; }
+.dfs-chip.warn { border-color: rgba(245,184,74,.45); }
+.dfs-chip.warn span { color: var(--warn); }
+.dfs-chip.bad { border-color: rgba(239,111,108,.55); background: rgba(239,111,108,.06); }
+.dfs-chip.bad span { color: var(--bad); }
+.ev-dfs_radar { color: var(--warn); }
+
+/* Breakdown doughnuts (Statistics) */
+.pie-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px 28px; }
+.pie-card .subhead { margin-top: 4px; }
+.pie-wrap { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; align-items: center; }
+.pie-box { position: relative; height: 132px; }
+.pie-total { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.pie-total b { font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.pie-total span { font-size: 11px; color: var(--faint); }
+.pie-legend { list-style: none; margin: 0; padding: 0; font-size: 12px; min-width: 0; }
+.pie-legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 36px; gap: 8px; align-items: center; padding: 3px 0; }
+.pie-legend li[data-href] { cursor: pointer; }
+.pie-legend li[data-href]:hover .pl-name { color: #fff; }
+.pie-legend .pl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pie-legend .pl-n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.pie-legend .pl-p { color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+@media (max-width: 420px) { .pie-wrap { grid-template-columns: 1fr; } .pie-box { max-width: 160px; margin: 0 auto; } }

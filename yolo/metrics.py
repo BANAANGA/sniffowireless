@@ -80,6 +80,13 @@ def render(ctx):
               mac=r["mac"], label=r["label"], direction="out")
         o.add("yolo_lan_bytes_1h", r["i"] or 0, "LAN bytes sent/received in the last hour (top 50 devices)",
               mac=r["mac"], label=r["label"], direction="in")
+    for r in ctx.rows("SELECT from_ch, COUNT(*) n FROM dfs_events WHERE dfs=1 AND ts >= ? GROUP BY from_ch", (now - 86400,)):
+        o.add("yolo_dfs_radar_24h", r["n"], "Radar hits (access points forced off a DFS channel) in the last 24 h",
+              channel=r["from_ch"])
+    if ctx.dfs:
+        for k, v in ctx.dfs.counts.items():
+            o.add("yolo_dfs_events_total", v, "DFS events since start (radar, channel switch announcements, channel changes)",
+                  "counter", kind=k)
     st = ctx.store.stats()
     o.add("yolo_store_queue", st["queue"], "Observations waiting to be processed")
     o.add("yolo_store_dropped_total", st["dropped"], "Observations dropped because the queue was full", "counter")
