@@ -33,6 +33,7 @@ function applyAppearance(a, { cache = true } = {}) {
   derive('--panel-2', custom.has('panel') || custom.has('text'), 'color-mix(in srgb, var(--panel), var(--text) 3%)');
   derive('--border-2', custom.has('border') || custom.has('text'), 'color-mix(in srgb, var(--border), var(--text) 6%)');
   derive('--faint', custom.has('muted') || custom.has('bg'), 'color-mix(in srgb, var(--muted), var(--bg) 40%)');
+  if (a.style) document.documentElement.dataset.style = a.style; else delete document.documentElement.dataset.style;
   const name = a.name || 'yolo';
   document.querySelectorAll('.brand').forEach(b => { b.innerHTML = `${brandIconHtml(a)}<span class="brand-name"></span>`; b.querySelector('.brand-name').textContent = name; });
   document.title = document.body && document.body.classList.contains('login-page') ? `${name} · sign in` : name;

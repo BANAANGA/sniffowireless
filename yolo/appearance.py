@@ -22,6 +22,7 @@ COLORS = {
     "good": "#3ecf8e", "warn": "#f5b84a", "bad": "#ef6f6c", "icon": "#e6e7e9",
 }
 ICONS = ("dot", "wifi", "radar", "bluetooth", "eye", "shield", "custom")
+STYLES = ("", "vicecity")  # optional decoration on top of the colours (gradients, glow); see style.css
 CLOCKS = ("auto", "24", "12")  # auto: the browser's locale decides
 ICON_TYPES = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
 MAX_ICON = 256 * 1024
@@ -48,6 +49,7 @@ class Appearance(BaseModel):
     name: str = Field("yolo", max_length=32)
     icon: str = "dot"
     clock: str = "auto"
+    style: str = ""
     colors: Dict[str, str] = {}
 
     @field_validator("clock")
@@ -55,6 +57,13 @@ class Appearance(BaseModel):
     def _clock(cls, v):
         if v not in CLOCKS:
             raise ValueError("clock must be auto, 24 or 12")
+        return v
+
+    @field_validator("style")
+    @classmethod
+    def _style(cls, v):
+        if v not in STYLES:
+            raise ValueError("unknown style")
         return v
 
     @field_validator("name")
@@ -98,6 +107,7 @@ def current(ctx):
         icon, custom = "dot", None
     return {"name": a.get("name") or "yolo", "icon": icon,
             "clock": a.get("clock") if a.get("clock") in CLOCKS else "auto",
+            "style": a.get("style") if a.get("style") in STYLES else "",
             "colors": {**COLORS, **(a.get("colors") or {})},
             "custom_colors": sorted((a.get("colors") or {}).keys()), "defaults": COLORS, "icons": list(ICONS),
             "icon_url": f"/api/appearance/icon?v={int(a.get('icon_ver') or 0)}" if custom else None}
@@ -116,7 +126,7 @@ def routes(ctx):
         a = dict(ctx.settings.get("appearance"))
         if body.icon == "custom" and not icon_file(a):
             raise HTTPException(400, "Upload an icon image first")
-        a.update({"name": body.name, "icon": body.icon, "clock": body.clock, "colors": body.colors})
+        a.update({"name": body.name, "icon": body.icon, "clock": body.clock, "style": body.style, "colors": body.colors})
         ctx.settings.set("appearance", a)
         return current(ctx)
 
