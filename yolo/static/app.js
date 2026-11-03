@@ -99,14 +99,14 @@ function dur(s) {
 function dt(ts, withDate = true) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
-  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const t = d.toLocaleTimeString([], clockOpts({ hour: '2-digit', minute: '2-digit' }));
   if (!withDate) return t;
   return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${t}`;
 }
 function axisTime(ts, span) {
   const d = new Date(ts * 1000);
-  if (span <= 86400 * 1.1) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) + (span < 86400 * 4 ? ' ' + d.getHours() + 'h' : '');
+  if (span <= 86400 * 1.1) return d.toLocaleTimeString([], clockOpts({ hour: '2-digit', minute: '2-digit' }));
+  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) + (span < 86400 * 4 ? ' ' + hourLabel(d.getHours(), true) + (uses12h() ? '' : 'h') : '');
 }
 const num = n => (Number(n) || 0).toLocaleString();  // Number(): never echo a string from the server
 const BANDS = { '2.4': { label: '2.4 GHz', color: '#4cc2ff' }, '5': { label: '5 GHz', color: '#8fd8ff' }, '6': { label: '6 GHz', color: '#d2efff' } };
@@ -596,10 +596,10 @@ async function viewDevice(mac, params) {
   api(`/api/devices/${enc(mac)}/heatmap?days=28&tz=${TZ}`).then(h => {
     const max = Math.max(1, ...h.grid.flat());
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    let html = '<div class="heat"><span></span>' + Array.from({ length: 24 }, (_, i) => `<span class="h">${i % 6 === 0 ? i : ''}</span>`).join('');
+    let html = '<div class="heat"><span></span>' + Array.from({ length: 24 }, (_, i) => `<span class="h">${i % 6 === 0 ? hourLabel(i, true) : ''}</span>`).join('');
     h.grid.forEach((row, di) => {
       html += `<span class="d">${days[di]}</span>` + row.map((v, hi) =>
-        `<span class="cell" title="${days[di]} ${hi}:00 — ${v} min" style="${v ? `background:${m.color};opacity:${(0.15 + 0.85 * v / max).toFixed(2)}` : ''}"></span>`).join('');
+        `<span class="cell" title="${days[di]} ${hourLabel(hi)} — ${v} min" style="${v ? `background:${m.color};opacity:${(0.15 + 0.85 * v / max).toFixed(2)}` : ''}"></span>`).join('');
     });
     document.getElementById('heat').innerHTML = html + '</div>';
   });
@@ -802,7 +802,7 @@ async function viewStats(params) {
   const hours = Array.from({ length: 24 }, (_, i) => i);
   chart(document.getElementById('hourly'), {
     type: 'bar',
-    data: { labels: hours.map(h => `${h}:00`), datasets: Object.entries(KINDS).map(([k, m]) => ({
+    data: { labels: hours.map(h => hourLabel(h)), datasets: Object.entries(KINDS).map(([k, m]) => ({
       label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
       data: hours.map(h => +((s.hourly.rows.find(r => r.h === h && r.kind === k) || { n: 0 }).n / s.hourly.days).toFixed(1)),
     })) },

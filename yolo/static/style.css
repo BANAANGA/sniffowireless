@@ -340,7 +340,7 @@ mark { background: color-mix(in srgb, var(--warn) 22%, transparent); color: inhe
 
 /* live logs */
 .logview { height: calc(100vh - 260px); min-height: 320px; overflow: auto; font: 12px/1.55 var(--mono); padding: 8px 0; background: var(--bg); border-radius: var(--radius); }
-.lg { display: grid; grid-template-columns: 96px 70px minmax(90px, 160px) 1fr; gap: 10px; padding: 1px 14px; white-space: pre; }
+.lg { display: grid; grid-template-columns: var(--lg-time, 13ch) 8ch 18ch minmax(0, 1fr); gap: 10px; padding: 1px 14px; white-space: pre; }
 .logview.wrap .lg { white-space: pre-wrap; word-break: break-word; }
 .lg:hover { background: var(--panel-2); }
 .lg-t { color: var(--faint); }
@@ -350,7 +350,7 @@ mark { background: color-mix(in srgb, var(--warn) 22%, transparent); color: inhe
 .lg-debug .lg-l, .lg-debug .lg-m { color: var(--faint); }
 .lg-warning .lg-l { color: var(--warn); }
 .lg-error .lg-l, .lg-critical .lg-l, .lg-error .lg-m, .lg-critical .lg-m { color: var(--bad); }
-@media (max-width: 760px) { .lg { grid-template-columns: 70px 1fr; } .lg-l, .lg-s { display: none; } }
+@media (max-width: 760px) { .lg { grid-template-columns: var(--lg-time, 13ch) 1fr; } .lg-l, .lg-s { display: none; } }
 
 /* SSID picker */
 .sp-list { max-height: 50vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }

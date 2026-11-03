@@ -22,6 +22,7 @@ COLORS = {
     "good": "#3ecf8e", "warn": "#f5b84a", "bad": "#ef6f6c", "icon": "#e6e7e9",
 }
 ICONS = ("dot", "wifi", "radar", "bluetooth", "eye", "shield", "custom")
+CLOCKS = ("auto", "24", "12")  # auto: the browser's locale decides
 ICON_TYPES = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
 MAX_ICON = 256 * 1024
 HEX = re.compile(r"^#[0-9a-f]{6}$")
@@ -46,7 +47,15 @@ def icon_type(data):
 class Appearance(BaseModel):
     name: str = Field("yolo", max_length=32)
     icon: str = "dot"
+    clock: str = "auto"
     colors: Dict[str, str] = {}
+
+    @field_validator("clock")
+    @classmethod
+    def _clock(cls, v):
+        if v not in CLOCKS:
+            raise ValueError("clock must be auto, 24 or 12")
+        return v
 
     @field_validator("name")
     @classmethod
@@ -75,13 +84,21 @@ class Appearance(BaseModel):
         return out
 
 
+def time_format(ctx, seconds=False):
+    """strftime time format for server-made text (notifications, reports): 12-hour only if the admin chose it."""
+    twelve = ctx.settings.get("appearance").get("clock") == "12" if ctx and ctx.settings else False
+    return ("%I:%M:%S %p" if seconds else "%I:%M %p") if twelve else ("%H:%M:%S" if seconds else "%H:%M")
+
+
 def current(ctx):
     a = ctx.settings.get("appearance")
     icon = a.get("icon") or "dot"
     custom = icon_file(a) if icon == "custom" else None
     if icon == "custom" and not (custom and os.path.exists(os.path.join(ctx.cfg.data_dir, custom))):
         icon, custom = "dot", None
-    return {"name": a.get("name") or "yolo", "icon": icon, "colors": {**COLORS, **(a.get("colors") or {})},
+    return {"name": a.get("name") or "yolo", "icon": icon,
+            "clock": a.get("clock") if a.get("clock") in CLOCKS else "auto",
+            "colors": {**COLORS, **(a.get("colors") or {})},
             "custom_colors": sorted((a.get("colors") or {}).keys()), "defaults": COLORS, "icons": list(ICONS),
             "icon_url": f"/api/appearance/icon?v={int(a.get('icon_ver') or 0)}" if custom else None}
 
@@ -99,7 +116,7 @@ def routes(ctx):
         a = dict(ctx.settings.get("appearance"))
         if body.icon == "custom" and not icon_file(a):
             raise HTTPException(400, "Upload an icon image first")
-        a.update({"name": body.name, "icon": body.icon, "colors": body.colors})
+        a.update({"name": body.name, "icon": body.icon, "clock": body.clock, "colors": body.colors})
         ctx.settings.set("appearance", a)
         return current(ctx)
 

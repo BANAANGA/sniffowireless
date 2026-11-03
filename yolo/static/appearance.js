@@ -13,17 +13,18 @@ const APPEARANCE_PRESETS = {
   contrast: ['High contrast', { bg: '#000000', panel: '#0a0a0a', border: '#3a3a3a', text: '#ffffff', muted: '#b5b8bd', icon: '#ffffff', ap: '#5ccfff',
     wifi_client: '#4ee39b', ble: '#ffc65c', bt_classic: '#ff7a77', lan: '#c4ccd8', good: '#4ee39b', warn: '#ffc65c', bad: '#ff7a77' }],
 };
+const CLOCK_CHOICES = [['auto', 'Automatic (browser language)'], ['24', '24-hour (13:05)'], ['12', '12-hour (1:05 PM)']];
 const ICON_NAMES = { dot: 'Dot (default)', wifi: 'Wi-Fi', radar: 'Radar', bluetooth: 'Bluetooth', eye: 'Eye', shield: 'Shield', custom: 'Uploaded image' };
 
 SETTINGS_VIEWS.appearance = async function (el) {
   const saved = await api('/api/appearance');
   const defaults = saved.defaults;
-  let draft = { name: saved.name, icon: saved.icon, colors: { ...saved.colors } };
+  let draft = { name: saved.name, icon: saved.icon, clock: saved.clock || 'auto', colors: { ...saved.colors } };
   let iconUrl = saved.icon_url;
 
   const asAppearance = () => {
     const custom = Object.keys(draft.colors).filter(k => draft.colors[k] !== defaults[k]);
-    return { ...saved, name: draft.name || 'yolo', icon: draft.icon, icon_url: iconUrl, colors: { ...draft.colors }, custom_colors: custom };
+    return { ...saved, name: draft.name || 'yolo', icon: draft.icon, clock: draft.clock, icon_url: iconUrl, colors: { ...draft.colors }, custom_colors: custom };
   };
   const preview = () => { applyAppearance(asAppearance(), { cache: false }); themeToJs(); paintPreview(); };
 
@@ -32,7 +33,8 @@ SETTINGS_VIEWS.appearance = async function (el) {
       <button class="btn" id="ap-reset" type="button">Reset to default</button><button class="btn primary" id="ap-save" type="button">Save</button></div></header>
     <div class="body">
       <p class="muted" style="margin-top:0">Applies to everyone, including the sign-in page. Changes preview right away; <b>Save</b> keeps them, leaving the page without saving undoes them.</p>
-      <label class="field form-narrow">Name<input id="ap-name" maxlength="32" value="${esc(draft.name)}" autocomplete="off"></label>
+      <div class="row form-narrow"><label class="field">Name<input id="ap-name" maxlength="32" value="${esc(draft.name)}" autocomplete="off"></label>
+        <label class="field">Time format (default)<select id="ap-clock">${CLOCK_CHOICES.map(([v, l]) => `<option value="${v}" ${draft.clock === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
       <div class="field"><span>Icon</span><div class="ap-icons" id="ap-icons"></div>
         <div class="row" style="margin-top:8px"><label class="btn small">Upload image…<input type="file" id="ap-upload" accept="image/png,image/jpeg,image/webp" hidden></label>
         <button class="btn small" id="ap-remove" type="button" ${iconUrl ? '' : 'hidden'}>Remove uploaded image</button>
@@ -56,7 +58,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
     el.querySelectorAll('.ap-color').forEach(l => l.classList.toggle('changed', draft.colors[l.dataset.k] !== defaults[l.dataset.k]));
   }
   function paintPreview() {
-    $('#ap-preview').innerHTML = Object.keys(KINDS).map(k => kindBadge(k)).join('')
+    $('#ap-preview').innerHTML = `<span class="mono">${esc(dt(Date.now() / 1000))}</span>` + Object.keys(KINDS).map(k => kindBadge(k)).join('')
       + '<span class="tag on">online</span><span class="tag warn">warning</span><span class="tag bad">alert</span><span class="muted">secondary text</span><span class="faint">faint text</span>';
   }
   const setColor = (k, v) => {
@@ -72,6 +74,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
     i.onchange = () => { if (!setColor(i.dataset.hex, i.value)) { i.value = draft.colors[i.dataset.hex]; toast('Use a #rrggbb colour', true); } };
   });
   $('#ap-name').oninput = e => { draft.name = e.target.value; preview(); };
+  $('#ap-clock').onchange = e => { draft.clock = e.target.value; preview(); };
   $('#ap-preset').onchange = e => {
     const p = APPEARANCE_PRESETS[e.target.value];
     if (!p) return;
@@ -80,7 +83,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
     paintColors();
     preview();
   };
-  $('#ap-reset').onclick = () => { draft = { name: 'yolo', icon: 'dot', colors: { ...defaults } }; $('#ap-name').value = 'yolo'; paintIcons(); paintColors(); preview(); };
+  $('#ap-reset').onclick = () => { draft = { name: 'yolo', icon: 'dot', clock: 'auto', colors: { ...defaults } }; $('#ap-name').value = 'yolo'; $('#ap-clock').value = 'auto'; paintIcons(); paintColors(); preview(); };
   $('#ap-upload').onchange = async e => {
     const f = e.target.files[0];
     e.target.value = '';
@@ -105,7 +108,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
   };
   $('#ap-save').onclick = async () => {
     try {
-      const d = await send('PUT', '/api/appearance', { name: draft.name.trim() || 'yolo', icon: draft.icon, colors: draft.colors });
+      const d = await send('PUT', '/api/appearance', { name: draft.name.trim() || 'yolo', icon: draft.icon, clock: draft.clock, colors: draft.colors });
       Object.assign(saved, d);
       applyAppearance(d);
       themeToJs();

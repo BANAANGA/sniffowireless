@@ -354,3 +354,20 @@ def test_status_system(env):
     assert s["cpu"]["cores"] >= 1 and (s["cpu"]["percent"] is None or 0 <= s["cpu"]["percent"] <= 100)
     assert s["memory"]["total"] and 0 < s["memory"]["used"] <= s["memory"]["total"]
     assert s["db"]["bytes"] > 0 and s["disk"]["total"] > 0
+
+
+def test_clock_setting(env):
+    from yolo.alerts import describe
+    from yolo.appearance import time_format
+    ctx, c = env
+    assert c.get("/api/appearance").json()["clock"] == "auto" and time_format(ctx) == "%H:%M"
+    login(c)
+    base = {"name": "yolo", "icon": "dot", "colors": {}}
+    assert c.put("/api/appearance", json={**base, "clock": "13"}, headers=H).status_code == 422
+    assert c.put("/api/appearance", json={**base, "clock": "12"}, headers=H).json()["clock"] == "12"
+    assert time_format(ctx, seconds=True) == "%I:%M:%S %p"
+    ev = {"ts": time.mktime((2026, 11, 3, 15, 4, 5, 0, 0, -1)), "type": "arrived", "mac": "a4:83:e7:00:00:01"}
+    _, body = describe(ev, None, None, None, time_format(ctx, seconds=True))
+    assert "03:04:05 PM" in body
+    _, body = describe(ev, None, None, None)
+    assert "15:04:05" in body
