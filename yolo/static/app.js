@@ -88,7 +88,7 @@ function axisTime(ts, span) {
   if (span <= 86400 * 1.1) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) + (span < 86400 * 4 ? ' ' + d.getHours() + 'h' : '');
 }
-const num = n => (n ?? 0).toLocaleString();
+const num = n => (Number(n) || 0).toLocaleString();  // Number(): never echo a string from the server
 const BANDS = { '2.4': { label: '2.4 GHz', color: '#4cc2ff' }, '5': { label: '5 GHz', color: '#8fd8ff' }, '6': { label: '6 GHz', color: '#d2efff' } };
 // Fixed order: JS would otherwise list the integer-like keys '5' and '6' before '2.4'.
 const BAND_LIST = ['2.4', '5', '6'].map(b => [b, BANDS[b]]);
@@ -112,7 +112,7 @@ function identCell(x) {
 }
 function chText(ch, band) {
   if (ch == null) return '<span class="faint">—</span>';
-  return band ? `${ch}<span class="faint"> · ${band}G</span>` : `${ch}`;
+  return band ? `${esc(ch)}<span class="faint"> · ${esc(band)}G</span>` : esc(ch);
 }
 const bytes = b => b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' kB';
 
@@ -220,7 +220,7 @@ async function pollStatus() {
   try {
     const s = await api('/api/status');
     const errs = s.sensors.filter(x => x.state === 'error');
-    const total = s.sensors.reduce((a, x) => a + (x.pps || 0), 0);
+    const total = s.sensors.reduce((a, x) => a + (Number(x.pps) || 0), 0);
     el.className = 'live ' + (errs.length ? 'err' : (s.sensors.length || s.demo ? 'ok' : ''));
     el.textContent = s.demo ? 'demo mode' : errs.length ? `${errs.length} sensor error${errs.length > 1 ? 's' : ''}`
       : s.sensors.length ? `${s.sensors.length} sensor${s.sensors.length > 1 ? 's' : ''} · ${total.toFixed(0)} pkt/s` : 'no sensors';
@@ -286,8 +286,8 @@ async function viewOverview() {
     document.getElementById('sensors').innerHTML = (list.length ? list.map(x => `<div class="sensor">
       <div><div><span class="state-dot ${x.state === 'error' ? '' : 'on'}"></span><b>${esc(x.name)}</b>
       ${x.mon && x.mon !== x.iface ? `<span class="faint mono"> → ${esc(x.mon)}</span>` : ''}</div>
-      ${x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${x.bands ? ' · ' + x.bands.map(b => b + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>`}</div>
-      <div class="muted mono" style="text-align:right">${(x.pps || 0).toFixed(1)} pkt/s<br>${num(x.packets)} total</div></div>`).join('')
+      ${x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${Array.isArray(x.bands) ? ' · ' + x.bands.map(b => esc(b) + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>`}</div>
+      <div class="muted mono" style="text-align:right">${(Number(x.pps) || 0).toFixed(1)} pkt/s<br>${num(x.packets)} total</div></div>`).join('')
       : `<div class="empty">${s.demo ? 'Demo mode — synthetic data' : 'No sensors configured'}</div>`)
       + `<div class="sensor muted"><span>Queue ${num(s.store.queue)} · dropped ${num(s.store.dropped)}</span><span>${num(s.store.open_presence)} present</span></div>`;
   }
@@ -438,7 +438,7 @@ async function viewDevice(mac, params) {
     ['Vendor', esc(d.vendor || (d.randomized ? 'Randomized address' : 'Unknown'))],
     isAp ? ['SSID', esc(d.ssid || (d.ssid === '' || ex.hidden ? '<hidden>' : '—'))] : null,
     isAp ? ['Security', esc(d.enc || '—')] : null,
-    !isBt ? ['Channel', d.channel ? `${d.channel}${d.band ? ` · ${BANDS[d.band] ? BANDS[d.band].label : d.band}` : ''}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}` : '—'] : null,
+    !isBt ? ['Channel', d.channel ? `${d.channel}${d.band ? ` · ${BANDS[d.band] ? BANDS[d.band].label : esc(d.band)}` : ''}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}` : '—'] : null,
     isBt && d.name ? ['Name', esc(d.name)] : null,
     ex.addr_type ? ['Address type', esc(ex.addr_type)] : null,
     ex.company ? ['Manufacturer data', esc(ex.company)] : null,
@@ -461,7 +461,7 @@ async function viewDevice(mac, params) {
   const range = params.get('range') || '24';
   app.innerHTML = `
     <div class="page-head"><div>
-      <div class="crumbs"><a href="#/devices">Devices</a> / <a href="#/devices?kind=${d.kind}">${m.label}</a></div>
+      <div class="crumbs"><a href="#/devices">Devices</a> / <a href="#/devices?kind=${enc(d.kind)}">${esc(m.label)}</a></div>
       <h1>${esc(title)}</h1><div class="sub mono">${esc(d.mac)}${d.randomized ? ' · randomized address' : ''}</div></div>
       ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div>
     <div class="grid cols-3">
@@ -762,7 +762,7 @@ async function viewStats(params) {
   table('topc', '<th>Client</th><th class="num">Networks</th><th class="num">Connected</th>', s.top_clients.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
     <td>${kindBadge(x.kind)} <span class="mono" style="margin-left:6px">${esc(x.name || x.vendor || x.mac)}</span></td><td class="num muted">${x.peers}</td><td class="num">${dur(x.secs)}</td></tr>`).join(''));
   table('topap', '<th>Access point</th><th class="num">Clients</th><th class="num">Client-time</th>', s.top_aps.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
-    <td>${esc(x.ssid || '<hidden>')} <span class="mono faint">ch ${x.channel ?? '?'}${x.band ? ' · ' + x.band + 'G' : ''}</span></td><td class="num">${x.clients}</td><td class="num muted">${dur(x.secs)}</td></tr>`).join(''));
+    <td>${esc(x.ssid || '<hidden>')} <span class="mono faint">ch ${esc(x.channel ?? '?')}${x.band ? ' · ' + esc(x.band) + 'G' : ''}</span></td><td class="num">${x.clients}</td><td class="num muted">${dur(x.secs)}</td></tr>`).join(''));
   table('probes', '<th>SSID</th><th class="num">Clients</th><th class="num">Frames</th>', s.probes.map(x => `<tr class="link" data-href="${hrefWith('/devices', { probe: x.ssid })}">
     <td class="trunc">${esc(x.ssid)}${x.aps ? ' <span class="tag">nearby</span>' : ''}</td><td class="num">${x.clients}</td><td class="num muted">${num(x.frames)}</td></tr>`).join(''), 'No directed probes');
   bindLi(root);

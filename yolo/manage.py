@@ -1,34 +1,35 @@
 """Admin management: ignore list, "my networks", device labels / watch list and device groups."""
 import time
 from contextlib import closing
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import current_user, require_admin
+from .sanitize import MacList, MacPrefix, Name, Notes, Ssid, clean_mac
 
 
 class IgnoreSsid(BaseModel):
-    ssid: str
+    ssid: Ssid
     clients: bool = False
 
 
 class IgnoreList(BaseModel):
-    macs: List[str] = []
-    prefixes: List[str] = []
-    ssids: List[IgnoreSsid] = []
+    macs: MacList = []
+    prefixes: List[MacPrefix] = Field([], max_length=200)
+    ssids: List[IgnoreSsid] = Field([], max_length=200)
     purge: bool = False
 
 
 class Networks(BaseModel):
-    ssids: List[str] = []
-    trusted_bssids: List[str] = []
+    ssids: List[Ssid] = Field([], max_length=50)
+    trusted_bssids: MacList = []
 
 
 class Meta(BaseModel):
-    label: Optional[str] = None
-    notes: Optional[str] = None
+    label: Optional[Name] = None
+    notes: Optional[Notes] = None
     known: Optional[bool] = None
     watch: Optional[bool] = None
     group_id: Optional[int] = None
@@ -36,19 +37,40 @@ class Meta(BaseModel):
 
 
 class Group(BaseModel):
-    name: str
-    kind: str = "person"
-    notes: str = ""
+    name: Annotated[Name, Field(min_length=1)]
+    kind: str = Field("person", pattern="^(person|thing)$")
+    notes: Notes = ""
     watch: bool = False
 
 
 class Members(BaseModel):
-    macs: List[str]
+    macs: MacList
 
 
-def _norm_mac(m):
-    m = m.strip().lower().replace("-", ":")
-    return m
+SETTING_SCHEMAS = {  # key -> {field: (type, min, max)}
+    "security": {"deauth_threshold": (int, 3, 10_000), "deauth_window": (int, 1, 3600), "karma_ssids": (int, 2, 100),
+                 "karma_window": (int, 60, 86400)},
+    "report": {"email": (bool, None, None), "notifier_id": (int, 0, 10 ** 9), "weekday": (int, 0, 6),
+               "hour": (int, 0, 23)},
+}
+
+
+def validate_setting(key, body):
+    out = {}
+    for k, v in body.items():
+        if k not in SETTING_SCHEMAS[key]:
+            continue
+        typ, lo, hi = SETTING_SCHEMAS[key][k]
+        if v is None and k == "notifier_id":
+            out[k] = None
+            continue
+        if typ is bool:
+            if not isinstance(v, bool):
+                raise HTTPException(400, f"{k} must be true or false")
+        elif isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or not lo <= v <= hi:
+            raise HTTPException(400, f"{k} must be a whole number between {lo} and {hi}")
+        out[k] = typ(v)
+    return out
 
 
 def apply_ignore(ctx):
@@ -91,9 +113,8 @@ def routes(ctx):
 
     @r.put("/api/settings/ignore")
     def set_ignore(body: IgnoreList, _=Depends(require_admin)):
-        ig = {"macs": sorted({_norm_mac(m) for m in body.macs if m.strip()}),
-              "prefixes": sorted({_norm_mac(p).rstrip(":*") for p in body.prefixes if p.strip()}),
-              "ssids": [{"ssid": e.ssid, "clients": e.clients} for e in body.ssids if e.ssid]}
+        ig = {"macs": sorted(set(body.macs)), "prefixes": sorted(set(body.prefixes)),
+              "ssids": [{"ssid": e.ssid, "clients": e.clients} for e in body.ssids]}
         ctx.settings.set("ignore", ig)
         apply_ignore(ctx)
         purged = 0
@@ -106,7 +127,7 @@ def routes(ctx):
 
     @r.post("/api/settings/ignore/preview")
     def preview_ignore(body: IgnoreList, _=Depends(require_admin)):
-        ig = {"macs": [_norm_mac(m) for m in body.macs], "prefixes": body.prefixes,
+        ig = {"macs": body.macs, "prefixes": body.prefixes,
               "ssids": [e.dict() for e in body.ssids]}
         return {"devices": len(matching_ignored(ctx, ig))}
 
@@ -124,8 +145,7 @@ def routes(ctx):
 
     @r.put("/api/settings/networks")
     def set_networks(body: Networks, _=Depends(require_admin)):
-        ctx.settings.set("networks", {"ssids": sorted({s for s in body.ssids if s}),
-                                      "trusted_bssids": sorted({_norm_mac(b) for b in body.trusted_bssids if b})})
+        ctx.settings.set("networks", {"ssids": sorted(set(body.ssids)), "trusted_bssids": sorted(set(body.trusted_bssids))})
         return {"ok": True}
 
     @r.get("/api/settings/{key}")
@@ -139,14 +159,16 @@ def routes(ctx):
         if key not in ("security", "report"):
             raise HTTPException(404)
         cur = ctx.settings.get(key)
-        cur.update({k: v for k, v in body.items() if k in cur and k != "last_sent"})
+        cur.update(validate_setting(key, body))
         ctx.settings.set(key, cur)
         return cur
 
     # ----------------------------------------------------------- device meta
     @r.put("/api/devices/{mac}/meta")
     def set_meta(mac: str, body: Meta, _=Depends(require_admin)):
-        mac = _norm_mac(mac)
+        mac = clean_mac(mac)
+        if not mac:
+            raise HTTPException(400, "invalid MAC address")
         cur = ctx.one("SELECT * FROM device_meta WHERE mac=?", (mac,)) or {
             "label": None, "notes": None, "known": 0, "watch": 0, "group_id": None}
         for f in ("label", "notes"):
@@ -179,7 +201,6 @@ def routes(ctx):
     def bulk_known(body: Members, _=Depends(require_admin)):
         with closing(ctx.wdb()) as c:
             for m in body.macs:
-                m = _norm_mac(m)
                 c.execute("INSERT INTO device_meta(mac, known, updated) VALUES(?,1,?) ON CONFLICT(mac) DO UPDATE "
                           "SET known=1, updated=excluded.updated", (m, time.time()))
         apply_meta(ctx)
@@ -189,7 +210,9 @@ def routes(ctx):
     def suggestions(mac: str, _=Depends(current_user)):
         """Other MACs that are probably the same physical device: same probe fingerprint (or same
         BLE name) and never present at the same time as this one (typical of MAC rotation)."""
-        mac = _norm_mac(mac)
+        mac = clean_mac(mac)
+        if not mac:
+            raise HTTPException(400, "invalid MAC address")
         d = ctx.one("SELECT mac, kind, fp_hash, name, dev_type FROM devices WHERE mac=?", (mac,))
         if not d:
             raise HTTPException(404)
@@ -234,18 +257,20 @@ def routes(ctx):
 
     @r.post("/api/groups")
     def create_group(body: Group, _=Depends(require_admin)):
-        if not body.name.strip():
+        if not body.name:
             raise HTTPException(400, "name required")
         with closing(ctx.wdb()) as c:
             gid = c.execute("INSERT INTO groups(name, kind, notes, watch, created) VALUES(?,?,?,?,?)",
-                            (body.name.strip(), body.kind, body.notes, int(body.watch), time.time())).lastrowid
+                            (body.name, body.kind, body.notes, int(body.watch), time.time())).lastrowid
         apply_meta(ctx)
         return {"id": gid}
 
     @r.put("/api/groups/{gid}")
     def update_group(gid: int, body: Group, _=Depends(require_admin)):
+        if not body.name:
+            raise HTTPException(400, "name required")
         ctx.execute("UPDATE groups SET name=?, kind=?, notes=?, watch=? WHERE id=?",
-                    (body.name.strip(), body.kind, body.notes, int(body.watch), gid))
+                    (body.name, body.kind, body.notes, int(body.watch), gid))
         apply_meta(ctx)
         return {"ok": True}
 
@@ -265,7 +290,7 @@ def routes(ctx):
             for m in body.macs:
                 c.execute("INSERT INTO device_meta(mac, known, group_id, updated) VALUES(?,1,?,?) ON CONFLICT(mac) "
                           "DO UPDATE SET group_id=excluded.group_id, known=1, updated=excluded.updated",
-                          (_norm_mac(m), gid, time.time()))
+                          (m, gid, time.time()))
         apply_meta(ctx)
         return {"ok": True}
 

@@ -366,7 +366,31 @@ The web UI and API need a login.
   Remote sensors get their own tokens, created under Settings → Sensors.
 - Passwords are stored as salted PBKDF2-SHA256 hashes. Sessions are HttpOnly cookies that expire after 14 days of inactivity. Logins are rate-limited per IP.
 - **HTTPS:** put yolo behind a reverse proxy (Caddy, Traefik, nginx) for TLS when you reach it from outside your LAN. The session cookie is marked `Secure` when the proxy sets `X-Forwarded-Proto: https`.
-- `AUTH_DISABLED=1` turns login off entirely. Only use it on a network where you trust everyone.
+- `AUTH_DISABLED=1` turns login off entirely. Only use it on a network where you trust everyone, and set `ALLOWED_HOSTS` then; see below.
+
+### Security hardening
+
+yolo treats everything it receives as untrusted. Device names and SSIDs are chosen by whoever is nearby, and remote sensors and API clients send data too.
+
+- **Input validation:**
+  - every API field has a type, a format (MACs, IPs, times, e-mail addresses, enums) and a length limit
+  - names, SSIDs, labels and notification titles are stripped of control characters, which blocks newline/header injection and Unicode direction tricks
+  - data pushed by remote sensors is re-validated field by field; unknown record types are refused and gzip bombs are capped
+- **Output encoding:** the UI escapes every value it inserts into a page. A strict **Content-Security-Policy** (no inline or third-party scripts except the pinned Chart.js CDN fallback) stops script injection even if something slipped through.
+- **Uploads:** floor plans are checked by content (PNG, JPEG, WebP or SVG), SVGs are stripped of scripts and event handlers, and the image is served sandboxed. Backups are verified (format, safe paths, database integrity) before restore.
+- **Requests:** CSRF protection (custom header plus an Origin check, `SameSite` cookies), body size limits, limits on time ranges and page sizes, and security headers (`nosniff`, `DENY` framing, `no-referrer`, `no-store` for API responses, HSTS over HTTPS).
+- **Login:**
+  - salted PBKDF2 hashes
+  - lockout per IP and per account after repeated failures
+  - equal response times for unknown users, so usernames can't be probed
+  - a rate-limited setup code
+  - minimum password rules
+- **Exports:** CSV cells that start with `=`, `+`, `-` or `@` are prefixed so spreadsheets don't run them as formulas.
+- **Proxies and hosts:**
+  - `TRUSTED_PROXIES` (default `127.0.0.1`): only these addresses may set `X-Forwarded-For`/`-Proto`, so clients can't fake their IP to dodge the lockout. Set it to your reverse proxy's address.
+  - `ALLOWED_HOSTS` (e.g. `yolo.lan,192.168.1.10`): refuses requests for any other host name, which protects against DNS-rebinding attacks from malicious websites, especially with `AUTH_DISABLED=1`.
+
+The container needs `privileged`/host networking to capture, so run it on a machine you control and don't expose port 8080 to the internet; use a VPN or an authenticating reverse proxy with TLS for remote access.
 
 ---
 
@@ -400,6 +424,8 @@ All settings are environment variables (put them in `.env`).
 | `WEB_HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` behind a reverse proxy. |
 | `WEB_USER` / `WEB_PASSWORD` | – | Admin account created/reset on start. If unset, create it in the browser with the setup code from the log. |
 | `AUTH_DISABLED` | `0` | `1` disables login completely (trusted networks only). |
+| `ALLOWED_HOSTS` | – | Comma-separated host names/IPs the UI may be reached as (DNS-rebinding protection). Empty = any. |
+| `TRUSTED_PROXIES` | `127.0.0.1` | Addresses whose `X-Forwarded-*` headers are trusted (your reverse proxy). |
 | `YOLO_MODE` | `server` | `sensor` = capture only and forward to `SERVER_URL` (see [Multiple sensors](#multiple-sensors--the-map)). |
 | `SERVER_URL` / `SENSOR_TOKEN` | – | Sensor mode: URL of the main yolo server and the token from Settings → Sensors. |
 | `DB_PATH` | `/data/yolo.db` | SQLite database location. |
@@ -762,7 +788,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 ```bash
 # run tests inside the image
 docker build -t yolo . && docker run --rm -v "$PWD/tests:/app/tests" yolo \
-  sh -c "pip install -q pytest && python -m pytest -q tests"
+  sh -c "pip install -q pytest httpx && python -m pytest -q tests"
 
 # run locally (Python 3.11+; capture needs root)
 pip install -r requirements.txt

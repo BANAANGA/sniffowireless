@@ -9,6 +9,7 @@
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -16,7 +17,9 @@ from contextlib import closing
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from .sanitize import clean_str
 
 log = logging.getLogger("yolo.auth")
 
@@ -36,6 +39,10 @@ SESSION_DAYS = 14
 COOKIE = "yolo_session"
 PBKDF2_ITERATIONS = 600_000
 PUBLIC_PATHS = ("/login", "/api/auth/", "/api/health", "/static/", "/vendor/", "/favicon")
+USERNAME_RX = "^[A-Za-z0-9._@-]{1,64}$"
+FAIL_WINDOW, FAIL_IP, FAIL_USER = 300, 8, 10  # failed logins allowed per IP / per account within the window
+# Verifying against this when the user doesn't exist keeps response times equal (no username enumeration).
+_DUMMY_HASH = "pbkdf2_sha256$600000$00000000000000000000000000000000$" + "0" * 64
 
 
 def hash_password(pw, salt=None, iterations=PBKDF2_ITERATIONS):
@@ -74,7 +81,7 @@ class Auth:
         self.cfg, self.connect = cfg, connect
         self.disabled = cfg.auth_disabled
         self.setup_code = None
-        self.failures = defaultdict(deque)  # ip -> timestamps of failed logins
+        self.failures = defaultdict(deque)  # "ip:..." / "user:..." -> timestamps of failed logins
         with closing(self.connect()) as c:
             c.executescript(SCHEMA)
             if cfg.web_user and cfg.web_password:
@@ -99,19 +106,35 @@ class Auth:
             return c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
 
     # ------------------------------------------------------------- sessions
+    def throttle(self, *keys):
+        now = time.time()
+        for key in keys:
+            q = self.failures[key]
+            while q and now - q[0] > FAIL_WINDOW:
+                q.popleft()
+            limit = FAIL_USER if key.startswith("user:") else FAIL_IP
+            if len(q) >= limit:
+                raise HTTPException(429, "Too many failed attempts; try again in a few minutes")
+        if len(self.failures) > 10_000:
+            self.failures = defaultdict(deque, {k: v for k, v in self.failures.items() if v})
+
+    def failed(self, *keys):
+        for key in keys:
+            self.failures[key].append(time.time())
+
     def login(self, username, password, ip, user_agent=""):
         now = time.time()
-        q = self.failures[ip]
-        while q and now - q[0] > 300:
-            q.popleft()
-        if len(q) >= 8:
-            raise HTTPException(429, "Too many failed logins; try again in a few minutes")
+        keys = (f"ip:{ip}", f"user:{username.lower()}")
+        self.throttle(*keys)
         with closing(self.connect()) as c:
             row = c.execute("SELECT id, username, pw_hash, role FROM users WHERE username=?", (username,)).fetchone()
-            if not row or not verify_password(password, row[2]):
-                q.append(now)
+            ok = verify_password(password, row[2] if row else _DUMMY_HASH)
+            if not row or not ok:
+                self.failed(*keys)
+                log.warning("Failed login for %r from %s", username[:64], ip)
                 raise HTTPException(401, "Invalid username or password")
-            q.clear()
+            for k in keys:
+                self.failures.pop(k, None)
             token = secrets.token_urlsafe(32)
             c.execute("INSERT INTO auth_sessions VALUES(?,?,?,?,?)",
                       (_sha(token), row[0], now, now + SESSION_DAYS * 86400, user_agent[:200]))
@@ -172,6 +195,10 @@ class Auth:
                 if user and request.method not in ("GET", "HEAD", "OPTIONS") and \
                         request.headers.get("x-yolo") != "1":
                     return JSONResponse({"detail": "missing X-Yolo header"}, status_code=403)
+            # Browsers send Origin on cross-site writes: reject those outright (also covers login/setup CSRF).
+            origin = request.headers.get("origin")
+            if origin and request.method not in ("GET", "HEAD", "OPTIONS") and not same_origin(origin, request):
+                return JSONResponse({"detail": "cross-origin request refused"}, status_code=403)
             request.state.user = user
             if user or path.startswith(PUBLIC_PATHS) or path == "/api/ingest":
                 return await call_next(request)
@@ -197,34 +224,48 @@ def require_admin(request: Request):
     return u
 
 
+def same_origin(origin, request):
+    """Origin must match the host the request was sent to (scheme-agnostic, so it works behind TLS proxies)."""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    return origin.split("://", 1)[-1].rstrip("/").lower() == host.split(",")[0].strip().lower()
+
+
 class Credentials(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=1024)
 
 
 class SetupRequest(Credentials):
-    code: str
+    code: str = Field(max_length=32)
 
 
 class NewUser(BaseModel):
-    username: str
-    password: str
-    role: str = "viewer"
+    username: str = Field(pattern=USERNAME_RX)
+    password: str = Field(max_length=1024)
+    role: str = Field("viewer", pattern="^(admin|viewer)$")
 
 
 class PasswordChange(BaseModel):
-    current: str = ""
-    password: str
+    current: str = Field("", max_length=1024)
+    password: str = Field(max_length=1024)
 
 
 class NewToken(BaseModel):
-    name: str
-    scope: str = "read"
+    name: str = Field(max_length=64)
+    scope: str = Field("read", pattern="^(metrics|read|admin)$")
 
 
-def _check_password(pw):
+class RoleChange(BaseModel):
+    role: str = Field(pattern="^(admin|viewer)$")
+
+
+def _check_password(pw, username=""):
     if len(pw) < 10:
         raise HTTPException(400, "Password must be at least 10 characters")
+    if username and pw.lower() == username.lower():
+        raise HTTPException(400, "Password must differ from the username")
+    if len(set(pw)) < 4:
+        raise HTTPException(400, "Password is too simple")
 
 
 def routes(ctx):
@@ -253,11 +294,14 @@ def routes(ctx):
     def setup(body: SetupRequest, request: Request, response: Response):
         if auth.disabled or not auth.needs_setup():
             raise HTTPException(409, "Setup has already been completed")
+        ip = request.client.host if request.client else "?"
+        auth.throttle(f"ip:{ip}", "setup")
         if not auth.setup_code or not hmac.compare_digest(body.code.strip().upper(), auth.setup_code):
+            auth.failed(f"ip:{ip}", "setup")
             raise HTTPException(403, "Wrong setup code (see the container log: docker compose logs yolo)")
-        _check_password(body.password)
-        if not body.username.strip():
-            raise HTTPException(400, "Username required")
+        if not re.match(USERNAME_RX, body.username.strip()):
+            raise HTTPException(400, "Username: 1–64 letters, digits or . _ @ -")
+        _check_password(body.password, body.username)
         with closing(ctx.wdb()) as c:
             c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES(?,?,?,?)",
                       (body.username.strip(), hash_password(body.password), "admin", time.time()))
@@ -276,7 +320,7 @@ def routes(ctx):
 
     @r.post("/api/me/password")
     def change_password(body: PasswordChange, user=Depends(current_user)):
-        _check_password(body.password)
+        _check_password(body.password, user.username)
         with closing(ctx.wdb()) as c:
             row = c.execute("SELECT pw_hash, from_env FROM users WHERE id=?", (user.id,)).fetchone()
             if not row:
@@ -296,9 +340,7 @@ def routes(ctx):
 
     @r.post("/api/users")
     def add_user(body: NewUser, _=Depends(require_admin)):
-        if body.role not in ROLES:
-            raise HTTPException(400, "role must be admin or viewer")
-        _check_password(body.password)
+        _check_password(body.password, body.username)
         try:
             with closing(ctx.wdb()) as c:
                 c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES(?,?,?,?)",
@@ -320,12 +362,14 @@ def routes(ctx):
         return {"ok": True}
 
     @r.post("/api/users/{uid}/role")
-    def set_role(uid: int, body: dict, me=Depends(require_admin)):
-        role = body.get("role")
-        if role not in ROLES or uid == me.id:
-            raise HTTPException(400, "Invalid role change")
+    def set_role(uid: int, body: RoleChange, me=Depends(require_admin)):
+        if uid == me.id:
+            raise HTTPException(400, "You can't change your own role")
         with closing(ctx.wdb()) as c:
-            c.execute("UPDATE users SET role=? WHERE id=?", (role, uid))
+            if body.role == "viewer" and not c.execute(
+                    "SELECT COUNT(*) FROM users WHERE role='admin' AND id != ?", (uid,)).fetchone()[0]:
+                raise HTTPException(400, "At least one admin must remain")
+            c.execute("UPDATE users SET role=? WHERE id=?", (body.role, uid))
         return {"ok": True}
 
     # ------------------------------------------------------------ API tokens
@@ -335,9 +379,7 @@ def routes(ctx):
 
     @r.post("/api/tokens")
     def new_token(body: NewToken, _=Depends(require_admin)):
-        if body.scope not in SCOPES or body.scope == "sensor":
-            raise HTTPException(400, "scope must be metrics, read or admin (sensor tokens are made per sensor)")
-        tid, token = auth.create_token(body.name.strip() or body.scope, body.scope)
+        tid, token = auth.create_token(clean_str(body.name, 64) or body.scope, body.scope)
         return {"id": tid, "token": token}
 
     @r.delete("/api/tokens/{tid}")

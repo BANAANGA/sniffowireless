@@ -6,13 +6,17 @@ import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (alerts, auth, backup, health, interference, lan, manage, metrics, reports, search, security, sensors,
                status, survey, trackers)
 from .auth import current_user
+from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
+
+CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
+CSV_FORMULA = ("=", "+", "-", "@", "\t", "\r")
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
@@ -25,6 +29,7 @@ def create_app(ctx):
     static = Path(__file__).parent / "static"
     vendor_dir = Path("/app/vendor")
     ctx.auth.install(app)
+    app.add_middleware(SecurityMiddleware, allowed_hosts=cfg.allowed_hosts)  # outermost: runs before auth
     rows, one = ctx.rows, ctx.one
 
     def _dev(d):
@@ -66,7 +71,8 @@ def create_app(ctx):
     @app.get("/api/timeline", dependencies=[Depends(current_user)])
     def timeline(hours: float = 24, bucket: int = 0):
         now = time.time()
-        bucket = bucket or max(60, int(hours * 3600 / 288) // 60 * 60)
+        auto = max(60, int(hours * 3600 / 288) // 60 * 60)
+        bucket = max(bucket, int(hours * 3600 / 2000), 60) if bucket else auto  # never more than ~2000 buckets
         since = int((now - hours * 3600) // bucket * bucket)
         series = {k: {} for k in KINDS}
         for r in rows("SELECT (s.minute / ?) * ? AS t, d.kind, COUNT(DISTINCT s.mac) n FROM samples s "
@@ -341,7 +347,9 @@ def create_app(ctx):
         w = csv.writer(buf)
         w.writerow(cols)
         for r in data:
-            w.writerow([r.get(c) for c in cols])
+            # Neutralise spreadsheet formulas: SSIDs / device names are chosen by strangers.
+            w.writerow(["'" + v if isinstance(v, str) and v.startswith(CSV_FORMULA) else v for v in
+                        (r.get(c) for c in cols)])
         return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                                  headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -368,8 +376,12 @@ def create_app(ctx):
     def login_page():
         return FileResponse(static / "login.html")
 
-    if vendor_dir.exists():
-        app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
+    @app.get("/vendor/chart.umd.min.js")
+    def chart_js():
+        # bundled at build time; fall back to the pinned CDN copy (allowed by the CSP) if it's missing
+        f = vendor_dir / "chart.umd.min.js"
+        return FileResponse(f, media_type="text/javascript") if f.exists() else RedirectResponse(CHART_JS_CDN)
+
     app.mount("/static", StaticFiles(directory=static), name="static")
 
     @app.get("/")

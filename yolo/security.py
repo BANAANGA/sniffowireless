@@ -5,9 +5,10 @@ from collections import defaultdict, deque
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import current_user, require_admin
+from .sanitize import MacList
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS findings(
@@ -157,12 +158,12 @@ class SecurityMonitor:
 
 
 class TrustBody(BaseModel):
-    bssids: List[str]
+    bssids: MacList
     trust: bool = True
 
 
 class StatusBody(BaseModel):
-    status: str
+    status: str = Field(pattern="^(open|acknowledged|resolved)$")
 
 
 def routes(ctx):
@@ -195,7 +196,7 @@ def routes(ctx):
     def trust(body: TrustBody, _=Depends(require_admin)):
         n = ctx.settings.get("networks")
         cur = set(n["trusted_bssids"])
-        macs = {b.strip().lower() for b in body.bssids}
+        macs = set(body.bssids)
         cur = cur | macs if body.trust else cur - macs
         n["trusted_bssids"] = sorted(cur)
         ctx.settings.set("networks", {"ssids": n["ssids"], "trusted_bssids": n["trusted_bssids"]})

@@ -130,7 +130,9 @@ def main():
     writer.start()
     try:
         uvicorn.run(create_app(ctx), host=cfg.web_host, port=cfg.web_port, log_level="warning",
-                    proxy_headers=True, forwarded_allow_ips="*")
+                    # X-Forwarded-For/-Proto are only believed from these addresses (else anyone could fake
+                    # their IP to dodge login throttling)
+                    proxy_headers=True, forwarded_allow_ips=cfg.trusted_proxies, server_header=False)
     finally:
         log.info("Shutting down")
         stop.set()

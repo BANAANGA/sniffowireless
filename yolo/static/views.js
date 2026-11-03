@@ -119,7 +119,7 @@ addRoute('/group/', async (id, params) => {
     g.sessions.filter(s => s.mac === m.mac && s.type === 'presence').map(s => ({ s: s.start_ts, e: s.end_ts, color: colors[m.kind] || FAINT, title: `${dt(s.start_ts)} → ${dt(s.end_ts)}` }))]));
   const total = g.presence.reduce((a, [x, y]) => a + (y - x), 0);
   app.innerHTML = `<div class="page-head"><div><div class="crumbs"><a href="#/groups">Groups</a></div>
-      <h1>${esc(g.name)} ${g.watch ? '<span class="star">★</span>' : ''}</h1><div class="sub"><span class="state-dot ${present ? 'on' : ''}"></span>${present ? 'Present now' : 'Away'} · ${g.kind} · ${g.members.length} devices</div></div>
+      <h1>${esc(g.name)} ${g.watch ? '<span class="star">★</span>' : ''}</h1><div class="sub"><span class="state-dot ${present ? 'on' : ''}"></span>${present ? 'Present now' : 'Away'} · ${esc(g.kind)} · ${g.members.length} devices</div></div>
       <div class="row">${seg('range', [[24, '24h'], [168, '7d'], [720, '30d']], hours)} ${adminBtn('edit-group', 'Edit')} ${adminBtn('del-group', 'Delete', 'danger')}</div></div>
     <div class="grid cols-3">
       <section class="panel span-3"><header><h2>Presence</h2><span class="faint">${dur(total)} present in this range · ${g.presence.length} visits</span></header><div class="body">${ganttHtml(lanes, g.since, g.now)}</div></section>
@@ -272,7 +272,7 @@ addRoute('/channels', async (_, params) => {
     ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div>
     ${!c.has_survey ? '<div class="callout">No channel measurements yet. They appear once a Wi-Fi sensor has been hopping for a few minutes.</div>' : ''}
     ${c.advice.length ? `<section class="panel" style="margin-bottom:16px"><header><h2>Recommendations for my access points</h2></header><div class="body flush">${tableHtml(
-      '<th>Access point</th><th>Band</th><th>Current</th><th>Recommended</th><th></th>', c.advice.map(a => `<tr><td>${esc(a.ssid)} ${devLink(a.mac)}</td><td class="muted">${a.band} GHz</td><td>ch ${a.channel}</td>
+      '<th>Access point</th><th>Band</th><th>Current</th><th>Recommended</th><th></th>', c.advice.map(a => `<tr><td>${esc(a.ssid)} ${devLink(a.mac)}</td><td class="muted">${esc(a.band)} GHz</td><td>ch ${a.channel}</td>
         <td>${a.change ? `<b>ch ${a.recommended}</b>` : `ch ${a.channel}`}</td><td class="muted">${a.change ? `less congested (score ${a.best_score} vs ${a.current_score})` : '<span class="tag on">already a good choice</span>'}</td></tr>`).join(''))}</div></section>` : ''}
     <div class="grid cols-3">
       ${['2.4', '5', '6'].map(b => { const rows = c.channels.filter(x => x.band === b); return `<section class="panel ${b === '6' && !rows.length ? '' : ''}"><header><h2>${b} GHz</h2><span class="faint">${rows.length} channels measured</span></header>
@@ -558,7 +558,7 @@ const SETTINGS_VIEWS = {
     el.innerHTML = `<section class="panel"><header><h2>Sensors</h2><button class="btn primary" id="add-sensor">Add remote sensor</button></header><div class="body flush">${tableHtml(
       '<th>Sensor</th><th>Room</th><th>Status</th><th class="num">Last report</th><th>On map</th><th></th>',
       ss.map(s => { const st = (s.info && s.info.status) || []; return `<tr><td><b>${esc(s.name)}</b> <span class="mono faint">${esc(s.id)}</span></td><td>${esc(s.room || '—')}</td>
-        <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'} <span class="faint">${st.map(x => `${esc(x.name)} ${x.pps || 0} pkt/s`).join(', ')}</span></td>
+        <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'} <span class="faint">${st.map(x => `${esc(x.name)} ${num(x.pps)} pkt/s`).join(', ')}</span></td>
         <td class="num muted">${s.id === 'local' ? '—' : ago(s.last_seen)}</td><td>${s.x != null ? 'placed' : '<span class="faint">not placed</span>'}</td>
         <td class="num"><button class="btn small" data-edit="${esc(s.id)}">Edit</button>${s.id !== 'local' ? ` <button class="btn small danger" data-del="${esc(s.id)}">Remove</button>` : ''}</td></tr>`; }).join(''))}</div></section>
       <p class="faint small-text">A remote sensor is this same container started with <code>YOLO_MODE=sensor</code> on another machine (e.g. a Raspberry Pi in another room). It forwards everything it captures here. Give each sensor a room name, then place it on the <a href="#/map">map</a>.</p>`;

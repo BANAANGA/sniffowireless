@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .auth import current_user, require_admin
+from .sanitize import Mac, clean_str
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lan_traffic(
@@ -69,7 +70,7 @@ class LanMonitor:
             self._dhcp_server(store, o)
         elif t == "lan":
             if o.get("dns"):
-                k = (o["mac"], o["dns"])
+                k = (o["mac"], clean_str(o["dns"], 253))
                 d = self.dns.get(k)
                 if d:
                     d[1], d[2] = o["ts"], d[2] + 1
@@ -178,7 +179,7 @@ class LanMonitor:
 
 # ------------------------------------------------------------------ routes
 class TrustBody(BaseModel):
-    mac: str
+    mac: Mac
     trust: bool = True
 
 
@@ -267,9 +268,7 @@ def routes(ctx):
     def dhcp_trust(body: TrustBody, _=Depends(require_admin)):
         cfg = ctx.settings.get("lan")
         cur = set(cfg["trusted_dhcp"])
-        m = body.mac.strip().lower()
-        if not m:
-            raise HTTPException(400, "mac required")
+        m = body.mac
         cur = cur | {m} if body.trust else cur - {m}
         cfg["trusted_dhcp"] = sorted(cur)
         ctx.settings.set("lan", cfg)
