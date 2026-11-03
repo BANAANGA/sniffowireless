@@ -13,6 +13,7 @@ DEFAULTS = {
     "report": {"email": False, "notifier_id": None, "weekday": 0, "hour": 8, "last_sent": 0},
     "floorplan": {"image": None, "width": None, "height": None},
     "lan": {"trusted_dhcp": []},
+    "backup": {"enabled": False, "hour": 3, "keep": 7, "last_run": 0},
 }
 
 

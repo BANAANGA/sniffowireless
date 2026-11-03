@@ -9,7 +9,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alerts, auth, health, lan, manage, metrics, reports, security, sensors, status, survey
+from . import (alerts, auth, backup, health, interference, lan, manage, metrics, reports, security, sensors, status,
+               survey, trackers)
 from .auth import current_user
 from .web_util import overlap_counts
 
@@ -359,7 +360,8 @@ def create_app(ctx):
                                                (time.time() - days * 86400,)))
 
     # ------------------------------------------------------------------ static
-    for mod in (auth, manage, alerts, security, survey, health, metrics, sensors, reports, lan):
+    for mod in (auth, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, trackers,
+                backup):
         app.include_router(mod.routes(ctx))
 
     @app.get("/login")

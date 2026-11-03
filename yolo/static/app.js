@@ -315,12 +315,13 @@ async function viewOverview() {
 }
 
 function eventRow(e, full = false) {
-  const who = e.label || (e.kind === 'ap' ? (e.ssid || e.mac) : (e.name || e.vendor || e.mac));
+  const rf = (e.mac || '').startsWith('rf:');
+  const who = rf ? `${e.mac.slice(3)} GHz radio` : e.label || (e.kind === 'ap' ? (e.ssid || e.mac) : (e.name || e.vendor || e.mac));
   let detail = '';
   if (e.peer) detail = `→ ${isMac(e.peer) ? `<a href="#/device/${enc(e.peer)}">${esc(e.peer_ssid || e.peer)}</a>` : esc(e.peer)}`;
   if (e.detail && e.type !== 'new_device') detail += ` <span class="faint">${esc(e.detail)}</span>`;
   return `<li><span class="t" title="${esc(dt(e.ts))}">${full ? dt(e.ts) : ago(e.ts)}</span><span class="ev ev-${esc(e.type)}">${esc(e.type.replace(/_/g, ' '))}</span>
-    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.kind ? `<span class="swatch" style="background:${(KINDS[e.kind] || {}).color};margin-right:6px"></span>` : ''}<a href="#/device/${enc(e.mac)}">${esc(who)}</a> ${detail}</span></li>`;
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.kind ? `<span class="swatch" style="background:${(KINDS[e.kind] || {}).color};margin-right:6px"></span>` : ''}${rf ? `<a href="#/channels">${esc(who)}</a>` : `<a href="#/device/${enc(e.mac)}">${esc(who)}</a>`} ${detail}</span></li>`;
 }
 function linkRows(root) {
   root.querySelectorAll('tr[data-href]').forEach(tr => tr.addEventListener('click', e => {

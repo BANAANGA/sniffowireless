@@ -10,6 +10,9 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Labels, groups and watch list:** name devices, mark them known, and group a person's phone, watch and earbuds (or a phone's rotating MACs, with merge suggestions) into one presence history
 - **Alerts:** rules for watched or unknown devices, groups arriving/leaving and security events, with quiet hours and cooldowns, delivered via ntfy, Telegram, Discord, webhooks or email
 - **Security monitoring (defensive):** evil-twin / rogue access points for your SSIDs, deauthentication floods, KARMA-style access points, and open/WEP/WPS/no-WPA3 findings on your own networks
+- **Interference detection:** non-Wi-Fi interference episodes (microwave ovens, video senders, baby monitors, radar) found from noise-floor and retry anomalies against each channel's baseline
+- **Unknown tracker detection:** AirTags/Find My, Tiles and SmartTags that move with a person ("possibly following") raise a high-severity alert
+- **Backup & restore:** configuration export/import, full database backups (manual or scheduled), one-click restore
 - **Wi-Fi health:** per-channel airtime, retries and noise with channel recommendations; client health for your own networks (band use, roaming and ping-pong, sticky clients, disconnect reasons)
 - **Multiple sensors and a map:** remote Raspberry Pi sensors forward to one server; each device gets a room and an approximate position on your floor plan
 - **Occupancy reports:** estimated people per hour, visitors, dwell time, a printable/PDF report and a weekly email
@@ -69,11 +72,12 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 10. [Security monitoring](#security-monitoring)
 11. [Ethernet monitoring](#ethernet-monitoring)
 12. [Multiple sensors & the map](#multiple-sensors--the-map)
-13. [Prometheus & Grafana](#prometheus--grafana)
-14. [API](#api)
-15. [Troubleshooting](#troubleshooting)
-16. [Development](#development)
-17. [Legal](#legal)
+13. [Backup & restore](#backup--restore)
+14. [Prometheus & Grafana](#prometheus--grafana)
+15. [API](#api)
+16. [Troubleshooting](#troubleshooting)
+17. [Development](#development)
+18. [Legal](#legal)
 
 ---
 
@@ -464,7 +468,27 @@ Configure **My networks** first (Settings → My networks), then mark your own a
 | **WPS enabled** | WPS element in your AP's beacons |
 | **No WPA3** | informational |
 
+| **Unknown tracker following someone** | an AirTag/Find My device, Tile or SmartTag not marked as yours that is present ≥ 80 % of its time together with one person (a "person" group or a known phone) and arrived or left with them at least twice |
+
 Findings can be acknowledged (no repeat alerts) or resolved (they reopen if the condition returns). All detection is passive: yolo never transmits deauths or other attack frames.
+
+### Bluetooth trackers
+
+The Security page lists every tracker tag seen in the last 3 days:
+- its type (AirTag / Find My, Tile, SmartTag)
+- who it moves with, what share of its time it spends with them, and how often they arrived or left together
+- its status: yours, unknown, or **possibly following**
+
+Click **It's mine** for your own tags (keys, bags, the car) and they're ignored from then on. A separated AirTag keeps its Bluetooth address for up to about 24 hours, so a planted tag shows up as "following" within a day of moving with someone. Phones' built-in unknown-tracker alerts complement this, but yolo also covers people without a smartphone and tags that phones don't report.
+
+### Interference
+
+While the sensor hops channels it records each channel's noise floor and retransmission rate. Every 5 minutes, yolo compares the last 10 minutes, minute by minute, with that channel's own 24-hour baseline. Two or more minutes of **+6 dB noise**, or retries ≥ 30 % and double the normal rate while the channel isn't busy, open an **interference episode**. The episode is classified as:
+- *Microwave oven likely:* a short burst centred on channels 6–13
+- *Broadband*, *narrowband* or *persistent* 2.4 GHz interferer (video senders, baby monitors, cordless phones, faulty power supplies)
+- *Non-Wi-Fi interference on 5 GHz:* radar, video links
+
+Episodes are listed on the **Channels** page and can trigger alerts (event type *Radio interference episode*). Detection needs a day of measurements as a baseline. Adapters that don't report a noise level are judged on retransmissions only.
 
 ---
 
@@ -535,6 +559,25 @@ Every device gets a **room** (the sensor that hears it strongest, with 4 dB hyst
 
 ---
 
+## Backup & restore
+
+**Settings → Backup**:
+
+- **Configuration backup (JSON):** includes:
+  - settings, my networks and the ignore list
+  - labels, groups and alert rules
+  - notification channels (secrets only if you tick the box)
+  - sensors, without their tokens: re-create those
+  - users, as password hashes
+
+  It contains no measurement history and is small. Restoring it replaces those items and applies immediately, which makes it handy for moving to a new server or putting a configuration under version control.
+- **Full backup (`.tar.gz`):** the whole database plus the floor plan. It's taken with SQLite's online backup, so it's consistent while yolo keeps capturing. *Back up now* writes one to `data/backups/`, and **daily scheduled backups** with retention can be switched on.
+- **Restore a full backup:** pick one from the list or upload a file. yolo checks the archive (format, safe paths, database integrity), stages it, and restarts. On startup it swaps the database in and keeps the previous one as `data/backups/pre-restore-….db`. The restart relies on Docker's restart policy, which the compose file and the `docker run` example set (`restart: unless-stopped`).
+
+Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since a backup on the same disk doesn't survive a dead disk.
+
+---
+
 ## Prometheus & Grafana
 
 `GET /metrics` serves Prometheus metrics, including:
@@ -591,6 +634,11 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/reports/occupancy?days=7` | Occupancy report data |
 | `GET /api/lan?hours=24` | LAN overview: devices online, throughput, top talkers, destinations, services, DNS, DHCP servers |
 | `GET /api/devices/{mac}/lan?hours=24` | Device traffic, peers and DNS lookups |
+| `GET /api/interference?days=7` | Interference episodes |
+| `GET /api/trackers` | Tracker tags and who they move with |
+| `GET /api/backup/config` · `POST /api/backup/config` | Download / restore the configuration (admin) |
+| `POST /api/backup/full` · `GET /api/backup/list` · `GET /api/backup/files/{name}` | Create, list and download full backups (admin) |
+| `POST /api/backup/files/{name}/restore` · `POST /api/backup/restore` | Restore a stored / uploaded full backup, then restart (admin) |
 | `GET /metrics` | Prometheus metrics |
 | `POST /api/ingest` | Remote sensors push observations here (sensor token) |
 
@@ -618,6 +666,9 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | LAN page shows devices but no internet traffic | The interface only sees broadcasts and its own traffic. Connect it to a mirror/SPAN port or TAP (see [Ethernet monitoring](#ethernet-monitoring)). |
 | `ETH_INTERFACES` error "not found" | Use the host's interface name (`ip -br link`), and run with `network_mode: host`. |
 | No DNS names | Devices use DNS-over-HTTPS/TLS (common in browsers, Android "Private DNS", iCloud Private Relay); only plain DNS on port 53 is visible. |
+| No interference episodes ever | It needs ~24 h of channel measurements first. Adapters without noise reporting only detect retry anomalies. |
+| My own AirTag shows as "possibly following" | Click **It's mine** on the Security page (or mark the device as known). |
+| Full restore didn't come back | The container needs a restart policy (`restart: unless-stopped`); otherwise start it again. The previous database is in `data/backups/pre-restore-*.db`. |
 | `dropped` counter rising | The host is too slow for the frame rate. Lower the number of channels or use fewer adapters. |
 
 ---
@@ -653,11 +704,14 @@ yolo/
   sensors.py    remote sensor forwarding, ingest, room location, floor plan
   ethernet.py   raw-socket Ethernet capture: fast header parsing + ARP/DHCP/mDNS/SSDP/LLDP/DNS decoding
   lan.py        LAN traffic, conversations, DNS log, DHCP servers, rogue-DHCP / ARP-spoof detection
+  interference.py  non-Wi-Fi interference episodes from the channel survey
+  trackers.py   unknown tracker-tag ("following") detection
+  backup.py     configuration / full backups, staged restore, scheduler
   reports.py    occupancy analytics and weekly email
   metrics.py    Prometheus endpoint
   web.py        FastAPI app and device/statistics API
   demo.py       synthetic data generator
-  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, lan.js, login.html
+  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, lan.js, extras.js, login.html
 contrib/monitoring/  Prometheus + Grafana stack and dashboard
 tests/          parser, session, auth, alert, security, survey, location and report tests
 ```

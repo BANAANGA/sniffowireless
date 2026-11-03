@@ -169,6 +169,10 @@ def routes(ctx):
                     "VALUES(?,?,?,?,?,?,?)", (mac, cur["label"], cur["notes"], cur["known"], cur["watch"],
                                               cur["group_id"], time.time()))
         apply_meta(ctx)
+        if cur["known"]:  # a tag marked as yours is no longer a suspected tracker
+            ctx.execute("UPDATE findings SET status='resolved' WHERE key=?", (f"tracker:{mac}",))
+            if ctx.security:
+                ctx.security.status[f"tracker:{mac}"] = "resolved"
         return cur
 
     @r.post("/api/devices/known")

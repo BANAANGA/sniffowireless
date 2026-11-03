@@ -100,6 +100,7 @@ BLE_FPS = {
     "5b:77:00:02:00:08": {"company": 0x0006, "ms_type": 15},
     "6c:88:11:02:00:09": {"company": 0x004C, "apple": [0x12]},
     "cb:99:22:02:00:0a": {"company": 0x0499, "ext_adv": True},
+    "7b:4f:3a:02:00:0b": {"company": 0x004C, "apple": [0x12]},  # unknown AirTag following Alex every other day
 }
 
 APS = [
@@ -144,9 +145,9 @@ CLIENTS = [
 ]
 
 BLE = [
-    ("4c:11:aa:02:00:01", "AirPods Pro", 0x004C, "resident", -60, "random-static", "audio sink"),
-    ("c9:22:bb:02:00:02", "Galaxy Watch5", 0x0075, "evening", -66, "random-static", "watch"),
-    ("e1:33:cc:02:00:03", "Mi Smart Band 7", 0x038F, "worker", -71, "random-static", "watch"),
+    ("4c:11:aa:02:00:01", "AirPods Pro", 0x004C, "with:a4:83:e7:01:00:01", -60, "random-static", "audio sink"),
+    ("c9:22:bb:02:00:02", "Galaxy Watch5", 0x0075, "with:5c:0a:5b:01:00:03", -66, "random-static", "watch"),
+    ("e1:33:cc:02:00:03", "Mi Smart Band 7", 0x038F, "with:a0:a8:cd:01:00:04", -71, "random-static", "watch"),
     ("a4:c1:38:02:00:04", "GVH5075_8A1C", 0x04F7, "always", -68, "public", "thermometer"),
     ("d4:44:dd:02:00:05", "Tile", 0x00ED, "always", -82, "random-static", "tag"),
     ("f0:55:ee:02:00:06", "MX Keys", 0x01DA, "worker", -57, "random-static", "HID"),
@@ -154,6 +155,7 @@ BLE = [
     ("5b:77:00:02:00:08", None, 0x0006, "passer", -88, "random-resolvable", None),
     ("6c:88:11:02:00:09", None, 0x004C, "visitor", -73, "random-resolvable", "phone"),
     ("cb:99:22:02:00:0a", "Ruuvi 3F2C", 0x0499, "always", -75, "random-static", "sensor"),
+    ("7b:4f:3a:02:00:0b", None, 0x004C, "follow:5c:0a:5b:01:00:03", -74, "random-resolvable", None),
 ]
 
 CLASSIC = [
@@ -173,6 +175,13 @@ def present(sched, mac, t):
     day, hour = int(lt // 86400), (lt % 86400) / 3600
     weekday = (day + 3) % 7
     r = _h(mac, day) % 1000 / 1000.0
+    if sched.startswith("with:"):  # worn/carried together with another device
+        target = sched[5:]
+        return present(next(c[2] for c in CLIENTS if c[0] == target), target, t)
+    if sched.startswith("follow:"):  # tag carried by someone else's device, on even days
+        target = sched[7:]
+        tsched = next(c[2] for c in CLIENTS if c[0] == target)
+        return present(tsched, target, t) and day % 2 == 0
     if sched == "always":
         return _h(mac, int(t // 1800)) % 50 != 0  # occasional short drop-out
     if sched == "resident":
@@ -424,14 +433,22 @@ class DemoGenerator:
                               "fp": None, "ts": o["ts"] + 0.5})
         hour = ((t + 3600) % 86400) / 3600
         busy = 0.5 + 0.5 * max(0.0, 1 - abs(hour - 20) / 8)
+        lmin = int(((t + 3600) % 86400) // 60)
+        dnum = int((t + 3600) // 86400)
+        microwave = lmin in range(12 * 60 + 30, 12 * 60 + 34) or lmin in range(18 * 60 + 45, 18 * 60 + 50)
+        sender = dnum % 3 == 0 and 20 * 60 <= lmin < 21 * 60 + 30  # a wireless video sender left on
         for ch, band, u in CHANNELS:
             dwell = 2500
             util = min(0.95, u * busy * (0.85 + self.rng.random() * 0.3))
             frames = int(util * dwell * 1.6)
+            noise, retry = (-95 if band == "2.4" else -101), 0.06 + u * 0.18
+            if band == "2.4" and microwave and ch >= 6:
+                noise, retry = -82 + self.rng.randint(-2, 2), 0.5
+            elif band == "2.4" and sender:
+                noise, retry = -86 + self.rng.randint(-2, 2), 0.38
             extra.append({"t": "chan", "ts": t + 30, "mac": "-", "freq": ch_to_freq(ch, band), "dwell_ms": dwell,
                           "frames": frames, "bytes": frames * 300, "airtime_us": int(util * dwell * 1000),
-                          "retries": int(frames * (0.06 + u * 0.18)), "noise_sum": -95 * 20 if band == "2.4" else -101 * 20,
-                          "noise_cnt": 20})
+                          "retries": int(frames * retry), "noise_sum": noise * 20, "noise_cnt": 20})
         day, minute = int((t + 3600) // 86400), int(((t + 3600) % 86400) // 60)
         if day % 2 == 0 and 21 * 60 <= minute < 21 * 60 + 40:  # evil twin of HomeNet, open network
             extra.append({"t": "wifi_ap", "ts": t + 10, "mac": EVIL_TWIN, "ssid": "HomeNet", "enc": "OPN",
@@ -505,7 +522,7 @@ class DemoGenerator:
                 self.store.process(o)
                 n += 1
             self.store.sweep(t + 60)
-            if (t // 60) % 30 == 0:
+            if (t // 60) % 5 == 0:  # the interference detector reads recent minutes from the database
                 self.store.flush()
             t += 60
         self.store.flush()
