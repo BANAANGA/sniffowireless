@@ -182,6 +182,8 @@ class BluetoothSensor:
         self.name_pending = None
         self.inquiring = False
         self.last_adv = 0.0
+        self.last_scan_setup = 0.0
+        self.ext_scan = False   # use LE extended scan commands (Bluetooth 5 controllers)
         self.fp_seen = {}       # mac -> (fingerprint, ts) to avoid re-sending identical fingerprints
         self.packets = 0
         self.stop = None
@@ -206,7 +208,8 @@ class BluetoothSensor:
             if e.errno not in (errno.EALREADY, errno.EBUSY):
                 log.debug("HCIDEVUP: %s", e)
         s.bind((self.dev_id,))
-        s.setsockopt(SOL_HCI, HCI_FILTER, struct.pack("<IIIH", 1 << 0x04, 0xFFFFFFFF, 0xFFFFFFFF, 0))
+        # struct hci_ufilter is 16 bytes incl. padding; recent kernels reject the unpadded 14 with EINVAL.
+        s.setsockopt(SOL_HCI, HCI_FILTER, struct.pack("<IIIH2x", 1 << 0x04, 0xFFFFFFFF, 0xFFFFFFFF, 0))
         return s
 
     def _cmd(self, ogf, ocf, params=b""):
@@ -220,11 +223,24 @@ class BluetoothSensor:
         self._start_le_scan()
 
     def _start_le_scan(self):
-        self._cmd(OGF_LE, 0x000C, bytes([0, 0]))
-        self._cmd(OGF_LE, 0x000B, struct.pack("<BHHBB", 1 if self.cfg.bt_active_scan else 0,
-                                              0x0030, 0x0030, 0, 0))
-        self._cmd(OGF_LE, 0x000C, bytes([1, 0]))  # enable, no duplicate filtering
+        active = 1 if self.cfg.bt_active_scan else 0
+        if self.ext_scan:
+            # Bluetooth 5 extended scanning: once the host has used extended commands, controllers refuse
+            # the legacy ones with "Command Disallowed" (0x0c).
+            self._cmd(OGF_LE, 0x0042, struct.pack("<BBHH", 0, 0, 0, 0))
+            self._cmd(OGF_LE, 0x0041, struct.pack("<BBBBHH", 0, 0, 0x01, active, 0x0030, 0x0030))  # 1M PHY
+            self._cmd(OGF_LE, 0x0042, struct.pack("<BBHH", 1, 0, 0, 0))  # enable, no duplicate filtering
+        else:
+            self._cmd(OGF_LE, 0x000C, bytes([0, 0]))
+            self._cmd(OGF_LE, 0x000B, struct.pack("<BHHBB", active, 0x0030, 0x0030, 0, 0))
+            self._cmd(OGF_LE, 0x000C, bytes([1, 0]))  # enable, no duplicate filtering
         self.last_scan_setup = time.time()
+
+    def _stop_le_scan(self):
+        if self.ext_scan:
+            self._cmd(OGF_LE, 0x0042, struct.pack("<BBHH", 0, 0, 0, 0))
+        else:
+            self._cmd(OGF_LE, 0x000C, bytes([0, 0]))
 
     def _inquiry(self):
         # General inquiry access code 0x9E8B33, ~10 s, unlimited responses.
@@ -254,6 +270,10 @@ class BluetoothSensor:
                 status.update(self.name, state="error", error=str(e))
             finally:
                 if self.sock:
+                    try:
+                        self._stop_le_scan()
+                    except OSError:
+                        pass
                     try:
                         self.sock.close()
                     except OSError:
@@ -349,5 +369,11 @@ class BluetoothSensor:
                 self.store.put({"t": "bt_conn", "kind": "ble" if h[1] else "bt_classic", "ts": now,
                                 "mac": h[0], "connected": False, "peer": self.dev,
                                 "detail": f"reason 0x{ev['reason']:02x}"})
+        elif kind == "cmd" and ev["status"] == 0x0C and ev["opcode"] in (0x200B, 0x200C) and not self.ext_scan:
+            log.info("%s: legacy LE scan refused (controller uses extended advertising); switching to extended scan",
+                     self.name)
+            self.ext_scan = True
+            status.update(self.name, scan="extended")
+            self._start_le_scan()
         elif kind == "cmd" and ev["status"] not in (0,):
             log.debug("%s: command 0x%04x failed with status 0x%02x", self.name, ev["opcode"], ev["status"])

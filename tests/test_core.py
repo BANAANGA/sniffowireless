@@ -205,3 +205,32 @@ def test_store_identifies_and_hashes(tmp_path):
     assert len({r["fp_hash"] for r in rows}) == 1 and rows[0]["brand"] == "Apple" and rows[0]["dev_type"] == "phone"
     from yolo.identify import IDENT_VERSION
     assert s.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()[0] == str(IDENT_VERSION)
+
+
+def test_bt_filter_size_and_extended_scan_fallback():
+    import threading
+
+    from yolo.bluetooth import BluetoothSensor
+
+    class FakeSock:
+        def __init__(self):
+            self.sent, self.opts = [], []
+
+        def send(self, b):
+            self.sent.append(b)
+
+        def setsockopt(self, *a):
+            self.opts.append(a)
+
+    sensor = BluetoothSensor("hci0", Config(), None)
+    sensor.sock = FakeSock()
+    sensor.stop = threading.Event()
+    sensor._start_le_scan()
+    assert [b[1] | b[2] << 8 for b in sensor.sock.sent] == [0x200C, 0x200B, 0x200C]  # legacy first
+    # controller answers "Command Disallowed" -> switch to LE extended scan commands
+    sensor._handle({"ev": "cmd", "opcode": 0x200B, "status": 0x0C}, 0)
+    assert sensor.ext_scan
+    assert [b[1] | b[2] << 8 for b in sensor.sock.sent[3:]] == [0x2042, 0x2041, 0x2042]
+    import inspect
+    src = inspect.getsource(BluetoothSensor._open)
+    assert '"<IIIH2x"' in src  # struct hci_ufilter must be 16 bytes on recent kernels
