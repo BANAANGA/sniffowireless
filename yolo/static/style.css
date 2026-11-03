@@ -535,3 +535,12 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 @media (prefers-reduced-motion: no-preference) { html[data-style="vicecity"] .brand-name { animation: vc-flicker 6s infinite; } }
 @keyframes vc-flicker { 0%, 92%, 100% { opacity: 1 } 94% { opacity: .75 } 96% { opacity: 1 } 97% { opacity: .85 } }
 @media print { html[data-style="vicecity"] body::after { display: none; } }
+
+/* ---- live overview ---- */
+.live-btn { gap: 6px; }
+.live-btn .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.live-btn.on .pulse-dot { background: var(--good); animation: live-pulse 2s infinite; }
+@keyframes live-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 60%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+.card.bump { animation: card-bump 1.4s ease-out; }
+@keyframes card-bump { 0% { border-color: var(--text); background: color-mix(in srgb, var(--text) 10%, var(--panel)); } 100% { } }
+@media (prefers-reduced-motion: reduce) { .live-btn.on .pulse-dot, .card.bump { animation: none; } }

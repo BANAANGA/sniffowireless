@@ -181,15 +181,18 @@ def create_app(ctx):
             params.append(group)
         return (" WHERE " + " AND ".join(where)) if where else "", params
 
+    def filter_args(kind: str = None, active: int = 0, q: str = None, vendor: str = None, ssid: str = None,
+                    probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
+                    connected: int = 0, band: str = None, dev_type: str = None, brand: str = None, os: str = None,
+                    wifi_gen: int = None, era: int = None, fp: str = None, known: int = None, watch: int = 0,
+                    group: int = None, addr_type: str = None, company: str = None):
+        """The device filters as query parameters; shared by the list and the exports so both mean the same thing."""
+        return device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected, band,
+                              dev_type, brand, os, wifi_gen, era, fp, known, watch, group, addr_type, company)
+
     @app.get("/api/devices", dependencies=[Depends(current_user)])
-    def devices(kind: str = None, active: int = 0, q: str = None, vendor: str = None, ssid: str = None,
-                probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
-                connected: int = 0, band: str = None, dev_type: str = None, brand: str = None, os: str = None,
-                wifi_gen: int = None, era: int = None, fp: str = None, known: int = None, watch: int = 0,
-                group: int = None, addr_type: str = None, company: str = None, sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0):
-        where, params = device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected,
-                                       band, dev_type, brand, os, wifi_gen, era, fp, known, watch, group,
-                                       addr_type, company)
+    def devices(flt=Depends(filter_args), sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0):
+        where, params = flt
         sort = "m.label" if sort == "label" else f"d.{sort if sort in SORTABLE else 'last_seen'}"
         order = "ASC" if order.lower() == "asc" else "DESC"
         limit = max(1, min(limit, 1000))
@@ -388,12 +391,28 @@ def create_app(ctx):
         return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                                  headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
+    DEVICE_EXPORT_COLS = ["mac", "kind", "label", "group_name", "vendor", "brand", "model", "dev_type", "os", "wifi_gen",
+                          "era", "fp_hash", "name", "ssid", "channel", "band", "freq", "enc", "bssid", "randomized",
+                          "packets", "last_rssi", "best_rssi", "first_seen", "last_seen"]
+
+    def export_rows(flt, sort, order):
+        where, params = flt
+        sort = "m.label" if sort == "label" else f"d.{sort if sort in SORTABLE else 'last_seen'}"
+        order = "ASC" if order.lower() == "asc" else "DESC"
+        return rows("SELECT d.*, m.label, g.name AS group_name FROM devices d LEFT JOIN device_meta m ON m.mac = d.mac "
+                    f"LEFT JOIN groups g ON g.id = m.group_id{where} ORDER BY {sort} {order} NULLS LAST LIMIT 50000", params)
+
+    # Both exports honour the same filters as the Devices page, so "export what I'm looking at" works.
     @app.get("/api/export/devices.csv", dependencies=[Depends(current_user)])
-    def export_devices():
-        cols = ["mac", "kind", "vendor", "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "name", "ssid",
-                "channel", "band", "freq", "enc", "bssid", "randomized", "packets",
-                "last_rssi", "best_rssi", "first_seen", "last_seen"]
-        return _csv("devices.csv", cols, rows("SELECT * FROM devices ORDER BY last_seen DESC"))
+    def export_devices(flt=Depends(filter_args), sort: str = "last_seen", order: str = "desc"):
+        return _csv("devices.csv", DEVICE_EXPORT_COLS, export_rows(flt, sort, order))
+
+    @app.get("/api/export/devices.json", dependencies=[Depends(current_user)])
+    def export_devices_json(flt=Depends(filter_args), sort: str = "last_seen", order: str = "desc"):
+        data = [{c: r.get(c) for c in DEVICE_EXPORT_COLS} for r in export_rows(flt, sort, order)]
+        return StreamingResponse(iter([json.dumps({"exported": time.time(), "count": len(data), "devices": data})]),
+                                 media_type="application/json",
+                                 headers={"Content-Disposition": 'attachment; filename="devices.json"'})
 
     @app.get("/api/export/sessions.csv", dependencies=[Depends(current_user)])
     def export_sessions(days: float = 7):
