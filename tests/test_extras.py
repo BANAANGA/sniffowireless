@@ -174,3 +174,40 @@ def test_investigation_events_and_catalogue(ctx):
     ctx.alerts.handle({"type": "investigated_seen", "mac": "0a:00:00:00:00:01", "ts": t, "peer": "ssid:FreeWiFi",
                        "detail": "“FreeWiFi” on the air"})
     assert ctx.one("SELECT rule_name FROM alert_log")["rule_name"] == "Networks under investigation"
+
+
+# ----------------------------------------------------------------- DFS / radar
+def test_dfs_radar_events(ctx):
+    s = ctx.store
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
+    mine, nb = "24:a4:3c:00:00:05", "0a:00:00:00:00:07"
+    t = time.time() - 600
+    ap = lambda mac, ssid, ts, ch, csa=None: s.process({"t": "wifi_ap", "ts": ts, "mac": mac, "ssid": ssid, "band": "5",
+                                                         "channel": ch, "csa": csa})
+    ap(mine, "HomeNet", t, 100)
+    for i in range(3):  # CSA repeated in several beacons: one announcement
+        ap(mine, "HomeNet", t + 1 + i, 100, {"mode": 1, "new_channel": 36, "count": 5 - i})
+    for i in range(3):
+        ap(mine, "HomeNet", t + 10 + i, 36)
+    ap(nb, "Buren", t, 52)
+    ap(nb, "Buren", t + 5, 44)  # single stray sighting: not a change
+    ap(nb, "Buren", t + 6, 52)
+    for i in range(3):  # unannounced move off a DFS channel
+        ap(nb, "Buren", t + 20 + i, 149)
+    s.flush()
+    ev = [(r["type"], r["mac"]) for r in ctx.rows(
+        "SELECT type, mac FROM events WHERE type IN ('dfs_radar', 'channel_switch_announced', 'channel_change') ORDER BY id")]
+    assert ev == [("channel_switch_announced", mine), ("dfs_radar", mine), ("channel_change", mine),
+                  ("channel_change", nb), ("dfs_radar", nb)]
+    rows = ctx.rows("SELECT mac, from_ch, to_ch, csa, dfs, mine FROM dfs_events ORDER BY id")
+    assert [(r["from_ch"], r["to_ch"], r["csa"], r["dfs"], r["mine"]) for r in rows] == [(100, 36, 1, 1, 1), (52, 149, 0, 1, 0)]
+    assert ctx.one("SELECT 1 FROM alert_rules WHERE name='Radar (DFS) on my networks'")
+    for mac in (mine, nb):
+        ctx.alerts.handle({"type": "dfs_radar", "mac": mac, "ts": t, "peer": None, "detail": "x"})
+    assert [r["mac"] for r in ctx.rows("SELECT mac FROM alert_log")] == [mine]  # "mine" target
+    from fastapi.testclient import TestClient
+    from yolo.web import create_app
+    ctx.auth.disabled = True
+    d = TestClient(create_app(ctx), base_url="http://yolo.test").get("/api/dfs?days=1").json()
+    per = {c["channel"]: c for c in d["channels"]}
+    assert per[100]["radar"] == 1 and per[52]["radar"] == 1 and per[100]["closed_until"] and d["mine_radar"] == 1

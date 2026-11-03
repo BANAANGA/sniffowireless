@@ -164,7 +164,7 @@ addRoute('/alerts', async (_, params) => {
       const [rules, meta, notifiers, groups] = await Promise.all([api('/api/alert-rules'), alertMeta(),
         isAdmin() ? api('/api/notifiers') : Promise.resolve([]), api('/api/groups')]);
       const nname = Object.fromEntries(notifiers.map(n => [n.id, n.name]));
-      const target = r => ({ any: 'Any device', watchlist: 'Watched devices & groups', unknown: 'Unknown devices',
+      const target = r => ({ any: 'Any device', watchlist: 'Watched devices & groups', unknown: 'Unknown devices', mine: 'My networks',
         macs: `${(r.target.macs || []).length} device(s)`, groups: (r.target.groups || []).map(id => (groups.find(g => g.id === id) || {}).name || id).join(', '),
         kinds: (r.target.kinds || []).map(k => (KINDS[k] || {}).short || typeLabel(k)).join(', ') }[r.target.mode] || r.target.mode);
       el.innerHTML = `<section class="panel"><header><h2>Rules</h2><div class="row">${isAdmin() ? '<a class="btn" href="#/settings?tab=notify">Notification channels</a> <button class="btn primary" id="new-rule">New rule</button>' : ''}</div></header>
@@ -189,7 +189,7 @@ function ruleModal(r, meta, notifiers, groups, done) {
   const form = openModal(r.id ? 'Edit rule' : 'New alert rule', `
     <label class="field">Name<input name="name" value="${esc(r.name)}" required></label>
     <div class="field">Events<div class="checks">${Object.entries(meta.events).map(([k, l]) => `<label class="check"><input type="checkbox" name="ev" value="${k}" ${r.events.includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div></div>
-    <label class="field">Devices<select name="mode">${[['any', 'Any device'], ['watchlist', 'Watched devices & groups'], ['unknown', 'Unknown (not marked known)'], ['macs', 'Specific devices'], ['groups', 'Specific groups'], ['kinds', 'Device types']].map(([v, l]) => `<option value="${v}" ${t.mode === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label class="field">Devices<select name="mode">${[['any', 'Any device'], ['watchlist', 'Watched devices & groups'], ['unknown', 'Unknown (not marked known)'], ['macs', 'Specific devices'], ['groups', 'Specific groups'], ['kinds', 'Device types'], ['mine', 'My networks (access points)']].map(([v, l]) => `<option value="${v}" ${t.mode === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <div class="tgt" data-mode="macs"><label class="field">MAC addresses<textarea name="macs" rows="2">${esc((t.macs || []).join('\n'))}</textarea></label></div>
     <div class="tgt" data-mode="groups"><div class="checks">${groups.map(g => `<label class="check"><input type="checkbox" name="grp" value="${g.id}" ${(t.groups || []).includes(g.id) ? 'checked' : ''}> ${esc(g.name)}</label>`).join('') || '<span class="faint">No groups yet</span>'}</div></div>
     <div class="tgt" data-mode="kinds"><div class="checks">${kindOpts.map(([k, l]) => `<label class="check"><input type="checkbox" name="knd" value="${k}" ${(t.kinds || []).includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div></div>
@@ -280,14 +280,16 @@ addRoute('/channels', async (_, params) => {
         <h3 class="subhead">Best channels</h3><ol class="rank">${(c.recommend[b] || []).slice(0, 3).map(r => `<li><b>ch ${r.channel}</b> <span class="faint">${r.aps} AP${r.aps === 1 ? '' : 's'}${r.utilization != null ? ` · ${Math.round(r.utilization * 100)}% busy` : ''}${r.dfs ? ' · DFS' : ''}${r.note ? ' · ' + r.note : ''}</span></li>`).join('')}</ol></div></section>`; }).join('')}
       <section class="panel span-3"><header><h2>All channels</h2><span class="faint">click a row for its history</span></header><div class="body flush">${tableHtml(
         '<th>Channel</th><th class="num">APs</th><th class="num">Strongest</th><th class="num">Airtime</th><th class="num">Retries</th><th class="num">Noise</th><th class="num">Frames/s</th>',
-        c.channels.map(x => `<tr class="link" data-freq="${x.freq}"><td>${chText(x.channel, x.band)} <span class="faint">${x.freq} MHz</span></td><td class="num">${x.aps}</td><td class="num">${x.strongest != null ? x.strongest + ' dBm' : '—'}</td>
+        c.channels.map(x => `<tr class="link" data-freq="${x.freq}"><td>${chText(x.channel, x.band)} <span class="faint">${x.freq} MHz</span>${x.band === '5' && x.channel >= 52 && x.channel <= 144 ? ' <span class="tag" title="DFS channel: shared with radar">DFS</span>' : ''}</td><td class="num">${x.aps}</td><td class="num">${x.strongest != null ? x.strongest + ' dBm' : '—'}</td>
           <td class="num"><span class="meter"><i style="width:${Math.round((x.utilization || 0) * 100)}%"></i></span> ${x.utilization != null ? Math.round(x.utilization * 100) + '%' : '—'}</td>
           <td class="num">${x.retry_rate != null ? (x.retry_rate * 100).toFixed(1) + '%' : '—'}</td><td class="num muted">${x.noise != null ? x.noise + ' dBm' : '—'}</td><td class="num muted">${x.fps ?? '—'}</td></tr>`).join(''), 'No measurements')}</div></section>
+      <section class="panel span-3" id="dfs"></section>
       <section class="panel span-3" id="intf"></section>
       <section class="panel span-3" id="ch-hist" hidden><header><h2 id="ch-hist-title">History</h2></header><div class="body"><div class="chart-box short"><canvas id="ch-tl"></canvas></div></div></section>
     </div>`;
   onSeg(app, 'hours', v => { location.hash = hrefWith('/channels', { hours: v }); });
   loadInterference(document.getElementById('intf'), Math.max(1, Math.min(30, hours / 24)));
+  loadDfs(document.getElementById('dfs'), Math.max(1, Math.min(30, hours / 24)));
   ['2.4', '5', '6'].forEach(b => {
     const rows = c.channels.filter(x => x.band === b);
     const el = document.getElementById(`ch-${b.replace('.', '')}`);

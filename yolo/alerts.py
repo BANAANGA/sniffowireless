@@ -43,10 +43,12 @@ EVENT_TYPES = {
     "investigated_seen": "Investigated network on the air", "investigated_connect": "Device joined an investigated network",
     "investigated_probe": "Device looked for an investigated network",
     "interference": "Radio interference episode",
+    "dfs_radar": "Radar on a DFS channel (access point had to leave)",
+    "channel_switch_announced": "Access point announced a channel switch", "channel_change": "Access point changed channel",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
             "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
-            "deauth_broadcast": "medium", "new_device": "low"}
+            "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
     "telegram": ["bot_token", "chat_id"],
@@ -69,6 +71,7 @@ DEFAULT_RULES = [
 LATER_RULES = {
     "investigations": ("Networks under investigation",
                        ["investigated_seen", "investigated_connect", "investigated_probe"], {"mode": "any"}, {}),
+    "dfs": ("Radar (DFS) on my networks", ["dfs_radar"], {"mode": "mine"}, {}),
 }
 
 
@@ -142,7 +145,7 @@ def in_schedule(schedule, ts):
     return s <= cur < e if s <= e else (cur >= s or cur < e)  # window may wrap midnight
 
 
-def matches(rule, ev, dev, meta, group):
+def matches(rule, ev, dev, meta, group, mynet=None):
     if ev["type"] not in rule["events"]:
         return False
     t = rule["target"] or {}
@@ -165,6 +168,10 @@ def matches(rule, ev, dev, meta, group):
         gid = int(ev["peer"].split(":")[1]) if (ev.get("peer") or "").startswith("group:") else \
             (meta or {}).get("group_id")
         return gid in (t.get("groups") or [])
+    if mode == "mine":  # my networks' access points (by SSID or trusted BSSID)
+        ssids, bssids = mynet or (set(), set())
+        return ev["mac"] in bssids or bool(dev and dev.get("ssid") in ssids) or \
+            (ev.get("peer") or "").removeprefix("ssid:") in ssids
     if mode == "kinds":
         return bool(dev) and (dev.get("kind") in (t.get("kinds") or []) or dev.get("dev_type") in (t.get("kinds") or []))
     return True
@@ -186,6 +193,8 @@ def describe(ev, dev, meta, group):
         "tracker_following": f"{ev.get('detail') or 'Unknown tracker following someone'}",
         "interference": f"Interference: {ev.get('detail')}",
         "investigated_seen": f"Investigated network: {ev.get('detail')}",
+        "dfs_radar": f"Radar: {ev.get('detail')}", "channel_switch_announced": f"{name} {ev.get('detail')}",
+        "channel_change": f"{name} {ev.get('detail')}",
         "investigated_connect": f"{name} {ev.get('detail')}", "investigated_probe": f"{name} is {ev.get('detail')}",
     }
     lines = [time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
@@ -267,8 +276,10 @@ class AlertEngine:
         meta = ctx.one("SELECT * FROM device_meta WHERE mac=?", (ev["mac"],))
         gid = int(ev["peer"].split(":")[1]) if (ev.get("peer") or "").startswith("group:") else (meta or {}).get("group_id")
         group = ctx.one("SELECT * FROM groups WHERE id=?", (gid,)) if gid else None
+        nets = ctx.settings.get("networks") if ctx.settings else {}
+        mynet = (set(nets.get("ssids") or []), set(nets.get("trusted_bssids") or []))
         for rule in rules:
-            if not matches(rule, ev, dev, meta, group) or not in_schedule(rule["schedule"], ev["ts"]):
+            if not matches(rule, ev, dev, meta, group, mynet) or not in_schedule(rule["schedule"], ev["ts"]):
                 continue
             key = (rule["id"], ev["peer"] if ev["type"].startswith("group_") else ev["mac"], ev["type"])
             if ev["ts"] - self.cooldowns.get(key, 0) < (rule.get("cooldown") or 0):
@@ -438,7 +449,7 @@ def routes(ctx):
         body.schedule = sc
         t = body.target
         mode = t.get("mode", "any")
-        if mode not in ("any", "watchlist", "unknown", "macs", "groups", "kinds"):
+        if mode not in ("any", "watchlist", "unknown", "macs", "groups", "kinds", "mine"):
             raise HTTPException(400, "invalid target mode")
         tgt = {"mode": mode}
         if mode == "macs":

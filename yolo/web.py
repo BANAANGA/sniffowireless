@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (alerts, auth, backup, health, interference, investigate, lan, logs, manage, metrics, reports, search,
+from . import (alerts, auth, backup, dfs, health, interference, investigate, lan, logs, manage, metrics, reports, search,
                security, sensors, status, survey, trackers)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
@@ -91,7 +91,8 @@ def create_app(ctx):
     # ----------------------------------------------------------------- devices
     def device_filters(kind=None, active=0, q=None, vendor=None, ssid=None, probe=None, bssid=None,
                        channel=None, randomized=None, connected=0, band=None, dev_type=None, brand=None,
-                       os=None, wifi_gen=None, era=None, fp=None, known=None, watch=None, group=None):
+                       os=None, wifi_gen=None, era=None, fp=None, known=None, watch=None, group=None,
+                       addr_type=None, company=None):
         where, params = [], []
         if kind:
             ks = [k for k in kind.split(",") if k in KINDS]
@@ -141,6 +142,12 @@ def create_app(ctx):
             where.append("d.era = ?" if era else "d.era IS NULL")
             if era:
                 params.append(era)
+        for path, val in (("$.addr_type", addr_type), ("$.company", company)):  # Bluetooth LE details
+            if val == "Unknown":
+                where.append(f"json_extract(d.extra, '{path}') IS NULL")
+            elif val:
+                where.append(f"json_extract(d.extra, '{path}') = ?")
+                params.append(val)
         if randomized is not None:
             where.append("d.randomized = ?")
             params.append(int(randomized))
@@ -161,9 +168,10 @@ def create_app(ctx):
                 probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
                 connected: int = 0, band: str = None, dev_type: str = None, brand: str = None, os: str = None,
                 wifi_gen: int = None, era: int = None, fp: str = None, known: int = None, watch: int = 0,
-                group: int = None, sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0):
+                group: int = None, addr_type: str = None, company: str = None, sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0):
         where, params = device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected,
-                                       band, dev_type, brand, os, wifi_gen, era, fp, known, watch, group)
+                                       band, dev_type, brand, os, wifi_gen, era, fp, known, watch, group,
+                                       addr_type, company)
         sort = "m.label" if sort == "label" else f"d.{sort if sort in SORTABLE else 'last_seen'}"
         order = "ASC" if order.lower() == "asc" else "DESC"
         limit = max(1, min(limit, 1000))
@@ -315,6 +323,9 @@ def create_app(ctx):
         for col in ("dev_type", "brand", "os", "wifi_gen", "era"):
             out[col] = rows(f"SELECT {col} v, kind, COUNT(*) n FROM devices WHERE last_seen>=? GROUP BY {col}, kind "
                             f"ORDER BY n DESC", (since,))
+        for col, path in (("addr_type", "$.addr_type"), ("company", "$.company")):  # Bluetooth LE only
+            out[col] = rows(f"SELECT json_extract(extra, '{path}') v, kind, COUNT(*) n FROM devices WHERE kind='ble' "
+                            f"AND last_seen>=? GROUP BY v ORDER BY n DESC", (since,))
         out["fingerprints"] = rows(
             "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
             "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
@@ -371,7 +382,7 @@ def create_app(ctx):
 
     # ------------------------------------------------------------------ static
     # investigate before manage: manage's catch-all /api/settings/{key} would otherwise shadow /api/settings/investigate
-    for mod in (auth, investigate, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference,
+    for mod in (auth, investigate, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, dfs,
                 trackers, backup, search, logs):
         app.include_router(mod.routes(ctx))
 

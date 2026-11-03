@@ -67,6 +67,7 @@ def build(cfg):
     from .alerts import AlertEngine
     from .auth import Auth
     from .backup import BackupScheduler, apply_staged_restore
+    from .dfs import DfsMonitor
     from .interference import InterferenceDetector
     from .investigate import InvestigationMonitor
     from .trackers import TrackerMonitor
@@ -95,7 +96,8 @@ def build(cfg):
     ctx.trackers = TrackerMonitor(ctx)
     ctx.backups = BackupScheduler(ctx)
     ctx.investigate = InvestigationMonitor(ctx)
-    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate]
+    ctx.dfs = DfsMonitor(ctx)
+    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs]
     store.listeners.append(ctx.alerts.on_events)
     apply_ignore(ctx)
     apply_meta(ctx)

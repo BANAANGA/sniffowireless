@@ -234,3 +234,15 @@ def test_bt_filter_size_and_extended_scan_fallback():
     import inspect
     src = inspect.getsource(BluetoothSensor._open)
     assert '"<IIIH2x"' in src  # struct hci_ufilter must be 16 bytes on recent kernels
+
+
+def test_beacon_csa_and_ht_primary():
+    # 5 GHz beacon without DS Parameter Set: channel from HT Operation; CSA (IE 37) to channel 36 in 5 beacons.
+    p = frame(Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=AP, addr3=AP)
+              / Dot11Beacon(cap="ESS") / Dot11Elt(ID=0, info=b"Radar") / Dot11Elt(ID=37, info=bytes([1, 36, 5]))
+              / Dot11Elt(ID=61, info=bytes([100]) + bytes(21)))
+    (o,) = parse_frame(p)
+    assert o["channel"] == 100 and o["csa"] == {"mode": 1, "new_channel": 36, "count": 5}
+    p = frame(Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=AP, addr3=AP)
+              / Dot11Beacon(cap="ESS") / Dot11Elt(ID=0, info=b"Radar") / Dot11Elt(ID=60, info=bytes([0, 115, 44, 3])))
+    assert parse_frame(p)[0]["csa"] == {"mode": 0, "op_class": 115, "new_channel": 44, "count": 3}
