@@ -16,6 +16,7 @@ from typing import Annotated, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .appearance import time_format
 from .auth import current_user, require_admin
 from .sanitize import Name, clean_mac, clean_str
 
@@ -177,7 +178,7 @@ def matches(rule, ev, dev, meta, group, mynet=None):
     return True
 
 
-def describe(ev, dev, meta, group):
+def describe(ev, dev, meta, group, time_fmt="%H:%M:%S"):
     name = (meta or {}).get("label") or (dev or {}).get("name") or ((dev or {}).get("ident") or {}).get("label") \
         or (dev or {}).get("ssid") or ev["mac"]
     typ = ev["type"]
@@ -197,7 +198,7 @@ def describe(ev, dev, meta, group):
         "channel_change": f"{name} {ev.get('detail')}",
         "investigated_connect": f"{name} {ev.get('detail')}", "investigated_probe": f"{name} is {ev.get('detail')}",
     }
-    lines = [time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
+    lines = [time.strftime("%Y-%m-%d " + time_fmt, time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:
         idl = (dev.get("ident") or {}).get("label")
         lines.append(" · ".join(x for x in (ev["mac"], idl, dev.get("vendor")) if x))
@@ -285,7 +286,7 @@ class AlertEngine:
             if ev["ts"] - self.cooldowns.get(key, 0) < (rule.get("cooldown") or 0):
                 continue
             self.cooldowns[key] = ev["ts"]
-            title, body = describe(ev, dev, meta, group)
+            title, body = describe(ev, dev, meta, group, time_format(self.ctx, seconds=True))
             self.fire(rule, ev, title, body)
 
     def fire(self, rule, ev, title, body):

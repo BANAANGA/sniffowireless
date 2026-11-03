@@ -10,6 +10,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 
 from .alerts import send
+from .appearance import time_format
 from .auth import current_user, require_admin
 
 log = logging.getLogger("yolo.reports")
@@ -117,7 +118,8 @@ def weekly_summary(ctx):
     groups = ctx.rows("SELECT g.name, COUNT(DISTINCT CAST(s.start_ts/86400 AS INT)) days FROM groups g "
                       "JOIN device_meta m ON m.group_id=g.id JOIN sessions s ON s.mac=m.mac AND s.type='presence' "
                       "AND s.end_ts >= ? GROUP BY g.id ORDER BY g.name", (since,))
-    peak = time.strftime("%a %H:00", time.localtime(s["peak_at"])) if s["peak_at"] else "–"
+    peak = time.strftime("%a " + ("%I %p" if time_format(ctx).startswith("%I") else "%H:00"),
+                         time.localtime(s["peak_at"])) if s["peak_at"] else "–"
     lines = [
         f"People (estimated): {s['unique']} unique, {s['new']} new, average {s['avg_present']} present, "
         f"peak {s['peak']} ({peak})",

@@ -16,6 +16,8 @@ DEFAULTS = {
     "backup": {"enabled": False, "hour": 3, "keep": 7, "last_run": 0},
     # Networks under investigation: [{"ssid", "note", "added"}]
     "investigate": {"ssids": []},
+    # Appearance (admin): app name, icon (built-in glyph or uploaded file) and colours differing from the defaults.
+    "appearance": {"name": "yolo", "icon": "dot", "clock": "auto", "colors": {}, "icon_file": None, "icon_ver": 0},
 }
 
 

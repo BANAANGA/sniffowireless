@@ -26,6 +26,7 @@ addRoute('/logs', async () => {
     <p class="faint small-text">Keeps the last ${snap.capacity.toLocaleString()} lines in memory (also in <code>docker compose logs yolo</code>). Debug level shows details such as Bluetooth command failures; switch back to Info afterwards.</p>`;
 
   const view = document.getElementById('lg');
+  view.style.setProperty('--lg-time', uses12h() ? '16ch' : '13ch');  // "11:48:29.958 PM" vs "23:48:29.958"
   const st = document.getElementById('lg-state');
   const minSel = document.getElementById('lg-min'), srcSel = document.getElementById('lg-src'), qIn = document.getElementById('lg-q');
   const follow = document.getElementById('lg-follow');
@@ -42,8 +43,9 @@ addRoute('/logs', async () => {
     const t = document.createElement('span');
     t.className = 'lg-t';
     const d = new Date(r.ts * 1000);
-    t.textContent = d.toLocaleTimeString([], { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
-    t.title = d.toLocaleString();
+    t.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: uses12h() ? 'h12' : 'h23' })
+      .replace(/(\d\d:\d\d:\d\d)/, `$1.${String(d.getMilliseconds()).padStart(3, '0')}`);
+    t.title = d.toLocaleString([], clockOpts());
     const lv = document.createElement('span');
     lv.className = 'lg-l';
     lv.textContent = r.level;

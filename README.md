@@ -121,7 +121,13 @@ You need an adapter whose Linux driver supports **monitor mode**. In-kernel driv
 
 To see 6 GHz networks you need a **6E-capable adapter** whose driver allows monitor mode on 6 GHz. The best-supported USB option today is the **MT7921AU** (`mt7921u`, kernel ≥ 5.18; ≥ 6.1 recommended). Some Intel AX210/BE200 PCIe cards also work in monitor mode on recent kernels.
 
-1. **Set your regulatory domain.** Most drivers keep 6 GHz disabled until a country is configured. Set `WIFI_REGDOMAIN=NL` (your two-letter country code), or run `sudo iw reg set NL` on the host.
+1. **Set your regulatory domain.** Most drivers keep 6 GHz disabled until a country is configured. Set `WIFI_REGDOMAIN=NL` (your two-letter country code), or run `sudo iw reg set NL` on the host. The host also needs the **`wireless-regdb`** package (`regulatory.db`): without it the kernel can't apply any country, and stays on `00` ("world" rules, which have no 6 GHz). `./scripts/configure.sh` checks all of this and offers to fix it. To run only that check later:
+
+   ```bash
+   ./scripts/configure.sh --regdomain
+   ```
+
+   If the country is still `00` when yolo starts with 6 GHz channels configured, yolo says so in the log and on the Sensors panel. `iw reg get` should list `country NL` (or yours) under `global`; a separate `phy#…` entry is the adapter's own country code, which the kernel combines with the global one.
 2. **Check the adapter can tune 6 GHz.** The command below should list frequencies from 5955 MHz upwards that are not marked `(disabled)`. `(no IR)` is fine, because monitoring is passive.
    ```bash
    iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -E "\* (59[5-9][0-9]|6[0-9]{3}|7[01][0-9]{2})"
@@ -129,6 +135,19 @@ To see 6 GHz networks you need a **6E-capable adapter** whose driver allows moni
 3. **Add 6 GHz channels.** Use `WIFI_CHANNELS=default,6ghz`, or `all`, which covers 2.4 + 5 GHz + the 6 GHz Preferred Scanning Channels. 6 GHz access points always beacon on one of the 15 PSCs (5, 21, 37 … 229), so `6ghz` finds them with far fewer hops than all 59 channels (`6all`).
 
 yolo reads each adapter's supported frequencies at startup and gives 6 GHz channels only to adapters that can tune them. A 2.4/5 GHz adapter and a 6E adapter can therefore share one channel list. 6 GHz clients nearly always use randomized MACs (WPA3 + MAC privacy are mandatory there), but connection sessions are still tracked per network.
+
+**Channel tunes but no 6 GHz networks show up?** The Sensors panel on the Overview lists the frames received per band (`frames 2.4G … · 5G … · 6G …`). Then run the diagnostic on the machine with the adapter. It tunes each 6 GHz channel, listens for a few seconds, and prints frames, beacons, access points, SSIDs and the frequency the driver reported:
+
+```bash
+docker compose stop yolo
+docker compose run --rm yolo python -m yolo.diag            # 6 GHz PSCs on the first WIFI_INTERFACES adapter
+docker compose run --rm yolo python -m yolo.diag wlan1 --channels 6g:37 --dwell 10
+docker compose start yolo
+```
+
+- **0 frames everywhere:** the driver or firmware doesn't receive on 6 GHz in monitor mode. Update the kernel (≥ 6.1) and `linux-firmware`, and check the antennas.
+- **Frames but the driver reports another band:** some mt76 builds label 6 GHz frames as 5 GHz (channel 37 → 5185 MHz). yolo now uses the tuned frequency in that case, and the Sensors panel counts the corrected frames.
+- **Beacons on one channel only:** normal. An access point beacons on its primary 20 MHz channel only, even at 160/320 MHz.
 
 > **Don't use the adapter your host relies on for its own network.** Putting it in monitor mode disconnects it. Use a dedicated USB adapter. Two adapters (for example one locked to 2.4 GHz and one hopping 5 GHz) give much better coverage than one adapter that hops across everything.
 
@@ -484,7 +503,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - DNS lookups, events, alerts, security findings and sensors
 
   Results appear as you type; use the arrow keys and Enter to open one, or press Enter for the full results page with a filter per record type.
-- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band, plus Bluetooth & LAN), *By type* shows all device types in one chart, currently connected clients with the network they're on, sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
+- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band, plus Bluetooth & LAN), *By type* shows all device types in one chart, currently connected clients with the network they're on, a **System** panel (host CPU use and load average, memory use, database size and free space on the data disk, plus yolo's own CPU and memory), sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
 - **Devices:** a searchable, sortable list showing what each device was identified as. Filter by radio type, device type, recency or band (2.4 / 5 / 6 GHz), and hide randomized MACs. Drill-downs add filters for brand, OS, Wi-Fi generation, age and probe fingerprint. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
   - key facts, total time present, visits, average and longest visit, time connected
@@ -495,7 +514,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - for APs: **connected clients over time**, the client list, and other BSSIDs with the same SSID
   - for clients: the APs/networks it connected to, with session counts and total time, and the SSIDs it probes for
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
-- **Statistics:** a **Breakdown** of doughnut charts per radio type (BLE by default; also Wi-Fi clients, Bluetooth classic, access points, LAN). Each shows device type, vendor, brand and OS, and for BLE also the address type (public, random static, private) and the Bluetooth company. The top five values get a slice each, the rest is folded into a gray *Other*. Every slice and legend row has its count and share, and clicking one opens the matching devices. Below that: device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (BSSIDs, clients, security), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
+- **Statistics:** a **Breakdown** of doughnut charts per radio type (BLE by default; also Wi-Fi clients, Bluetooth classic, access points, LAN). Each shows device type, vendor, brand and OS, and for BLE also the address type (public, random static, private) and the Bluetooth company. The top five values get a slice each, the rest is folded into a gray *Other*. Every slice and legend row has its count and share, and clicking one opens the matching devices. Below that: device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (the 20 most recently seen networks, expandable to 100; BSSIDs, clients, security, last seen), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
 - **Logs** (admins only): the application log, live. New lines stream in as they happen. You can:
   - filter by level, source module or text, pause, follow or wrap lines
@@ -523,6 +542,18 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
 - **Settings:**
   - account (password), users, my networks, ignore list, sensors
   - notification channels, weekly report, detection thresholds, API tokens
+
+### Tables and phones
+
+Every table can be sorted by clicking a column header (click again to reverse); the choice is remembered while you stay on the page, also when the table refreshes. The device list sorts on the server, so it sorts all devices, not just the visible page.
+
+On a phone the sidebar becomes a top bar with search and a menu button, cards sit two per row, wide tables scroll sideways and dialogs use the full width.
+
+### Appearance
+
+Admins can change the look under **Settings → Appearance**: the app name, the default **time format** (automatic from the browser language, 24-hour or 12-hour; also used in notifications and the weekly report), the icon (a few built-in glyphs or an uploaded square PNG/JPEG/WebP up to 256 kB, also used as the browser-tab icon) and the colours of surfaces, text, device types and status. Presets (*Slate*, *Forest*, *High contrast*) are a starting point; changes preview immediately and apply to everyone, including the sign-in page, once saved. *Reset to default* brings back the stock dark palette. The appearance is part of configuration backups; an uploaded icon is included in full backups.
+
+Each user can override the time format for their own browser under **Settings → Account → Display**.
 
 ### Ignore list
 
@@ -795,7 +826,8 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/devices/{mac}/heatmap?days=28&tz=` | Weekday × hour presence matrix |
 | `GET /api/stats?days=7` | All statistics shown on the Statistics page |
 | `GET /api/events?type=&mac=&kind=&before=` | Event log |
-| `GET /api/status` | Sensor and store health |
+| `GET /api/status` | Sensor and store health, host CPU / memory, database and disk size |
+| `GET /api/appearance` · `PUT /api/appearance` · `POST`/`DELETE /api/appearance/icon` | App name, icon and colours (read without login; changes admin only) |
 | `GET /api/export/devices.csv`, `/api/export/sessions.csv?days=7` | CSV export |
 | `GET /api/search?q=&section=&limit=` | Search all records (devices, groups, networks, probes, dns, events, alerts, findings, sensors) |
 | `GET /api/matching` · `GET /api/devices/{mac}/matches` · `POST /api/links` · `DELETE /api/links/{a}/{b}` | Bluetooth↔Wi-Fi match suggestions, per-device matches, and confirming/rejecting/removing a link (admin) |
@@ -889,6 +921,8 @@ yolo/
   trackers.py   unknown tracker-tag ("following") detection
   backup.py     configuration / full backups, staged restore, scheduler
   logs.py       in-memory log buffer, live log stream, runtime log level
+  appearance.py admin-customisable app name, icon and colours
+  sysinfo.py    host CPU / memory, database and disk figures for the overview
   investigate.py  networks under investigation (events, dossiers) and the SSID catalogue for pickers
   matching.py   Bluetooth ↔ Wi-Fi same-device matching and links
   reports.py    occupancy analytics and weekly email

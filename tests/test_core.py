@@ -256,3 +256,36 @@ def test_identify_bikes():
     r = identify({"kind": "ble", "extra": {"fp": {"ble": {"uuids": ["1816"]}}}})
     assert r["dev_type"] == "bike"
     assert identify({"kind": "ble", "name": "Cowboy 4", "extra": {}})["brand"] == "Cowboy"
+
+
+def test_6ghz_mislabelled_by_driver():
+    from yolo.wifi import radio_freq
+
+    def beacon(present, **rt):
+        p = RadioTap(present=present, dBm_AntSignal=-60, **rt) / \
+            Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=AP, addr3=AP) / \
+            Dot11Beacon(cap="ESS") / Dot11Elt(ID=0, info=b"Six")
+        p = RadioTap(bytes(p))
+        p.time = 1000.0
+        return p
+    # driver puts 6 GHz channel 37 in the 5 GHz band (5185 MHz): the tuned frequency wins
+    (o,) = parse_frame(beacon("Channel+dBm_AntSignal", ChannelFrequency=5185), tuned=6135)
+    assert (o["band"], o["channel"], o["freq"], o["ssid"]) == ("6", 37, 6135, "Six")
+    # no frequency in radiotap at all
+    (o,) = parse_frame(beacon("dBm_AntSignal"), tuned=6135)
+    assert (o["band"], o["channel"]) == ("6", 37)
+    # a genuine frame from another channel (straggler after a hop) is left alone
+    assert radio_freq(5180, 6135) == 5180 and radio_freq(6135, 6135) == 6135 and radio_freq(2437, None) == 2437
+
+
+def test_regulatory_warning(monkeypatch):
+    from yolo import wifi
+    out = "global\ncountry 00: DFS-UNSET\n\t(2402 - 2472 @ 40), (6, 20), (N/A)\n\nphy#1\ncountry US: DFS-FCC\n"
+    monkeypatch.setattr(wifi, "run_cmd", lambda *a: (0, out))
+    assert wifi.global_regdomain() == "00"
+    w = wifi.regulatory_warning("00", "NL", True)
+    assert "still 00" in w and "wireless-regdb" in w
+    assert "Set WIFI_REGDOMAIN" in wifi.regulatory_warning("00", "", True)
+    assert wifi.regulatory_warning("00", "NL", False) is None  # no 6 GHz configured: nothing to warn about
+    assert wifi.regulatory_warning("NL", "NL", True) is None
+    assert "was not applied" in wifi.regulatory_warning("US", "NL", True)

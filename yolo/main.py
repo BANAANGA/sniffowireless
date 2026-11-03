@@ -13,10 +13,18 @@ def start_sensors(cfg, sink, stop):
     """Start Wi-Fi / Bluetooth capture; `sink` is the Store (server) or a Forwarder (remote sensor)."""
     n = 0
     if cfg.wifi_interfaces:
-        from .config import chan_label
-        from .wifi import WifiSensor, assign_channels, set_regdomain, supported_freqs
+        from .config import band_of, chan_label
+        from . import status
+        from .wifi import (WifiSensor, assign_channels, global_regdomain, regulatory_warning, set_regdomain,
+                           supported_freqs)
         if cfg.wifi_regdomain:
             set_regdomain(cfg.wifi_regdomain)
+            time.sleep(2)  # the kernel applies a new regulatory domain asynchronously
+        want6 = any(band_of(f) == "6" for f in cfg.wifi_channels) or \
+            any(band_of(f) == "6" for chans in cfg.wifi_channels_per_iface.values() for f in chans)
+        reg_warning = regulatory_warning(global_regdomain(), cfg.wifi_regdomain, want6)
+        if reg_warning:
+            log.warning(reg_warning)
         # Split the channel list between adapters (unless given per interface), only handing
         # each channel to adapters whose hardware/regulatory domain allows it.
         auto = [i for i in cfg.wifi_interfaces if i not in cfg.wifi_channels_per_iface]
@@ -28,9 +36,17 @@ def start_sensors(cfg, sink, stop):
                 if missing:
                     log.info("%s cannot tune %d configured channels (%s...)", iface, len(missing),
                              ",".join(missing[:6]))
+                six = [f for f in cfg.wifi_channels if band_of(f) == "6"]
+                if six and not any(f in supported[iface] for f in six):
+                    log.warning("%s: none of the %d configured 6 GHz channels is usable: the adapter has no 6 GHz "
+                                "support or the regulatory domain disables it (set WIFI_REGDOMAIN; check "
+                                "'iw reg get' and 'iw phy' on the host)", iface, len(six))
         for iface in cfg.wifi_interfaces:
             chans = cfg.wifi_channels_per_iface.get(iface) or plan.get(iface) or cfg.wifi_channels
-            WifiSensor(iface, chans, cfg, sink).start(stop)
+            sensor = WifiSensor(iface, chans, cfg, sink)
+            if reg_warning:
+                status.update(sensor.name, warning=reg_warning)
+            sensor.start(stop)
             log.info("Wi-Fi sensor on %s, channels %s", iface, ",".join(chan_label(f) for f in chans))
             n += 1
     if cfg.eth_interfaces:

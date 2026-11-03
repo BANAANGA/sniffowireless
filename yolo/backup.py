@@ -150,7 +150,7 @@ def create_full_backup(ctx, dest_dir=None):
         with tarfile.open(path + ".part", "w:gz") as tar:
             tar.add(snap, arcname="yolo.db")
             for f in os.listdir(ctx.cfg.data_dir):
-                if f.startswith("floorplan."):
+                if f.startswith(("floorplan.", "appicon.")):
                     tar.add(os.path.join(ctx.cfg.data_dir, f), arcname=f"files/{f}")
             data = json.dumps(manifest).encode()
             info = tarfile.TarInfo("manifest.json")

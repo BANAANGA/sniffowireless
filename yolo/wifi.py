@@ -113,17 +113,32 @@ def _radio(pkt):
     return rssi, freq
 
 
-def parse_frame(pkt, fp_gate=None):
+def radio_freq(rt_freq, tuned):
+    """The frequency a frame was received on. Normally the radiotap value, but some drivers (seen with mt76 on
+    6 GHz) report the right channel number in the wrong band (6 GHz ch 37 as 5185 MHz) or no frequency at all;
+    then the frequency the radio is tuned to is used."""
+    if not tuned:
+        return rt_freq
+    if not rt_freq:
+        return tuned
+    if band_of(rt_freq) != band_of(tuned) and freq_to_channel(rt_freq) == freq_to_channel(tuned):
+        return tuned
+    return rt_freq
+
+
+def parse_frame(pkt, fp_gate=None, tuned=None):
     """Turn one captured 802.11 frame into zero or more store observations.
 
     Management frames carrying capability elements also get a device fingerprint ('fp'),
     subject to `fp_gate(mac, source, ts)` so busy devices aren't re-parsed on every frame.
+    `tuned` is the frequency the radio is tuned to (used when the driver mislabels the frame's frequency).
     """
     if not pkt.haslayer(Dot11):
         return []
     d = pkt[Dot11]
     ts = float(pkt.time)
     rssi, freq = _radio(pkt)
+    freq = radio_freq(freq, tuned)
     a1 = d.addr1.lower() if d.addr1 else None
     a2 = d.addr2.lower() if d.addr2 else None
     a3 = d.addr3.lower() if d.addr3 else None
@@ -303,6 +318,32 @@ def set_regdomain(country):
         log.info("Regulatory domain set to %s", country)
 
 
+def global_regdomain():
+    """The kernel's global regulatory country ('00' = world rules), or None if `iw reg get` fails."""
+    rc, out = run_cmd("iw", "reg", "get")
+    if rc != 0:
+        return None
+    m = re.search(r"global\s*\n\s*country (\w\w):", out)
+    return m.group(1) if m else None
+
+
+def regulatory_warning(country, wanted, want_6ghz):
+    """Explain a regulatory domain that blocks 6 GHz; None when it is fine."""
+    if country is None or not want_6ghz:
+        return None
+    if country == "00":
+        if wanted:
+            return (f"Regulatory domain is still 00 (world rules) although WIFI_REGDOMAIN={wanted}, so 6 GHz is "
+                    "disabled. The host is most likely missing the wireless-regdb package (regulatory.db); install "
+                    "it and reboot, or run ./scripts/configure.sh on the host.")
+        return ("Regulatory domain is 00 (world rules), so 6 GHz is disabled. Set WIFI_REGDOMAIN to your country "
+                "code (e.g. NL) in .env, or run ./scripts/configure.sh on the host.")
+    if wanted and country != wanted:
+        return (f"WIFI_REGDOMAIN={wanted} was not applied: the kernel reports country {country}. Check "
+                "'iw reg get' on the host (another tool may be setting the country).")
+    return None
+
+
 class WifiSensor:
     def __init__(self, iface, channels, cfg, store):
         self.iface, self.channels, self.cfg, self.store = iface, list(channels), cfg, store
@@ -311,6 +352,8 @@ class WifiSensor:
         self.packets = 0
         self.fp_gate = FingerprintGate()
         self.cur_freq = None
+        self.band_frames = {}  # band -> frames received (after any frequency correction)
+        self.relabelled = 0    # frames whose radiotap frequency was corrected to the tuned one
         self.acc = {}  # freq -> [frames, bytes, airtime_us, retries, noise_sum, noise_cnt] for the channel survey
         self.stop = None
         status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
@@ -356,8 +399,21 @@ class WifiSensor:
             self._measure(pkt)
         except Exception:
             pass
+        tuned = self.cur_freq
         try:
-            for o in parse_frame(pkt, self.fp_gate):
+            rt = _radio(pkt)[1]
+            f = radio_freq(rt, tuned)
+            if f != rt and rt:
+                self.relabelled += 1
+                if self.relabelled == 1:
+                    log.warning("%s: driver reports %s MHz while tuned to %s MHz; using the tuned frequency "
+                                "(known with some mt76 drivers on 6 GHz)", self.name, rt, tuned)
+            b = band_of(f) or "?"
+            self.band_frames[b] = self.band_frames.get(b, 0) + 1
+        except Exception:
+            pass
+        try:
+            for o in parse_frame(pkt, self.fp_gate, tuned):
                 self.store.put(o)
         except Exception:
             log.debug("Failed to parse frame", exc_info=True)
@@ -421,5 +477,6 @@ class WifiSensor:
         last, last_t = 0, time.time()
         while not self.stop.wait(5):
             now = time.time()
-            status.update(self.name, packets=self.packets, pps=round((self.packets - last) / (now - last_t), 1))
+            status.update(self.name, packets=self.packets, pps=round((self.packets - last) / (now - last_t), 1),
+                          band_frames=dict(self.band_frames), relabelled=self.relabelled)
             last, last_t = self.packets, now

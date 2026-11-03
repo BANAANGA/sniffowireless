@@ -11,8 +11,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (alerts, auth, backup, dfs, health, interference, investigate, lan, logs, manage, matching, metrics, reports,
-               search, security, sensors, status, survey, trackers)
+from . import (alerts, appearance, auth, backup, dfs, health, interference, investigate, lan, logs, manage, matching, metrics,
+               reports, search, security, sensors, status, survey, sysinfo, trackers)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -50,6 +50,7 @@ def create_app(ctx):
     @app.get("/api/status", dependencies=[Depends(current_user)])
     def get_status():
         return {"sensors": status.snapshot(), "store": store.stats(), "demo": cfg.demo, "now": time.time(),
+                "system": sysinfo.snapshot(cfg.db_path, cfg.data_dir),
                 "config": {"active_window": cfg.active_window, "wifi_session_timeout": cfg.wifi_session_timeout,
                            "bt_session_timeout": cfg.bt_session_timeout, "retention_days": cfg.retention_days}}
 
@@ -293,17 +294,21 @@ def create_app(ctx):
         out = {"days": days}
         out["vendors"] = rows("SELECT COALESCE(vendor,'Unknown') vendor, kind, COUNT(*) n FROM devices "
                               "WHERE last_seen>=? GROUP BY vendor, kind ORDER BY n DESC", (since,))
+        out["ssid_total"] = one("SELECT COUNT(DISTINCT ssid) n FROM devices WHERE kind='ap' AND ssid IS NOT NULL "
+                                "AND ssid != '' AND last_seen>=?", (since,))["n"]
+        # The 100 most recently seen networks (the page shows 20 and expands to 100).
         ssids = rows("SELECT ssid, COUNT(*) aps, GROUP_CONCAT(DISTINCT CASE band WHEN '6' THEN '6G:' || channel "
                      "ELSE channel END) channels, GROUP_CONCAT(DISTINCT band) bands, "
-                     "GROUP_CONCAT(DISTINCT enc) enc, MAX(last_rssi) rssi FROM devices "
-                     "WHERE kind='ap' AND ssid IS NOT NULL AND ssid != '' AND last_seen>=? GROUP BY ssid", (since,))
+                     "GROUP_CONCAT(DISTINCT enc) enc, MAX(last_rssi) rssi, MAX(last_seen) last_seen FROM devices "
+                     "WHERE kind='ap' AND ssid IS NOT NULL AND ssid != '' AND last_seen>=? GROUP BY ssid "
+                     "ORDER BY last_seen DESC LIMIT 100", (since,))
         clients = {r["ssid"]: r for r in rows(
             "SELECT a.ssid, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions FROM sessions s "
             "JOIN devices a ON a.mac=s.peer WHERE s.type='assoc' AND s.end_ts>=? GROUP BY a.ssid", (since,))}
         for s in ssids:
             c = clients.get(s["ssid"], {})
             s["clients"], s["sessions"] = c.get("clients", 0), c.get("sessions", 0)
-        out["ssids"] = sorted(ssids, key=lambda s: (-s["clients"], -s["aps"]))
+        out["ssids"] = ssids
         out["probes"] = rows("SELECT ssid, COUNT(DISTINCT mac) clients, SUM(count) frames, "
                              "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "
                              "FROM probes p WHERE last_seen>=? GROUP BY ssid ORDER BY clients DESC LIMIT 50", (since,))
@@ -399,7 +404,7 @@ def create_app(ctx):
 
     # ------------------------------------------------------------------ static
     # investigate before manage: manage's catch-all /api/settings/{key} would otherwise shadow /api/settings/investigate
-    for mod in (auth, investigate, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, dfs,
+    for mod in (auth, appearance, investigate, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, dfs,
                 trackers, backup, search, logs, matching):
         app.include_router(mod.routes(ctx))
 

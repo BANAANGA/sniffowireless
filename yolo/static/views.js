@@ -435,7 +435,7 @@ addRoute('/reports', async (_, params) => {
   const rcfg = await api('/api/settings/report');
   app.innerHTML = `<div class="page-head"><div><h1>Occupancy report</h1><div class="sub">${dt(r.since)} – ${dt(r.until)}</div></div>
     <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} <button class="btn" id="print">Print / PDF</button>${isAdmin() ? ' <button class="btn" id="send-now">Email weekly report now</button>' : ''}</div></div>
-    <div class="grid cols-4">${[['People (estimated)', s.unique, `${s.new} new`], ['Average present', s.avg_present, 'per hour'], ['Peak', s.peak, s.peak_at ? new Date(s.peak_at * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : ''],
+    <div class="grid cols-4">${[['People (estimated)', s.unique, `${s.new} new`], ['Average present', s.avg_present, 'per hour'], ['Peak', s.peak, s.peak_at ? new Date(s.peak_at * 1000).toLocaleString([], clockOpts({ weekday: 'short', hour: '2-digit', minute: '2-digit' })) : ''],
       ['Median visit', dur(s.median_dwell), 'per person per day']].map(([l, v, m]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div><div class="meta">${esc(m)}</div></div>`).join('')}</div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-3"><header><h2>People present per hour</h2></header><div class="body"><div class="chart-box"><canvas id="occ"></canvas></div></div></section>
@@ -451,14 +451,14 @@ addRoute('/reports', async (_, params) => {
   chart(document.getElementById('occ'), { type: 'line', data: { datasets: [{ label: 'People', data: r.t.map((x, i) => ({ x, y: r.series[i] })), borderColor: KINDS.wifi_client.color, backgroundColor: KINDS.wifi_client.color + '22', fill: true, stepped: true, pointRadius: 0, borderWidth: 1.5 }] },
     options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { x: { ...timeScale(days * 86400), min: r.t[0], max: r.t[r.t.length - 1] }, y: yScale() }, plugins: { tooltip: { callbacks: { title: i => dt(i[0].parsed.x) } } } } });
   const max = Math.max(1, ...r.heat.flat());
-  let html = '<div class="heat"><span></span>' + Array.from({ length: 24 }, (_, i) => `<span class="h">${i % 3 === 0 ? i : ''}</span>`).join('');
-  r.heat.forEach((row, di) => { html += `<span class="d">${WEEKDAYS[di]}</span>` + row.map((v, hi) => `<span class="cell" title="${WEEKDAYS[di]} ${hi}:00 — ${v} people" style="${v ? `background:${KINDS.wifi_client.color};opacity:${(0.15 + 0.85 * v / max).toFixed(2)}` : ''}"></span>`).join(''); });
+  let html = '<div class="heat"><span></span>' + Array.from({ length: 24 }, (_, i) => `<span class="h">${i % 3 === 0 ? hourLabel(i, true) : ''}</span>`).join('');
+  r.heat.forEach((row, di) => { html += `<span class="d">${WEEKDAYS[di]}</span>` + row.map((v, hi) => `<span class="cell" title="${WEEKDAYS[di]} ${hourLabel(hi)} — ${v} people" style="${v ? `background:${KINDS.wifi_client.color};opacity:${(0.15 + 0.85 * v / max).toFixed(2)}` : ''}"></span>`).join(''); });
   document.getElementById('occ-heat').innerHTML = html + '</div>';
 });
 
 // ===================================================================== settings
 const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'],
-  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['tokens', 'API tokens'], ['backup', 'Backup']];
+  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance']];
 
 addRoute('/settings', async (_, params) => {
   const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore'].includes(k));
@@ -475,7 +475,19 @@ const SETTINGS_VIEWS = {
       <form id="pw" class="form-narrow"><label class="field">Current password<input type="password" name="current" autocomplete="current-password" required></label>
       <label class="field">New password<input type="password" name="password" autocomplete="new-password" minlength="10" required></label>
       <label class="field">Repeat new password<input type="password" name="password2" autocomplete="new-password" required></label>
-      <button class="btn primary">Change password</button> <span class="faint small-text">You'll be signed out everywhere.</span></form></div></section>`;
+      <button class="btn primary">Change password</button> <span class="faint small-text">You'll be signed out everywhere.</span></form></div></section>
+      <section class="panel" style="margin-top:16px"><header><h2>Display</h2></header><div class="body">
+      <label class="field form-narrow">Time format on this browser<select id="my-clock"></select></label>
+      <p class="faint small-text" style="margin:0">Only for this browser. Notifications and reports use the default set by an admin under Appearance.</p></div></section>`;
+    const clockSel = el.querySelector('#my-clock');
+    let mine = '';
+    try { mine = localStorage.getItem('yolo.clock') || ''; } catch { /* private mode */ }
+    const def = (CLOCK_CHOICES.find(([v]) => v === ((APPEARANCE && APPEARANCE.clock) || 'auto')) || CLOCK_CHOICES[0])[1];
+    clockSel.innerHTML = [['', `Use the default — ${def}`], ...CLOCK_CHOICES].map(([v, l]) => `<option value="${v}" ${mine === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    clockSel.onchange = () => {
+      try { if (clockSel.value) localStorage.setItem('yolo.clock', clockSel.value); else localStorage.removeItem('yolo.clock'); } catch { /* private mode */ }
+      toast(`Times now shown as ${uses12h() ? '12-hour' : '24-hour'} · ${dt(Date.now() / 1000, false)}`);
+    };
     el.querySelector('#pw').onsubmit = async e => {
       e.preventDefault();
       const f = e.target;
