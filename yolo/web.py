@@ -9,11 +9,11 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alerts, auth, health, manage, metrics, reports, security, sensors, status, survey
+from . import alerts, auth, health, lan, manage, metrics, reports, security, sensors, status, survey
 from .auth import current_user
 from .web_util import overlap_counts
 
-KINDS = ("ap", "wifi_client", "ble", "bt_classic")
+KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
             "name", "ssid", "kind", "channel", "band", "brand", "model", "dev_type", "os", "wifi_gen", "era"}
 
@@ -94,8 +94,8 @@ def create_app(ctx):
         if q:
             like = f"%{q.strip()}%"
             where.append("(d.mac LIKE ? OR d.name LIKE ? OR d.ssid LIKE ? OR d.vendor LIKE ? OR d.brand LIKE ? "
-                         "OR d.model LIKE ? OR m.label LIKE ? OR m.notes LIKE ?)")
-            params += [like] * 8
+                         "OR d.model LIKE ? OR m.label LIKE ? OR m.notes LIKE ? OR d.ip LIKE ?)")
+            params += [like] * 9
         if vendor:
             if vendor == "Unknown":
                 where.append("d.vendor IS NULL")
@@ -359,7 +359,7 @@ def create_app(ctx):
                                                (time.time() - days * 86400,)))
 
     # ------------------------------------------------------------------ static
-    for mod in (auth, manage, alerts, security, survey, health, metrics, sensors, reports):
+    for mod in (auth, manage, alerts, security, survey, health, metrics, sensors, reports, lan):
         app.include_router(mod.routes(ctx))
 
     @app.get("/login")

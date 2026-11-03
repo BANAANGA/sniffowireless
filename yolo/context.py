@@ -8,7 +8,7 @@ from .store import connect
 class Ctx:
     def __init__(self, cfg, store, settings=None):
         self.cfg, self.store, self.settings = cfg, store, settings
-        self.auth = self.alerts = self.security = self.survey = self.location = self.reports = None
+        self.auth = self.alerts = self.security = self.survey = self.location = self.reports = self.lan = None
 
     def db(self):
         return connect(self.cfg.db_path, readonly=True)

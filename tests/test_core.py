@@ -203,4 +203,5 @@ def test_store_identifies_and_hashes(tmp_path):
     s.flush()
     rows = s.conn.execute("SELECT brand, dev_type, wifi_gen, fp_hash FROM devices").fetchall()
     assert len({r["fp_hash"] for r in rows}) == 1 and rows[0]["brand"] == "Apple" and rows[0]["dev_type"] == "phone"
-    assert s.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()[0] == "1"
+    from yolo.identify import IDENT_VERSION
+    assert s.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()[0] == str(IDENT_VERSION)

@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS sensors(
   id TEXT PRIMARY KEY, name TEXT, room TEXT, x REAL, y REAL, token_id INTEGER, created REAL, last_seen REAL,
   info TEXT);
 """
-ALLOWED_OBS = {"wifi_ap", "wifi_client", "bt", "bt_conn", "event", "chan"}
+ALLOWED_OBS = {"wifi_ap", "wifi_client", "bt", "bt_conn", "event", "chan", "lan", "lan_traffic", "dhcp_server"}
 SIGHTING_WINDOW = 120     # use sightings from the last N seconds for location
 ROOM_HYSTERESIS_DB = 4    # stay in the current room unless another sensor is this much stronger
 

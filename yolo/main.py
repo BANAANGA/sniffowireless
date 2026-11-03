@@ -32,6 +32,12 @@ def start_sensors(cfg, sink, stop):
             WifiSensor(iface, chans, cfg, sink).start(stop)
             log.info("Wi-Fi sensor on %s, channels %s", iface, ",".join(chan_label(f) for f in chans))
             n += 1
+    if cfg.eth_interfaces:
+        from .ethernet import EthernetSensor
+        for iface in cfg.eth_interfaces:
+            EthernetSensor(iface, cfg, sink).start(stop)
+            log.info("Ethernet sensor on %s (promiscuous=%s)", iface, cfg.eth_promisc)
+            n += 1
     if cfg.bt_devices:
         from .bluetooth import BluetoothSensor
         for dev in cfg.bt_devices:
@@ -47,7 +53,7 @@ def run_sensor(cfg):
     stop = threading.Event()
     fwd = Forwarder(cfg)
     if not start_sensors(cfg, fwd, stop):
-        raise SystemExit("Sensor mode needs WIFI_INTERFACES and/or BT_DEVICES")
+        raise SystemExit("Sensor mode needs WIFI_INTERFACES, ETH_INTERFACES and/or BT_DEVICES")
     log.info("Remote sensor forwarding to %s", cfg.server_url)
     try:
         fwd.run(stop)
@@ -60,6 +66,7 @@ def build(cfg):
     from .alerts import AlertEngine
     from .auth import Auth
     from .context import Ctx
+    from .lan import LanMonitor
     from .manage import apply_ignore, apply_meta
     from .reports import ReportScheduler
     from .security import SecurityMonitor
@@ -76,7 +83,8 @@ def build(cfg):
     ctx.survey = SurveyCollector(ctx)
     ctx.location = LocationTracker(ctx)
     ctx.reports = ReportScheduler(ctx)
-    store.hooks += [ctx.security, ctx.survey, ctx.location]
+    ctx.lan = LanMonitor(ctx)
+    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan]
     store.listeners.append(ctx.alerts.on_events)
     apply_ignore(ctx)
     apply_meta(ctx)
@@ -105,7 +113,7 @@ def main():
         threading.Thread(target=demo.run, args=(stop,), daemon=True, name="demo").start()
         log.info("Demo mode enabled: generating synthetic devices")
     if not start_sensors(cfg, store, stop) and not cfg.demo:
-        log.warning("No local sensors configured: set WIFI_INTERFACES and/or BT_DEVICES, add remote sensors in "
+        log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES and/or BT_DEVICES, add remote sensors in "
                     "Settings → Sensors, or use DEMO_MODE=1")
 
     writer = threading.Thread(target=store.run, args=(stop,), name="store")

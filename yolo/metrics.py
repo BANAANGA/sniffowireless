@@ -73,6 +73,13 @@ def render(ctx):
               sensor=s["name"])
         o.add("yolo_sensor_pps", s.get("pps") or 0, "Frames per second", sensor=s["name"])
         o.add("yolo_sensor_up", int(s.get("state") not in ("error", "offline")), "Sensor healthy", sensor=s["name"])
+    for r in ctx.rows("SELECT t.mac, COALESCE(m.label, d.name, d.ip, t.mac) label, SUM(t.bytes_out) o, SUM(t.bytes_in) i "
+                      "FROM lan_traffic t LEFT JOIN devices d ON d.mac=t.mac LEFT JOIN device_meta m ON m.mac=t.mac "
+                      "WHERE t.minute >= ? GROUP BY t.mac ORDER BY o + i DESC LIMIT 50", (now - 3600,)):
+        o.add("yolo_lan_bytes_1h", r["o"] or 0, "LAN bytes sent/received in the last hour (top 50 devices)",
+              mac=r["mac"], label=r["label"], direction="out")
+        o.add("yolo_lan_bytes_1h", r["i"] or 0, "LAN bytes sent/received in the last hour (top 50 devices)",
+              mac=r["mac"], label=r["label"], direction="in")
     st = ctx.store.stats()
     o.add("yolo_store_queue", st["queue"], "Observations waiting to be processed")
     o.add("yolo_store_dropped_total", st["dropped"], "Observations dropped because the queue was full", "counter")

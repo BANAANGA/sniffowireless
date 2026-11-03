@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-IDENT_VERSION = 1
+IDENT_VERSION = 2
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -18,6 +18,7 @@ TYPE_LABELS = {
     "sensor": "Sensor", "iot": "IoT device", "light": "Smart light", "input": "Keyboard / mouse",
     "car": "Car", "router": "Router / access point", "hotspot": "Mobile hotspot", "smart_home": "Smart home",
     "beacon": "Beacon", "sbc": "Single-board computer", "media": "Media device", "network": "Network device",
+    "nas": "NAS / storage", "server": "Server",
 }
 WIFI_GEN_YEAR = {4: 2009, 5: 2013, 6: 2019, 7: 2024}
 WIFI_6E_YEAR = 2021
@@ -231,6 +232,138 @@ def merge_ble(old, new):
     return m
 
 
+# ---------------------------------------------------------------- LAN (Ethernet) rules
+DHCP_VENDOR_RULES = [  # (regex on DHCP option 60, os, type, brand, confidence)
+    (r"^MSFT", "Windows", None, None, 85), (r"^android-dhcp-(\d+)", "Android {0}", "phone", None, 90),
+    (r"^dhcpcd", "Linux / Android", None, None, 50), (r"^udhcp", "Embedded Linux (BusyBox)", "iot", None, 60),
+    (r"^HUAWEI", "Android", "phone", "Huawei", 70), (r"^Cisco", None, "network", "Cisco", 70),
+    (r"^PS[45]|^PlayStation", None, "console", "Sony", 85), (r"^Nintendo", None, "console", "Nintendo", 85),
+    (r"^Hewlett-Packard|^HP ", None, "printer", "HP", 70), (r"^ESP32|^espressif", None, "iot", "Espressif", 80),
+]
+DHCP_VENDOR_RULES = [(re.compile(r, re.I), *rest) for r, *rest in DHCP_VENDOR_RULES]
+DHCP_PRL_RULES = [  # (option-55 prefix, os, confidence) — order of requested options is characteristic per OS
+    ("1,121,3,6,15,108,114,119,252", "iOS / macOS", 75), ("1,121,3,6,15,119,252", "iOS / macOS", 70),
+    ("1,3,6,15,31,33,43,44,46,47,119,121,249,252", "Windows", 80), ("1,3,6,15,31,33,43,44,46,47,121,249,252", "Windows", 75),
+    ("1,3,6,15,26,28,51,58,59,43", "Android", 65), ("1,3,6,15,26,28,51,58,59", "Android", 60),
+    ("1,28,2,3,15,6,119,12,44,47,26,121,42", "Linux", 65), ("1,2,6,12,15,26,28,121,3,33,40,41,42,119,249,252,17", "Linux", 60),
+]
+MDNS_SERVICES = {  # service -> (label, type, brand, os, confidence)
+    "_googlecast._tcp": ("Google Cast", "streaming", None, None, 55), "_airplay._tcp": ("AirPlay receiver", "streaming", None, None, 40),
+    "_raop._tcp": ("AirPlay audio", "speaker", None, None, 35), "_ipp._tcp": ("IPP printing", "printer", None, None, 80),
+    "_ipps._tcp": ("IPP printing", "printer", None, None, 80), "_printer._tcp": ("LPD printing", "printer", None, None, 80),
+    "_pdl-datastream._tcp": ("Raw printing", "printer", None, None, 80), "_uscan._tcp": ("eSCL scanner", "printer", None, None, 70),
+    "_hap._tcp": ("HomeKit accessory", "smart_home", None, None, 70), "_sonos._tcp": ("Sonos", "speaker", "Sonos", None, 85),
+    "_spotify-connect._tcp": ("Spotify Connect", "speaker", None, None, 40),
+    "_companion-link._tcp": ("Apple companion link", "phone", "Apple", "iOS / macOS", 55),
+    "_rdlink._tcp": ("Apple remote", None, "Apple", None, 60), "_sleep-proxy._udp": ("Bonjour sleep proxy", "streaming", "Apple", None, 50),
+    "_smb._tcp": ("SMB file sharing", "computer", None, None, 35), "_afpovertcp._tcp": ("AFP file sharing", "nas", None, None, 40),
+    "_hue._tcp": ("Philips Hue bridge", "smart_home", "Philips Hue", None, 85),
+    "_amzn-wplay._tcp": ("Amazon Fire TV", "streaming", "Amazon", "Fire OS", 75),
+    "_androidtvremote2._tcp": ("Android TV remote", "tv", None, "Android TV", 75),
+    "_matter._tcp": ("Matter", "smart_home", None, None, 60), "_matterc._udp": ("Matter", "smart_home", None, None, 55),
+    "_esphomelib._tcp": ("ESPHome", "iot", "Espressif", None, 85), "_home-assistant._tcp": ("Home Assistant", "server", None, "Home Assistant OS", 80),
+    "_workstation._tcp": ("Linux workstation (Avahi)", "computer", None, "Linux", 50), "_ssh._tcp": ("SSH", "computer", None, None, 25),
+    "_octoprint._tcp": ("OctoPrint", "iot", None, None, 75), "_daap._tcp": ("iTunes sharing", "computer", "Apple", None, 40),
+}
+APPLE_MODEL_PREFIX = [("MacBook", "laptop", "macOS"), ("iMac", "desktop", "macOS"), ("Macmini", "desktop", "macOS"),
+                      ("MacPro", "desktop", "macOS"), ("Mac", "computer", "macOS"), ("iPhone", "phone", "iOS"),
+                      ("iPad", "tablet", "iPadOS"), ("AppleTV", "streaming", "tvOS"), ("AudioAccessory", "speaker", None),
+                      ("Watch", "watch", "watchOS")]
+SSDP_RULES = [  # regex on the SSDP SERVER header -> (os, type, brand, confidence)
+    (r"Microsoft-Windows", "Windows", "computer", None, 70), (r"Sonos", None, "speaker", "Sonos", 85),
+    (r"Roku", "Roku OS", "streaming", "Roku", 85), (r"Synology|DSM", "DSM", "nas", "Synology", 85),
+    (r"QNAP", "QTS", "nas", "QNAP", 85), (r"PlayStation|PS[45]", None, "console", "Sony", 80),
+    (r"IpBridge|Philips-hue|hue", None, "smart_home", "Philips Hue", 75), (r"FRITZ!Box|AVM", None, "router", "AVM", 85),
+    (r"webOS|LGE|LG Smart", "webOS", "tv", "LG", 80), (r"SAMSUNG|Tizen", "Tizen", "tv", "Samsung", 70),
+    (r"Xbox", None, "console", "Microsoft", 80), (r"miniupnpd", None, "router", None, 50),
+    (r"Linux", "Linux", None, None, 35),
+]
+SSDP_RULES = [(re.compile(r, re.I), *rest) for r, *rest in SSDP_RULES]
+
+
+def merge_lan(old, new):
+    m = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (old or {}).items()}
+    for sec, val in new.items():
+        cur = m.setdefault(sec, {})
+        for k, v in val.items():
+            if isinstance(v, list):
+                cur[k] = sorted(set(cur.get(k, [])) | set(v))[:30]
+            elif isinstance(v, dict):
+                cur[k] = {**cur.get(k, {}), **v}
+            elif v is not None:
+                cur[k] = v
+    return m
+
+
+def lan_evidence(ev, lfp, years):
+    dhcp, mdns, ssdp, lldp = (lfp.get(k) or {} for k in ("dhcp", "mdns", "ssdp", "lldp"))
+    if dhcp.get("vendor"):
+        for rx, os_, typ, brand, conf in DHCP_VENDOR_RULES:
+            m = rx.search(dhcp["vendor"])
+            if m:
+                src = f"DHCP vendor class “{dhcp['vendor']}”"
+                ev.add("os", os_.format(*m.groups()) if os_ else None, conf, src)
+                ev.add("type", typ, conf - 20, src)
+                ev.add("brand", brand, conf, src)
+                break
+    if dhcp.get("prl"):
+        for prefix, os_, conf in DHCP_PRL_RULES:
+            if dhcp["prl"].startswith(prefix):
+                ev.add("os", os_, conf, f"DHCP option-55 fingerprint {dhcp['prl']}")
+                break
+        ev.add("feature", "DHCP client", 40, "DHCP request")
+    for svc in mdns.get("services", []):
+        hit = MDNS_SERVICES.get(svc)
+        if hit:
+            label, typ, brand, os_, conf = hit
+            src = f"mDNS service {svc}"
+            ev.add("type", typ, conf, src)
+            ev.add("brand", brand, conf, src)
+            ev.add("os", os_, conf, src)
+            ev.add("feature", label, 70, src)
+    txt = mdns.get("txt") or {}
+    model = txt.get("model") or txt.get("am")
+    if model:
+        for prefix, typ, os_ in APPLE_MODEL_PREFIX:
+            if model.startswith(prefix):
+                ev.add("brand", "Apple", 90, f"mDNS model “{model}”")
+                ev.add("type", typ, 85, f"mDNS model “{model}”")
+                ev.add("os", os_, 80, f"mDNS model “{model}”")
+                ev.add("model", model, 80, "mDNS device-info")
+                break
+        else:
+            ev.add("model", model, 70, "mDNS TXT record")
+    if txt.get("md"):  # Google Cast model name, e.g. "Chromecast", "Google Nest Mini"
+        ev.add("model", txt["md"], 85, "Google Cast TXT record")
+        ev.add("brand", "Google" if re.search(r"Google|Chromecast|Nest", txt["md"]) else None, 70, "Google Cast TXT record")
+    if txt.get("ty") or txt.get("usb_mdl"):
+        ev.add("model", txt.get("ty") or txt.get("usb_mdl"), 85, "Printer TXT record")
+        ev.add("type", "printer", 85, "Printer TXT record")
+        if txt.get("usb_mfg"):
+            ev.add("brand", txt["usb_mfg"], 85, "Printer TXT record")
+    if ssdp.get("server"):
+        for rx, os_, typ, brand, conf in SSDP_RULES:
+            if rx.search(ssdp["server"]):
+                src = f"UPnP server “{ssdp['server'][:60]}”"
+                ev.add("os", os_, conf, src)
+                ev.add("type", typ, conf, src)
+                ev.add("brand", brand, conf, src)
+                break
+    if any("MediaRenderer" in n for n in ssdp.get("nt", [])):
+        ev.add("type", "media", 45, "UPnP MediaRenderer")
+    if lldp:
+        desc = lldp.get("sysdesc", "")
+        ev.add("type", "network", 80, f"LLDP from “{lldp.get('sysname') or desc[:40]}”")
+        for rx, brand in ((r"UniFi|Ubiquiti|EdgeSwitch", "Ubiquiti"), (r"Cisco", "Cisco"), (r"MikroTik|RouterOS", "MikroTik"),
+                          (r"Aruba|ProCurve", "HPE Aruba"), (r"Juniper|JUNOS", "Juniper"), (r"Netgear", "Netgear"),
+                          (r"TP-Link|Omada", "TP-Link"), (r"Linux", None)):
+            if re.search(rx, desc, re.I):
+                ev.add("brand", brand, 80, "LLDP system description")
+                break
+        if lldp.get("sysname"):
+            ev.add("name", lldp["sysname"], 80, "LLDP system name")
+
+
 # ---------------------------------------------------------------- name rules
 # (regex, brand, type, os, use match as model, year)
 NAME_RULES = [
@@ -258,6 +391,13 @@ NAME_RULES = [
     (r"\b(Mi|Xiaomi) (Smart )?Band ?\d*", "Xiaomi", "wearable", None, True, None),
     (r"\bHUAWEI\b|\bHonor\b", "Huawei", None, None, False, None),
     (r"^DESKTOP-[A-Z0-9]{7}$", None, "desktop", "Windows", False, None),
+    (r"^android-[0-9a-f]{16}$", None, "phone", "Android", False, None),
+    (r"(^|[-_])(PC|DESKTOP|WORKSTATION)([-_]|$)", None, "desktop", None, False, None),
+    (r"\b(DiskStation|RackStation|Synology)\b", "Synology", "nas", "DSM", False, None),
+    (r"\b(QNAP|TS-\d{3})\b", "QNAP", "nas", "QTS", False, None),
+    (r"\bLGwebOSTV\b|\[LG\]", "LG", "tv", "webOS", False, None),
+    (r"\bhomeassistant\b", None, "server", "Home Assistant OS", False, None),
+    (r"\bPhilips-hue\b", "Philips Hue", "smart_home", None, False, None),
     (r"^LAPTOP-[A-Z0-9]{7,8}$", None, "laptop", "Windows", False, None),
     (r"\bSurface\b", "Microsoft", "laptop", "Windows", True, None),
     (r"\bXbox\b", "Microsoft", "console", None, True, None),
@@ -320,6 +460,7 @@ VENDOR_RULES = [
     (r"\b(Signify|Philips Lighting)\b", "Philips Hue", "light", 70), (r"\bXiaomi\b", "Xiaomi", None, 0),
     (r"\bHuawei\b", "Huawei", None, 0), (r"\bOnePlus\b", "OnePlus", "phone", 60), (r"\bGarmin\b", "Garmin", "watch", 50),
     (r"\bFitbit\b", "Fitbit", "wearable", 70), (r"\bTesla\b", "Tesla", "car", 70),
+    (r"\bSynology\b", "Synology", "nas", 80), (r"\bQNAP\b", "QNAP", "nas", 80),
     (r"\b(Seiko Epson|Brother|Canon)\b", None, "printer", 55), (r"\bHewlett|\bHP Inc", "HP", None, 0),
     (r"\b(Ubiquiti|TP-LINK|TP-Link|Netgear|Cisco|Linksys|AVM|ASUSTek|Zyxel|MikroTik|Aruba|Ruckus|D-Link|"
      r"Arcadyan|Sagemcom|Technicolor|Compal Broadband|Eero|Juniper)\b", None, "network", 0),
@@ -362,8 +503,10 @@ def identify(dev):
     extra = dev.get("extra") or {}
     fp = extra.get("fp") or {}
     name, vendor, ssid = dev.get("name"), dev.get("vendor"), dev.get("ssid")
-    wfp, bfp = fp.get("wifi") or {}, fp.get("ble") or {}
+    wfp, bfp, lfp = fp.get("wifi") or {}, fp.get("ble") or {}, fp.get("lan") or {}
     years = []
+    if lfp:
+        lan_evidence(ev, lfp, years)
 
     # --- MAC vendor
     if vendor and not dev.get("randomized"):
@@ -374,7 +517,7 @@ def identify(dev):
                 elif typ == "network" or (tconf and tconf > 25):
                     # Network gear / product makers: the vendor is the brand (unlike Wi-Fi module makers).
                     ev.add("brand", short_vendor(vendor), 50, f"MAC vendor {vendor}")
-                if typ and tconf and not (typ == "network" and kind != "ap"):
+                if typ and tconf and not (typ == "network" and kind not in ("ap", "lan")):
                     label = "Wi-Fi module maker (common in laptops/PCs)" if tconf == 25 else f"MAC vendor {vendor}"
                     ev.add("type", typ, tconf, label)
                 break

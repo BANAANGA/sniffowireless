@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS devices(
   vendor TEXT, name TEXT, ssid TEXT, channel INTEGER, freq INTEGER, band TEXT, enc TEXT,
   bssid TEXT, randomized INTEGER DEFAULT 0, packets INTEGER DEFAULT 0,
   last_rssi INTEGER, best_rssi INTEGER, extra TEXT, brand TEXT, model TEXT, dev_type TEXT, os TEXT,
-  wifi_gen INTEGER, era INTEGER, fp_hash TEXT, ident TEXT, room TEXT, pos_x REAL, pos_y REAL);
+  wifi_gen INTEGER, era INTEGER, fp_hash TEXT, ident TEXT, room TEXT, pos_x REAL, pos_y REAL, ip TEXT);
 CREATE INDEX IF NOT EXISTS idx_devices_kind ON devices(kind, last_seen);
 CREATE INDEX IF NOT EXISTS idx_devices_last ON devices(last_seen);
 CREATE INDEX IF NOT EXISTS idx_devices_ssid ON devices(ssid);
@@ -62,15 +62,16 @@ CREATE TABLE IF NOT EXISTS sightings(
 
 DEVICE_COLS = ("mac", "kind", "first_seen", "last_seen", "vendor", "name", "ssid", "channel",
                "freq", "band", "enc", "bssid", "randomized", "packets", "last_rssi", "best_rssi", "extra",
-               "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "ident", "room", "pos_x", "pos_y")
+               "brand", "model", "dev_type", "os", "wifi_gen", "era", "fp_hash", "ident", "room", "pos_x", "pos_y", "ip")
 JSON_COLS = ("extra", "ident")
 # Columns added after the first release: name -> SQL type (added by _migrate on old databases).
 ADDED_COLS = {"band": "TEXT", "brand": "TEXT", "model": "TEXT", "dev_type": "TEXT", "os": "TEXT",
               "wifi_gen": "INTEGER", "era": "INTEGER", "fp_hash": "TEXT", "ident": "TEXT", "room": "TEXT",
-              "pos_x": "REAL", "pos_y": "REAL"}
+              "pos_x": "REAL", "pos_y": "REAL", "ip": "TEXT"}
 
 WIFI_KINDS = ("ap", "wifi_client")
 BT_KINDS = ("ble", "bt_classic")
+LAN_KIND = "lan"  # seen only on the wired / LAN side
 # Within a radio family a device can be "upgraded" (a client that starts beaconing is an AP,
 # a BLE address that answers an inquiry is dual-mode classic).
 KIND_RANK = {"wifi_client": 1, "ap": 2, "ble": 1, "bt_classic": 2}
@@ -127,16 +128,16 @@ def connect(path, readonly=False):
 
 class Session:
     __slots__ = ("id", "mac", "type", "peer", "start", "last", "packets", "rmin", "rmax",
-                 "rsum", "rcnt", "bt", "notimeout", "open", "reason", "dirty")
+                 "rsum", "rcnt", "bt", "lan", "notimeout", "open", "reason", "dirty")
 
-    def __init__(self, mac, type_, peer, ts, bt=False, notimeout=False):
+    def __init__(self, mac, type_, peer, ts, bt=False, notimeout=False, lan=False):
         self.id = None
         self.mac, self.type, self.peer = mac, type_, peer
         self.start = self.last = ts
         self.packets = 0
         self.rmin = self.rmax = None
         self.rsum = self.rcnt = 0
-        self.bt, self.notimeout = bt, notimeout
+        self.bt, self.notimeout, self.lan = bt, notimeout, lan
         self.open, self.reason = True, None
         self.dirty = True
 
@@ -305,7 +306,7 @@ class Store:
         if t == "_cmd":
             o["fn"](self)
             return
-        if t == "chan":
+        if t in ("chan", "lan_traffic", "dhcp_server"):  # aggregate observations, handled by plugins
             for h in self.hooks:
                 if hasattr(h, "observe"):
                     h.observe(self, o, None)
@@ -366,6 +367,10 @@ class Store:
                 self._close(s, o.get("detail") or "disconnect")
                 self._event(ts, mac, "disconnected", peer, o.get("detail"), dev=dev, always=True)
 
+        elif t == "lan":
+            dev = self._device(mac, LAN_KIND, ts, None, o, ("ip", "name"))
+            self._presence(dev, ts, None)
+
         elif t == "event":
             dev = self.devices.get(mac)
             self._event(ts, mac, o["type"], o.get("peer"), o.get("detail"), dev=dev, always=True)
@@ -398,7 +403,11 @@ class Store:
             self.devices[mac] = dev
 
         cur = dev["kind"]
-        if cur != kind and KIND_RANK.get(kind, 0) > KIND_RANK.get(cur, 0) and \
+        if cur == LAN_KIND and kind != LAN_KIND:
+            dev["kind"] = kind  # a radio sighting is more specific than "seen on the LAN"
+        elif cur != kind and cur != LAN_KIND and kind == LAN_KIND:
+            pass  # a Wi-Fi/BT device also seen on the LAN keeps its kind
+        elif cur != kind and KIND_RANK.get(kind, 0) > KIND_RANK.get(cur, 0) and \
                 ((cur in WIFI_KINDS) == (kind in WIFI_KINDS)):
             dev["kind"] = kind
         if ts > (dev["last_seen"] or 0):
@@ -439,13 +448,15 @@ class Store:
                 dev["fp_hash"] = identify.probe_hash(fp["wifi"]["sig"])
         if fp.get("ble"):
             store["ble"] = identify.merge_ble(store.get("ble"), fp["ble"])
+        if fp.get("lan"):
+            store["lan"] = identify.merge_lan(store.get("lan"), fp["lan"])
         return json.dumps(store, sort_keys=True) != before
 
     def _presence(self, dev, ts, rssi):
         mac = dev["mac"]
         s = self.presence.get(mac)
         if s is None:
-            s = Session(mac, "presence", None, ts, bt=dev["kind"] in BT_KINDS)
+            s = Session(mac, "presence", None, ts, bt=dev["kind"] in BT_KINDS, lan=dev["kind"] == LAN_KIND)
             self.presence[mac] = s
             if ts - (dev["first_seen"] or ts) > 1:
                 self._event(ts, mac, "arrived", None, None, dev=dev)
@@ -537,7 +548,7 @@ class Store:
                 self._close(s, "timeout")
                 self._event(s.last, s.mac, "disconnected", s.peer, "timeout", always=True)
         for s in list(self.presence.values()):
-            if now - s.last > (bt_to if s.bt else wifi_to):
+            if now - s.last > (bt_to if s.bt else self.cfg.lan_session_timeout if s.lan else wifi_to):
                 self._close(s, "timeout")
                 self._event(s.last, s.mac, "left", None, None, dev=self.devices.get(s.mac))
                 g = self.mac_group.get(s.mac)

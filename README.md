@@ -4,6 +4,7 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 
 - **Wi-Fi:** passive monitor-mode capture with channel hopping across 2.4 GHz, 5 GHz and **6 GHz (Wi-Fi 6E/7)**, on one or more USB adapters
 - **Bluetooth:** BLE advertising plus Classic inquiry over a raw HCI socket. No BlueZ daemon is needed inside the container.
+- **Ethernet / LAN:** passive capture on a wired interface. It discovers devices via ARP, DHCP, mDNS, SSDP and LLDP, and shows per-device traffic, who each device talks to, and DNS lookups. It also detects rogue DHCP servers and ARP spoofing.
 - **Connectivity history:** presence sessions ("visits") for every device, connection sessions for Wi-Fi client→AP links (including roaming between BSSIDs and deauths), and Bluetooth links to the sensor's adapter
 - **Passive device identification:** brand, model, device type, OS, Wi-Fi generation and estimated age, worked out from capability elements, WPS data, Apple/Microsoft/Google Bluetooth beacons, Bluetooth class of device, names and MAC vendor. Each result shows its evidence and confidence. Probe fingerprints group randomized MACs that belong to the same model/OS.
 - **Labels, groups and watch list:** name devices, mark them known, and group a person's phone, watch and earbuds (or a phone's rotating MACs, with merge suggestions) into one presence history
@@ -45,6 +46,8 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 | [![My networks](docs/screenshots/mynet.png)](docs/screenshots/mynet.png) | [![Channels](docs/screenshots/channels.png)](docs/screenshots/channels.png) |
 | **Occupancy report** | **Group (person)** |
 | [![Reports](docs/screenshots/reports.png)](docs/screenshots/reports.png) | [![Group](docs/screenshots/group.png)](docs/screenshots/group.png) |
+| **LAN (Ethernet)** | **Wired device** |
+| [![LAN](docs/screenshots/lan.png)](docs/screenshots/lan.png) | [![NAS](docs/screenshots/device-lan.png)](docs/screenshots/device-lan.png) |
 
 </details>
 
@@ -64,12 +67,13 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 8. [Using the UI](#using-the-ui)
 9. [Alerts & notifications](#alerts--notifications)
 10. [Security monitoring](#security-monitoring)
-11. [Multiple sensors & the map](#multiple-sensors--the-map)
-12. [Prometheus & Grafana](#prometheus--grafana)
-13. [API](#api)
-14. [Troubleshooting](#troubleshooting)
-15. [Development](#development)
-16. [Legal](#legal)
+11. [Ethernet monitoring](#ethernet-monitoring)
+12. [Multiple sensors & the map](#multiple-sensors--the-map)
+13. [Prometheus & Grafana](#prometheus--grafana)
+14. [API](#api)
+15. [Troubleshooting](#troubleshooting)
+16. [Development](#development)
+17. [Legal](#legal)
 
 ---
 
@@ -300,6 +304,9 @@ All settings are environment variables (put them in `.env`).
 | `WIFI_HOP_INTERVAL` | `0.5` | Seconds spent on each channel. |
 | `WIFI_SET_MONITOR` | `1` | Put interfaces in monitor mode automatically. |
 | `BT_DEVICES` | *(empty)* | Bluetooth adapters, e.g. `hci0`. Empty disables Bluetooth. |
+| `ETH_INTERFACES` | *(empty)* | Wired interfaces to capture on, e.g. `eth1` or `enp3s0`. Empty disables Ethernet capture. |
+| `ETH_PROMISC` | `1` | Put the Ethernet interface in promiscuous mode (needed on a mirror/SPAN port). |
+| `LAN_SESSION_TIMEOUT` | `900` | Seconds without traffic before a LAN device counts as offline. |
 | `BT_ACTIVE_SCAN` | `1` | Active LE scanning (sends scan requests, which gets device names). `0` is fully passive. |
 | `BT_INQUIRY` | `1` | Periodic Bluetooth Classic inquiry (finds *discoverable* classic devices). |
 | `BT_INQUIRY_INTERVAL` | `60` | Seconds between inquiries. |
@@ -461,6 +468,55 @@ Findings can be acknowledged (no repeat alerts) or resolved (they reopen if the 
 
 ---
 
+## Ethernet monitoring
+
+Set `ETH_INTERFACES` to one or more wired interfaces and yolo listens passively, without sending anything.
+
+| From | It learns |
+|---|---|
+| **ARP** | which MAC uses which IP, so devices appear as soon as they talk |
+| **DHCP** | hostname, OS fingerprint (vendor class + requested-option order, e.g. Windows, Android 14, Apple, Linux/BusyBox) and the DHCP server and gateway |
+| **mDNS / Bonjour** | services (AirPlay, Google Cast, printers, HomeKit, Sonos, Hue, Home Assistant…) and model names (`MacBookPro18,3`, `Google Nest Mini`, printer models) |
+| **SSDP / UPnP** | server strings (Synology DSM, Sonos, Roku, Samsung/LG TVs, FRITZ!Box, Windows…) |
+| **LLDP** | switches and access points: name, model, port |
+| **IP traffic** | bytes sent and received per device over time, and every conversation (peer IP, port/service) named via DNS answers |
+| **DNS queries** | which domains each device looks up (plain DNS only; DNS-over-HTTPS/TLS is invisible) |
+
+All of this feeds the existing device list, identification, presence history, alerts and statistics. Wired-only devices appear as a new **LAN** device kind. A Wi-Fi client that is also seen on the LAN stays one device and gains an IP address, hostname and traffic. The **LAN** page shows:
+- devices online
+- throughput over time and top talkers
+- internet destinations and traffic by service
+- the most looked-up domains and the DHCP servers
+
+Each device page gets a **Network (LAN)** panel with its traffic, peers and DNS lookups.
+
+**Security:** trust your real DHCP server on the LAN page. Any other server answering DHCP then raises a **rogue DHCP** finding and alert; without a trusted server, a second DHCP server is flagged as *medium*. An IP address claimed by changing MACs (especially the gateway's) raises **ARP spoofing**.
+
+### Where to plug it in
+
+| Setup | What yolo sees |
+|---|---|
+| Ordinary switch port (e.g. the host's own NIC) | Discovery only: ARP, DHCP, mDNS, SSDP, LLDP broadcasts, plus the host's own traffic. Most devices still show up, with names and identification. |
+| **Mirror / SPAN port** on a managed switch (UniFi, TP-Link Omada/Easy Smart, Netgear ProSafe, MikroTik, Cisco…) | Everything that crosses the mirrored ports. Mirror the port your router uplink is on to see all internet traffic. |
+| **Network TAP** between router and switch (passive, e.g. a cheap 100 Mbit throwing-star or a gigabit TAP) | Everything between the LAN and the router. |
+| On the router / firewall itself (Linux-based) | Everything it routes. |
+
+Use a **dedicated** USB Ethernet adapter for the mirror port and give it no IP address, so the host doesn't use it for its own traffic:
+
+```bash
+sudo nmcli device set eth1 managed no   # keep NetworkManager away from it
+sudo ip addr flush dev eth1
+sudo ip link set eth1 up
+# .env
+ETH_INTERFACES=eth1
+```
+
+Packets are decoded in Python. Header parsing is a fast path, but a Raspberry Pi 4 handles roughly a few tens of thousands of packets per second, which is fine for home and small-office links. Watch the sensor's pkt/s and the *dropped* counter on the overview. Remote sensors (`YOLO_MODE=sensor`) support `ETH_INTERFACES` too.
+
+**Privacy:** traffic and DNS logging reveal a lot about people's behaviour. Only monitor networks you're responsible for, tell the people using them, and keep `RETENTION_DAYS` short. Payloads are never stored; only byte counts, peers, ports and queried names are.
+
+---
+
 ## Multiple sensors & the map
 
 Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
@@ -533,6 +589,8 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/mynet?days=7` | Health of my networks |
 | `GET /api/map`, `/api/sensors` | Device rooms/positions, sensors |
 | `GET /api/reports/occupancy?days=7` | Occupancy report data |
+| `GET /api/lan?hours=24` | LAN overview: devices online, throughput, top talkers, destinations, services, DNS, DHCP servers |
+| `GET /api/devices/{mac}/lan?hours=24` | Device traffic, peers and DNS lookups |
 | `GET /metrics` | Prometheus metrics |
 | `POST /api/ingest` | Remote sensors push observations here (sensor token) |
 
@@ -557,6 +615,9 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | "Too many failed logins" | Wait 5 minutes (per-IP limit after 8 failures). |
 | Remote sensor shows offline | Check `docker logs yolo-sensor` on the sensor; `SERVER_URL` must be reachable from it and the token must match the sensor. |
 | Everyone is in the same room on the map | You need at least two sensors with room names; one sensor can only tell distance. |
+| LAN page shows devices but no internet traffic | The interface only sees broadcasts and its own traffic. Connect it to a mirror/SPAN port or TAP (see [Ethernet monitoring](#ethernet-monitoring)). |
+| `ETH_INTERFACES` error "not found" | Use the host's interface name (`ip -br link`), and run with `network_mode: host`. |
+| No DNS names | Devices use DNS-over-HTTPS/TLS (common in browsers, Android "Private DNS", iCloud Private Relay); only plain DNS on port 53 is visible. |
 | `dropped` counter rising | The host is too slow for the frame rate. Lower the number of channels or use fewer adapters. |
 
 ---
@@ -590,11 +651,13 @@ yolo/
   survey.py     channel airtime survey and recommendations
   health.py     my-network client health
   sensors.py    remote sensor forwarding, ingest, room location, floor plan
+  ethernet.py   raw-socket Ethernet capture: fast header parsing + ARP/DHCP/mDNS/SSDP/LLDP/DNS decoding
+  lan.py        LAN traffic, conversations, DNS log, DHCP servers, rogue-DHCP / ARP-spoof detection
   reports.py    occupancy analytics and weekly email
   metrics.py    Prometheus endpoint
   web.py        FastAPI app and device/statistics API
   demo.py       synthetic data generator
-  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, login.html
+  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, lan.js, login.html
 contrib/monitoring/  Prometheus + Grafana stack and dashboard
 tests/          parser, session, auth, alert, security, survey, location and report tests
 ```

@@ -12,6 +12,7 @@ DEFAULTS = {
     "security": {"deauth_threshold": 25, "deauth_window": 10, "karma_ssids": 4, "karma_window": 600},
     "report": {"email": False, "notifier_id": None, "weekday": 0, "hour": 8, "last_sent": 0},
     "floorplan": {"image": None, "width": None, "height": None},
+    "lan": {"trusted_dhcp": []},
 }
 
 

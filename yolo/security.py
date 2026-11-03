@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS findings(
   status TEXT DEFAULT 'open');
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, last_seen);
 """
-SECURITY_EVENTS = ("rogue_ap", "deauth_flood", "karma_ap", "deauth_broadcast", "security_finding")
+SECURITY_EVENTS = ("rogue_ap", "deauth_flood", "karma_ap", "deauth_broadcast", "security_finding", "rogue_dhcp",
+                   "arp_spoof")
 
 
 class SecurityMonitor:
