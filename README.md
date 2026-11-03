@@ -121,7 +121,13 @@ You need an adapter whose Linux driver supports **monitor mode**. In-kernel driv
 
 To see 6 GHz networks you need a **6E-capable adapter** whose driver allows monitor mode on 6 GHz. The best-supported USB option today is the **MT7921AU** (`mt7921u`, kernel ≥ 5.18; ≥ 6.1 recommended). Some Intel AX210/BE200 PCIe cards also work in monitor mode on recent kernels.
 
-1. **Set your regulatory domain.** Most drivers keep 6 GHz disabled until a country is configured. Set `WIFI_REGDOMAIN=NL` (your two-letter country code), or run `sudo iw reg set NL` on the host.
+1. **Set your regulatory domain.** Most drivers keep 6 GHz disabled until a country is configured. Set `WIFI_REGDOMAIN=NL` (your two-letter country code), or run `sudo iw reg set NL` on the host. The host also needs the **`wireless-regdb`** package (`regulatory.db`): without it the kernel can't apply any country, and stays on `00` ("world" rules, which have no 6 GHz). `./scripts/configure.sh` checks all of this and offers to fix it. To run only that check later:
+
+   ```bash
+   ./scripts/configure.sh --regdomain
+   ```
+
+   If the country is still `00` when yolo starts with 6 GHz channels configured, yolo says so in the log and on the Sensors panel. `iw reg get` should list `country NL` (or yours) under `global`; a separate `phy#…` entry is the adapter's own country code, which the kernel combines with the global one.
 2. **Check the adapter can tune 6 GHz.** The command below should list frequencies from 5955 MHz upwards that are not marked `(disabled)`. `(no IR)` is fine, because monitoring is passive.
    ```bash
    iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -E "\* (59[5-9][0-9]|6[0-9]{3}|7[01][0-9]{2})"

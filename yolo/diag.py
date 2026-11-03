@@ -22,7 +22,8 @@ def main(argv=None):
     from scapy.all import sniff
     from scapy.layers.dot11 import Dot11
 
-    from .wifi import _radio, ensure_monitor, parse_frame, run_cmd, set_freq, set_regdomain
+    from .wifi import (_radio, ensure_monitor, global_regdomain, parse_frame, regulatory_warning, run_cmd, set_freq,
+                       set_regdomain)
 
     cfg = Config.from_env()
     ap = argparse.ArgumentParser(prog="python -m yolo.diag", description=__doc__.split("\n\n")[0])
@@ -45,6 +46,10 @@ def main(argv=None):
         set_regdomain(cfg.wifi_regdomain)
         time.sleep(2)
     print("regulatory domain:", " / ".join(re.findall(r"country (\S+?):", run_cmd("iw", "reg", "get")[1])) or "?")
+    hint = regulatory_warning(global_regdomain(), cfg.wifi_regdomain,
+                              any(band_of(f) == "6" for f in parse_channels(a.channels)))
+    if hint:
+        print("  !", hint)
     if phy:
         info = run_cmd("iw", "phy", phy, "info")[1]
         six = re.findall(r"\* (59[5-9]\d|6\d{3}|70\d\d|71[01]\d)(?:\.\d+)? MHz \[(\d+)\](.*)", info)
