@@ -234,11 +234,15 @@ setInterval(pollStatus, 10000);
 
 // ------------------------------------------------------------------ overview
 let tlView = (() => { try { return localStorage.getItem('yolo.tlview') || 'band'; } catch { return 'band'; } })();
+let actWin = (() => { try { return +localStorage.getItem('yolo.actwin') || 300; } catch { return 300; } })();
+const ACT_WINDOWS = [[120, '2 min'], [300, '5 min'], [600, '10 min'], [3600, '60 min'], [10800, '3 hours'], [21600, '6 hours'], [43200, '12 hours'], [86400, '24 hours']];
+const actLabel = () => (ACT_WINDOWS.find(([v]) => v === actWin) || [0, '5 min'])[1];
 const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
 
 async function viewOverview() {
   app.innerHTML = `
-    <div class="page-head"><div><h1>Overview</h1><div class="sub">Devices seen within the last 5 minutes are counted as active.</div></div></div>
+    <div class="page-head"><div><h1>Overview</h1><div class="sub">Devices seen within the selected window are counted as active.</div></div>
+      <div class="row"><span class="muted">Active = seen in last</span><select id="actwin">${ACT_WINDOWS.map(([v, l]) => `<option value="${v}" ${v === actWin ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
     <div class="grid cols-5" id="cards"></div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2">
@@ -253,18 +257,23 @@ async function viewOverview() {
       <section class="panel"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
     </div>`;
   let hours = 24;
+  document.getElementById('actwin').addEventListener('change', e => {
+    actWin = +e.target.value;
+    try { localStorage.setItem('yolo.actwin', String(actWin)); } catch { /* private mode */ }
+    loadSummary();
+  });
   onSeg(app, 'range', v => { hours = +v; loadTimeline(); });
   onSeg(app, 'tlview', v => { tlView = v; try { localStorage.setItem('yolo.tlview', v); } catch { /* private mode */ } loadTimeline(); });
 
 
 
   async function loadSummary() {
-    const s = await api('/api/summary');
+    const s = await api(`/api/summary?window=${actWin}`);
     document.getElementById('cards').innerHTML = Object.entries(KINDS).map(([k, m]) => {
       const v = s.kinds[k] || {};
       const conn = k === 'wifi_client' || k === 'bt_classic' || k === 'ble'
         ? `<a href="#/devices?kind=${k}&connected=1">${num(v.connected || 0)} connected</a>` : '';
-      return `<div class="card link" data-href="#/devices?kind=${k}&active=300">
+      return `<div class="card link" data-href="#/devices?kind=${k}&active=${actWin}">
         <div class="label"><span class="swatch" style="background:${m.color}"></span>${m.label}</div>
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span>${conn ? `<span>${conn}</span>` : ''}</div></div>`;
