@@ -272,3 +272,27 @@ def test_remote_csa_is_validated():
     assert ok["csa"] == {"mode": 1, "new_channel": 36, "count": 5}
     assert remote_observation({**base, "csa": {"new_channel": 999}}, time.time()).get("csa") is None
     assert remote_observation({**base, "csa": "36"}, time.time()).get("csa") is None
+
+
+def test_timeline_per_band(env):
+    ctx, c = env
+    s = ctx.store
+    t = time.time() - 1800
+    s.process({"t": "wifi_ap", "ts": t, "mac": "24:a4:3c:00:00:01", "ssid": "H", "freq": 2412, "band": "2.4", "channel": 1})
+    s.process({"t": "wifi_ap", "ts": t, "mac": "24:a4:3c:00:00:02", "ssid": "H", "freq": 5180, "band": "5", "channel": 36})
+    s.process({"t": "wifi_ap", "ts": t, "mac": "24:a4:3c:00:00:03", "ssid": "H", "freq": 6135, "band": "6", "channel": 37})
+    phone = "a4:83:e7:00:00:01"  # connected on 2.4 GHz first, then roams to 5 GHz
+    for i in range(0, 600, 60):
+        s.process({"t": "wifi_client", "ts": t + i, "mac": phone, "bssid": "24:a4:3c:00:00:01", "frame": "data",
+                   "band": "2.4", "freq": 2412})
+    for i in range(600, 1200, 60):
+        s.process({"t": "wifi_client", "ts": t + i, "mac": phone, "bssid": "24:a4:3c:00:00:02", "frame": "data",
+                   "band": "5", "freq": 5180})
+    s.flush()
+    login(c)
+    r = c.get("/api/timeline?hours=1").json()
+    b = r["bands"]
+    assert set(b) == {"2.4", "5", "6"} and all(len(v["connected"]) == len(r["t"]) for v in b.values())
+    assert max(b["2.4"]["ap"]) == 1 and max(b["5"]["ap"]) == 1 and max(b["6"]["ap"]) == 1
+    assert max(b["2.4"]["connected"]) == 1 and max(b["5"]["connected"]) == 1 and max(b["6"]["connected"]) == 0
+    assert max(b["5"]["wifi_client"]) == 1 and max(b["2.4"]["wifi_client"]) == 0  # last heard on 5 GHz

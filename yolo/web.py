@@ -84,9 +84,25 @@ def create_app(ctx):
         sess = rows("SELECT mac, start_ts, end_ts FROM sessions WHERE type='assoc' AND end_ts >= ?", (since,))
         connected = overlap_counts([(s["mac"], s["start_ts"], s["end_ts"]) for s in sess], since, now, bucket)
         ts = [since + i * bucket for i in range(len(connected))]
+        # Per Wi-Fi band: APs and active clients (on the band the device was last heard on), plus connected
+        # clients counted on the band of the AP they were connected to at that time (correct when roaming).
+        bands = {b: {"ap": {}, "wifi_client": {}} for b in ("2.4", "5", "6")}
+        for r in rows("SELECT (s.minute / ?) * ? AS t, d.kind, d.band, COUNT(DISTINCT s.mac) n FROM samples s "
+                      "JOIN devices d ON d.mac = s.mac WHERE s.minute >= ? AND d.kind IN ('ap', 'wifi_client') "
+                      "AND d.band IN ('2.4', '5', '6') GROUP BY t, d.kind, d.band", (bucket, bucket, since)):
+            bands[r["band"]][r["kind"]][r["t"]] = r["n"]
+        by_band = {}
+        for r in rows("SELECT s.mac, s.start_ts, s.end_ts, a.band FROM sessions s JOIN devices a ON a.mac = s.peer "
+                      "WHERE s.type='assoc' AND s.end_ts >= ? AND a.band IN ('2.4', '5', '6')", (since,)):
+            by_band.setdefault(r["band"], []).append((r["mac"], r["start_ts"], r["end_ts"]))
+        band_out = {}
+        for b, v in bands.items():
+            conn = overlap_counts(by_band.get(b, []), since, now, bucket)
+            band_out[b] = {"ap": [v["ap"].get(t, 0) for t in ts], "wifi_client": [v["wifi_client"].get(t, 0) for t in ts],
+                           "connected": [n for _, n in conn][:len(ts)]}
         return {"bucket": bucket, "t": ts,
                 "series": {k: [v.get(t, 0) for t in ts] for k, v in series.items()},
-                "connected": [n for _, n in connected]}
+                "connected": [n for _, n in connected], "bands": band_out}
 
     # ----------------------------------------------------------------- devices
     def device_filters(kind=None, active=0, q=None, vendor=None, ssid=None, probe=None, bssid=None,
