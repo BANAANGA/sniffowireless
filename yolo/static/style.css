@@ -491,3 +491,47 @@ th.csort[aria-sort="ascending"]::after { content: " ↑"; }
   #cards .card { padding: 12px; }
 }
 .warn-text { color: var(--warn); white-space: normal; }
+
+/* ---- Vice City style (Settings → Appearance → Vice City preset): sunset sky, neon glow, retro grid ---- */
+html[data-style="vicecity"] body {
+  background:
+    linear-gradient(180deg, transparent 0, transparent 60%, color-mix(in srgb, var(--wifi_client) 16%, transparent) 100%) fixed,
+    radial-gradient(ellipse 80% 40% at 50% 100%, color-mix(in srgb, var(--ble) 20%, transparent), transparent 70%) fixed,
+    var(--bg);
+}
+html[data-style="vicecity"] body::after {
+  content: ""; position: fixed; left: 0; right: 0; bottom: 0; height: 28vh; pointer-events: none; z-index: 0; opacity: .22;
+  background:
+    repeating-linear-gradient(90deg, var(--ap) 0 1px, transparent 1px 64px),
+    repeating-linear-gradient(0deg, var(--wifi_client) 0 1px, transparent 1px 28px);
+  transform: perspective(260px) rotateX(58deg); transform-origin: bottom;
+  -webkit-mask-image: linear-gradient(0deg, #000, transparent); mask-image: linear-gradient(0deg, #000, transparent);
+}
+html[data-style="vicecity"] .side, html[data-style="vicecity"] main { position: relative; z-index: 1; }
+html[data-style="vicecity"] .side { background: color-mix(in srgb, var(--bg) 85%, transparent); border-right-color: color-mix(in srgb, var(--wifi_client) 45%, var(--border)); box-shadow: 1px 0 18px color-mix(in srgb, var(--wifi_client) 25%, transparent); }
+html[data-style="vicecity"] .brand-name {
+  font-style: italic; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  background: linear-gradient(90deg, var(--wifi_client), var(--ble)); -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--wifi_client) 70%, transparent));
+}
+html[data-style="vicecity"] h1 {
+  font-style: italic; font-weight: 800; text-transform: uppercase; letter-spacing: .05em;
+  background: linear-gradient(90deg, var(--wifi_client), var(--ble)); -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--wifi_client) 55%, transparent));
+}
+html[data-style="vicecity"] .panel, html[data-style="vicecity"] .card {
+  border-color: color-mix(in srgb, var(--ap) 40%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--wifi_client) 12%, transparent), 0 0 18px color-mix(in srgb, var(--bt_classic) 18%, transparent);
+}
+html[data-style="vicecity"] .card.link:hover { border-color: var(--wifi_client); box-shadow: 0 0 22px color-mix(in srgb, var(--wifi_client) 45%, transparent); }
+html[data-style="vicecity"] .panel > header { background: linear-gradient(90deg, color-mix(in srgb, var(--wifi_client) 14%, transparent), transparent 70%); }
+html[data-style="vicecity"] .panel > header h2 { text-shadow: 0 0 10px color-mix(in srgb, var(--ap) 60%, transparent); }
+html[data-style="vicecity"] .side nav a.active, html[data-style="vicecity"] .side nav a:hover {
+  background: color-mix(in srgb, var(--wifi_client) 16%, transparent); color: #fff; box-shadow: inset 2px 0 0 var(--wifi_client);
+}
+html[data-style="vicecity"] .btn.primary { background: linear-gradient(90deg, var(--wifi_client), var(--bt_classic)); border-color: transparent; color: #fff; box-shadow: 0 0 14px color-mix(in srgb, var(--wifi_client) 50%, transparent); }
+html[data-style="vicecity"] .btn.primary:hover { color: #fff; filter: brightness(1.12); }
+html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in srgb, var(--ap) 55%, transparent); }
+@media (prefers-reduced-motion: no-preference) { html[data-style="vicecity"] .brand-name { animation: vc-flicker 6s infinite; } }
+@keyframes vc-flicker { 0%, 92%, 100% { opacity: 1 } 94% { opacity: .75 } 96% { opacity: 1 } 97% { opacity: .85 } }
+@media print { html[data-style="vicecity"] body::after { display: none; } }

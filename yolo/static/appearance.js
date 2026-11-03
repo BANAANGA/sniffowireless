@@ -10,6 +10,8 @@ const APPEARANCE_PRESETS = {
   default: ['Default', {}],
   slate: ['Slate', { bg: '#0f141a', panel: '#151c24', border: '#233040', text: '#e3e9f0', muted: '#8b98a8', icon: '#e3e9f0' }],
   forest: ['Forest', { bg: '#0b0f0c', panel: '#111712', border: '#1e2820', text: '#e4ebe5', muted: '#8a978c', icon: '#e4ebe5', ap: '#4fc3d9', wifi_client: '#7bd88f' }],
+  vicecity: ['Vice City', { bg: '#120822', panel: '#1b0f33', border: '#3a2266', text: '#fdeaff', muted: '#a58fc9', icon: '#ff4fa3',
+    ap: '#19e3ff', wifi_client: '#ff4fa3', ble: '#ffb347', bt_classic: '#b565ff', lan: '#7fd8e8', good: '#2ef2b0', warn: '#ffb347', bad: '#ff3b6b' }, 'vicecity'],
   contrast: ['High contrast', { bg: '#000000', panel: '#0a0a0a', border: '#3a3a3a', text: '#ffffff', muted: '#b5b8bd', icon: '#ffffff', ap: '#5ccfff',
     wifi_client: '#4ee39b', ble: '#ffc65c', bt_classic: '#ff7a77', lan: '#c4ccd8', good: '#4ee39b', warn: '#ffc65c', bad: '#ff7a77' }],
 };
@@ -19,12 +21,12 @@ const ICON_NAMES = { dot: 'Dot (default)', wifi: 'Wi-Fi', radar: 'Radar', blueto
 SETTINGS_VIEWS.appearance = async function (el) {
   const saved = await api('/api/appearance');
   const defaults = saved.defaults;
-  let draft = { name: saved.name, icon: saved.icon, clock: saved.clock || 'auto', colors: { ...saved.colors } };
+  let draft = { name: saved.name, icon: saved.icon, clock: saved.clock || 'auto', style: saved.style || '', colors: { ...saved.colors } };
   let iconUrl = saved.icon_url;
 
   const asAppearance = () => {
     const custom = Object.keys(draft.colors).filter(k => draft.colors[k] !== defaults[k]);
-    return { ...saved, name: draft.name || 'yolo', icon: draft.icon, clock: draft.clock, icon_url: iconUrl, colors: { ...draft.colors }, custom_colors: custom };
+    return { ...saved, name: draft.name || 'yolo', icon: draft.icon, clock: draft.clock, style: draft.style, icon_url: iconUrl, colors: { ...draft.colors }, custom_colors: custom };
   };
   const preview = () => { applyAppearance(asAppearance(), { cache: false }); themeToJs(); paintPreview(); };
 
@@ -79,11 +81,12 @@ SETTINGS_VIEWS.appearance = async function (el) {
     const p = APPEARANCE_PRESETS[e.target.value];
     if (!p) return;
     draft.colors = { ...defaults, ...p[1] };
+    draft.style = p[2] || '';
     e.target.value = '';
     paintColors();
     preview();
   };
-  $('#ap-reset').onclick = () => { draft = { name: 'yolo', icon: 'dot', clock: 'auto', colors: { ...defaults } }; $('#ap-name').value = 'yolo'; $('#ap-clock').value = 'auto'; paintIcons(); paintColors(); preview(); };
+  $('#ap-reset').onclick = () => { draft = { name: 'yolo', icon: 'dot', clock: 'auto', style: '', colors: { ...defaults } }; $('#ap-name').value = 'yolo'; $('#ap-clock').value = 'auto'; paintIcons(); paintColors(); preview(); };
   $('#ap-upload').onchange = async e => {
     const f = e.target.files[0];
     e.target.value = '';
@@ -108,7 +111,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
   };
   $('#ap-save').onclick = async () => {
     try {
-      const d = await send('PUT', '/api/appearance', { name: draft.name.trim() || 'yolo', icon: draft.icon, clock: draft.clock, colors: draft.colors });
+      const d = await send('PUT', '/api/appearance', { name: draft.name.trim() || 'yolo', icon: draft.icon, clock: draft.clock, style: draft.style, colors: draft.colors });
       Object.assign(saved, d);
       applyAppearance(d);
       themeToJs();
