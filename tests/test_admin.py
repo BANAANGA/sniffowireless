@@ -193,3 +193,27 @@ def test_occupancy_merges_group_devices(ctx):
     s.flush()
     occ = occupancy(ctx, 2, tz=0)
     assert occ["summary"]["unique"] == 1 and 7000 <= occ["summary"]["median_dwell"] <= 7300
+
+
+def test_global_search(ctx):
+    from yolo.search import search
+    s = ctx.store
+    t = time.time()
+    s.process({"t": "wifi_ap", "ts": t, "mac": AP, "ssid": "HomeNet", "rssi": -40})
+    s.process({"t": "wifi_client", "ts": t, "mac": CL, "frame": "probe", "probe": "CoffeeShop_Free", "rssi": -50})
+    s.process({"t": "lan", "ts": t, "mac": "d8:bb:c1:00:00:01", "ip": "192.168.1.20", "name": "GAMING-PC", "src": "dhcp"})
+    s.flush()
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO device_meta(mac, label, notes, known) VALUES(?, 'Sam phone', 'bought 2024', 1)", (CL,))
+        c.execute("INSERT INTO groups(name, kind) VALUES('Sam', 'person')")
+        c.execute("INSERT INTO lan_dns VALUES('d8:bb:c1:00:00:01', 'steamcontent.com', 1, 2, 3)")
+    r = search(ctx, "sam")["results"]
+    assert [d["mac"] for d in r["devices"]] == [CL] and r["groups"][0]["name"] == "Sam"
+    assert search(ctx, "a483e7")["results"]["devices"][0]["mac"] == CL  # MAC without separators
+    assert search(ctx, "192.168.1.2")["results"]["devices"][0]["name"] == "GAMING-PC"
+    assert search(ctx, "coffee")["results"]["probes"][0]["ssid"] == "CoffeeShop_Free"
+    assert search(ctx, "homen")["results"]["networks"][0]["ssid"] == "HomeNet"
+    assert search(ctx, "steam")["results"]["dns"][0]["devices"] == 1
+    assert search(ctx, "2024")["results"]["devices"][0]["mac"] == CL  # notes
+    assert search(ctx, "100%")["total"] == 0  # LIKE wildcards are escaped
+    assert search(ctx, "x")["total"] == 0  # too short

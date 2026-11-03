@@ -450,6 +450,12 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
 
 ## Using the UI
 
+- **Search** (box at the top of the sidebar; press <kbd>/</kbd> to jump to it): searches every record. That covers:
+  - devices: MAC (with or without separators), IP, name, label, notes, SSID, vendor, brand, model
+  - groups, networks and probed network names
+  - DNS lookups, events, alerts, security findings and sensors
+
+  Results appear as you type; use the arrow keys and Enter to open one, or press Enter for the full results page with a filter per record type.
 - **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d), currently connected clients with the network they're on, sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
 - **Devices:** a searchable, sortable list showing what each device was identified as. Filter by radio type, device type, recency or band (2.4 / 5 / 6 GHz), and hide randomized MACs. Drill-downs add filters for brand, OS, Wi-Fi generation, age and probe fingerprint. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
@@ -700,6 +706,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/events?type=&mac=&kind=&before=` | Event log |
 | `GET /api/status` | Sensor and store health |
 | `GET /api/export/devices.csv`, `/api/export/sessions.csv?days=7` | CSV export |
+| `GET /api/search?q=&section=&limit=` | Search all records (devices, groups, networks, probes, dns, events, alerts, findings, sensors) |
 | `GET /api/groups`, `/api/groups/{id}` | Groups and combined presence |
 | `GET /api/alerts`, `/api/alert-rules` | Alert history and rules |
 | `GET /api/security` | Findings, my-network BSSIDs, security events |
