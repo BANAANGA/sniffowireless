@@ -46,10 +46,11 @@ EVENT_TYPES = {
     "interference": "Radio interference episode",
     "dfs_radar": "Radar on a DFS channel (access point had to leave)",
     "channel_switch_announced": "Access point announced a channel switch", "channel_change": "Access point changed channel",
+    "fingerprint_changed": "A known device's fingerprint changed",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
             "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
-            "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium"}
+            "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium", "fingerprint_changed": "medium"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
     "telegram": ["bot_token", "chat_id"],
@@ -197,6 +198,7 @@ def describe(ev, dev, meta, group, time_fmt="%H:%M:%S"):
         "dfs_radar": f"Radar: {ev.get('detail')}", "channel_switch_announced": f"{name} {ev.get('detail')}",
         "channel_change": f"{name} {ev.get('detail')}",
         "investigated_connect": f"{name} {ev.get('detail')}", "investigated_probe": f"{name} is {ev.get('detail')}",
+        "fingerprint_changed": f"Fingerprint changed: {name}",
     }
     lines = [time.strftime("%Y-%m-%d " + time_fmt, time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:

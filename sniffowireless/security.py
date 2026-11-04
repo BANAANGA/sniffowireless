@@ -1,5 +1,7 @@
 """Wireless security monitoring (defensive): rogue / evil-twin APs, deauthentication floods,
-KARMA-style APs, and configuration issues on the admin's own networks (open, WEP/TKIP, WPS)."""
+KARMA-style APs, configuration issues on the admin's own networks (open, WEP/TKIP, WPS), and a known
+device's radio fingerprint changing (its MAC address may have been reused by, or spoofed onto, a
+different physical device)."""
 import time
 from collections import defaultdict, deque
 from typing import List
@@ -18,7 +20,8 @@ CREATE TABLE IF NOT EXISTS findings(
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, last_seen);
 """
 SECURITY_EVENTS = ("rogue_ap", "deauth_flood", "karma_ap", "deauth_broadcast", "security_finding", "rogue_dhcp",
-                   "arp_spoof", "tracker_following")
+                   "arp_spoof", "tracker_following", "fingerprint_changed")
+KNOWN_MACS_REFRESH = 15  # seconds between re-reading device_meta.known (no on_change hook for device_meta)
 
 
 class SecurityMonitor:
@@ -31,6 +34,13 @@ class SecurityMonitor:
         self.ap_ssids = defaultdict(dict)   # bssid -> {ssid: last seen} (KARMA detection)
         self.pending = {}                   # finding key -> finding dict to upsert
         self.status = {r["key"]: r["status"] for r in ctx.rows("SELECT key, status FROM findings")}
+        # Fingerprint drift: last-known fp_hash per known/labelled device. Seeded from the database so a
+        # drift that happens shortly after a restart is still caught, not just ones seen fresh in this process.
+        self.known_macs = {r["mac"] for r in ctx.rows("SELECT mac FROM device_meta WHERE known=1")}
+        self.fp_seen = {r["mac"]: r["fp_hash"] for r in ctx.rows(
+            "SELECT d.mac, d.fp_hash FROM devices d JOIN device_meta m ON m.mac=d.mac "
+            "WHERE m.known=1 AND d.fp_hash IS NOT NULL")}
+        self.known_refreshed = 0
         self.reload()
         ctx.settings.on_change(lambda k: self.reload() if k in ("networks", "security") else None)
 
@@ -67,6 +77,11 @@ class SecurityMonitor:
                       "status=CASE WHEN status='resolved' THEN 'open' ELSE status END", f)
         self.pending.clear()
 
+    def sweep(self, store, now):
+        if now - self.known_refreshed > KNOWN_MACS_REFRESH:
+            self.known_macs = {r["mac"] for r in self.ctx.rows("SELECT mac FROM device_meta WHERE known=1")}
+            self.known_refreshed = now
+
     # ------------------------------------------------------------- detection
     def observe(self, store, o, dev):
         t = o["t"]
@@ -76,6 +91,28 @@ class SecurityMonitor:
             self._deauth(store, o["bssid"], o["ts"], o.get("mac"))
         elif t == "event" and o.get("type") == "deauth_broadcast":
             self._deauth(store, o["mac"], o["ts"], None, weight=1)
+        if dev and dev["mac"] in self.known_macs:
+            self._check_drift(store, o, dev)
+
+    def _check_drift(self, store, o, dev):
+        """A known device's probe-request fingerprint (chipset + OS build signature) changed to a
+        different, previously-unseen value: the MAC may now belong to a different physical device, either
+        because it was reassigned (the usual, harmless reason) or because it's being spoofed."""
+        mac, fp = dev["mac"], dev.get("fp_hash")
+        if not fp:
+            return
+        prev = self.fp_seen.get(mac)
+        self.fp_seen[mac] = fp
+        if not prev or prev == fp:
+            return
+        ts = o["ts"]
+        ssid = dev.get("ssid")
+        detail = (f"Its fingerprint changed from {prev} to {fp}. This usually just means a software "
+                 "update changed the device's probe-request signature, but it can also mean this MAC "
+                 "address now belongs to a different device.")
+        store._event(ts, mac, "fingerprint_changed", None, detail, dev=dev, always=True)
+        self.finding(store, ts, f"fpdrift:{mac}:{fp}", "fingerprint_changed", "medium", mac, ssid,
+                     "A known device's fingerprint changed", detail, event="fingerprint_changed")
 
     def _deauth(self, store, bssid, ts, target, weight=1):
         q = self.deauths[bssid]

@@ -124,6 +124,38 @@ def test_security_detectors(ctx):
     assert {"rogue_ap", "karma_ap", "deauth_flood"} <= events
 
 
+def test_fingerprint_drift_alert(ctx):
+    s = ctx.store
+    t = time.time()
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO device_meta(mac, known, updated) VALUES(?, 1, ?)", (CL, t))
+    s.sweep(t)  # picks up the new "known" device (device_meta has no change hook; sweep re-reads it)
+    assert CL in ctx.security.known_macs
+
+    # First fingerprint ever seen for this device: recorded as the baseline, no alert.
+    s.process({"t": "wifi_client", "ts": t, "mac": CL, "frame": "probe", "probe": "x",
+               "fp": {"wifi": {"sig": "sig-A"}, "src": "probe"}})
+    s.flush()
+    assert not ctx.rows("SELECT 1 FROM findings WHERE type='fingerprint_changed'")
+
+    # A different fingerprint for the same (known) device: that's the drift alert.
+    s.process({"t": "wifi_client", "ts": t + 1, "mac": CL, "frame": "probe", "probe": "x",
+               "fp": {"wifi": {"sig": "sig-B"}, "src": "probe"}})
+    s.flush()
+    f = ctx.one("SELECT * FROM findings WHERE type='fingerprint_changed'")
+    assert f and f["mac"] == CL and f["severity"] == "medium"
+    assert "fingerprint_changed" in {r["type"] for r in ctx.rows("SELECT type FROM events")}
+
+    # An unknown device with the exact same kind of change raises nothing.
+    other = "a4:83:e7:01:00:02"
+    s.process({"t": "wifi_client", "ts": t, "mac": other, "frame": "probe", "probe": "x",
+               "fp": {"wifi": {"sig": "sig-A"}, "src": "probe"}})
+    s.process({"t": "wifi_client", "ts": t + 1, "mac": other, "frame": "probe", "probe": "x",
+               "fp": {"wifi": {"sig": "sig-B"}, "src": "probe"}})
+    s.flush()
+    assert ctx.one("SELECT COUNT(*) n FROM findings WHERE type='fingerprint_changed'")["n"] == 1
+
+
 def test_channel_recommendation():
     aps = [{"mac": "a", "channel": 6, "band": "2.4", "last_rssi": -40}, {"mac": "b", "channel": 6, "band": "2.4",
                                                                          "last_rssi": -50},
