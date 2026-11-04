@@ -210,6 +210,38 @@ def create_app(ctx):
             f"{where} ORDER BY {sort} {order} NULLS LAST LIMIT ? OFFSET ?", params + [limit, offset])
         return {"total": total, "items": [_dev(i) for i in items], "now": time.time()}
 
+    @app.get("/api/passersby", dependencies=[Depends(current_user)])
+    def passersby(days: float = 30, min_visits: int = 3, max_secs: int = 60, hide_known: int = 0):
+        """Devices that repeatedly come within range for a short visit (under `max_secs`) — a neighbour's
+        phone on their regular walk, a delivery route, traffic on a nearby street. Grouped by MAC, so a
+        device with a randomized (rotating) address will under-count: each rotation looks like a
+        different, less-frequent visitor rather than one repeat one."""
+        since = time.time() - days * 86400
+        min_visits = max(2, min(min_visits, 10_000))
+        max_secs = max(1, min(max_secs, 3600))
+        agg = rows(
+            "SELECT mac, COUNT(*) visits, AVG(end_ts-start_ts) avg_secs, MAX(end_ts-start_ts) max_secs, "
+            "MIN(start_ts) first_seen, MAX(end_ts) last_seen FROM sessions WHERE type='presence' AND end_ts>=? "
+            "AND (end_ts-start_ts) < ? GROUP BY mac HAVING COUNT(*) >= ? ORDER BY visits DESC LIMIT 300",
+            (since, max_secs, min_visits))
+        if not agg:
+            return {"items": []}
+        macs = [r["mac"] for r in agg]
+        q = ",".join("?" * len(macs))
+        devs = {d["mac"]: _dev(d) for d in rows(
+            f"SELECT d.mac, d.kind, d.vendor, d.name, d.dev_type, d.randomized, d.last_rssi, d.ident, "
+            f"m.label, m.known, m.watch FROM devices d LEFT JOIN device_meta m ON m.mac=d.mac WHERE d.mac IN ({q})", macs)}
+        items = []
+        for r in agg:
+            d = devs.get(r["mac"]) or {}
+            if hide_known and d.get("known"):
+                continue
+            items.append({**r, "kind": d.get("kind"), "vendor": d.get("vendor"), "name": d.get("name"),
+                         "dev_type": d.get("dev_type"), "randomized": d.get("randomized"),
+                         "last_rssi": d.get("last_rssi"), "ident": (d.get("ident") or {}).get("label"),
+                         "label": d.get("label"), "known": d.get("known"), "watch": d.get("watch")})
+        return {"items": items}
+
     @app.get("/api/devices/{mac}", dependencies=[Depends(current_user)])
     def device(mac: str):
         mac = mac.lower()
