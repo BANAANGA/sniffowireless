@@ -9,6 +9,8 @@ const KINDS = {
 };
 let TEXT = '#e6e7e9', MUTED = '#8a8f98', FAINT = '#5b6068', GRID = '#1f2227';
 const TZ = new Date().getTimezoneOffset();
+const IFACE_HIST_MAX = 60;  // 10s poll interval -> 10 minutes of history, kept in the browser only
+const IFACE_COLORS = ['#4cc2ff', '#3ecf8e', '#f5b84a', '#ef6f6c', '#a8b3c2', '#c792ea', '#6fd3ff', '#ffb86b'];
 const app = document.getElementById('app');
 
 if (window.Chart) {
@@ -350,6 +352,10 @@ async function viewOverview(params) {
         <section class="panel"><header><h2>System</h2><span class="faint small-text" id="sys-note"></span></header><div class="body" id="system"></div></section>
         <section class="panel"><header><h2>Sensors</h2></header><div class="body flush" id="sensors"></div></section>
       </div>
+      <section class="panel span-3">
+        <header><h2>Interface activity</h2><span class="faint small-text">Packets/sec per capturing interface, live over the last ${Math.round(IFACE_HIST_MAX * 10 / 60)} minutes</span></header>
+        <div class="body"><div class="legend" id="iface-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="iface-chart"></canvas></div></div>
+      </section>
       <section class="panel span-2">
         <header><h2>Connected right now</h2><a class="muted" href="#/devices?connected=1">View all →</a></header>
         <div class="body flush table-wrap" id="connected"></div>
@@ -359,6 +365,8 @@ async function viewOverview(params) {
         <div class="body flush table-wrap" id="watched"></div></section>
     </div>`;
   let hours = 24, lastCounts = null;
+  const ifaceHist = {}, ifaceColors = {};  // name -> [{t, pps}], reset each time this page is entered
+  const ifaceColor = name => ifaceColors[name] || (ifaceColors[name] = IFACE_COLORS[Object.keys(ifaceColors).length % IFACE_COLORS.length]);
   const onVis = () => { if (!document.hidden && live) refresh(); };  // catch up when the tab comes back
   document.getElementById('actwin').addEventListener('change', e => {
     actWin = +e.target.value;
@@ -438,6 +446,34 @@ async function viewOverview(params) {
       <div class="muted mono" style="text-align:right">${(Number(x.pps) || 0).toFixed(1)} pkt/s<br>${num(x.packets)} total</div></div>`).join('')
       : `<div class="empty">${s.demo ? 'Demo mode — synthetic data' : 'No sensors configured'}</div>`)
       + `<div class="sensor muted"><span>Queue ${num(s.store.queue)} · dropped ${num(s.store.dropped)}</span><span>${num(s.store.open_presence)} present</span></div>`;
+    renderIfaceChart(list);
+  }
+  function renderIfaceChart(list) {
+    const now = Date.now() / 1000;
+    const seen = new Set();
+    list.forEach(x => {
+      seen.add(x.name);
+      const h = ifaceHist[x.name] || (ifaceHist[x.name] = []);
+      h.push({ t: now, y: Number(x.pps) || 0 });
+      if (h.length > IFACE_HIST_MAX) h.shift();
+    });
+    // An interface that's gone (adapter unplugged, sensor removed) stops growing and ages out on its own.
+    Object.keys(ifaceHist).forEach(name => { if (!seen.has(name) && ifaceHist[name].length) ifaceHist[name].shift(); });
+    const names = Object.keys(ifaceHist).filter(n => ifaceHist[n].length);
+    const legend = document.getElementById('iface-legend'), canvas = document.getElementById('iface-chart');
+    if (!names.length) { legend.innerHTML = ''; if (canvas) canvas.parentElement.innerHTML = '<div class="empty">No interfaces yet</div>'; return; }
+    legend.innerHTML = names.map(n => `<span><span class="swatch" style="background:${ifaceColor(n)}"></span>${esc(n)}</span>`).join('');
+    const span = IFACE_HIST_MAX * 10;
+    chart(document.getElementById('iface-chart'), {
+      type: 'line',
+      data: { datasets: names.map(n => ({ label: n, data: ifaceHist[n].map(p => ({ x: p.t, y: p.y })),
+        borderColor: ifaceColor(n), fill: false, borderWidth: 1.5, pointRadius: 0, tension: .3 })) },
+      options: {
+        maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        scales: { x: { ...timeScale(span), min: now - span, max: now }, y: yScale({ ticks: { color: FAINT, callback: v => v + ' pkt/s' } }) },
+        plugins: { tooltip: { callbacks: { title: i => dt(i[0].parsed.x) } } },
+      },
+    });
   }
   async function loadTimeline() {
     const t = await api(`/api/timeline?hours=${hours}`);
