@@ -356,8 +356,9 @@ addRoute('/mynet', async (_, params) => {
   }
   const s = n.summary || {};
   app.innerHTML = `<div class="page-head"><div><h1>My networks</h1><div class="sub">${n.ssids.map(esc).join(', ')}</div></div>${seg('days', [[1, '24h'], [7, '7 days'], [30, '30 days']], days)}</div>
-    <div class="grid cols-4">${[['Clients', s.clients, 'seen in range'], ['Connected now', s.connected_now, ''], ['Roams', s.roams, `${s.pingpong || 0} ping-pong`],
-      ['Sticky clients', s.sticky, `weak signal (< -75 dBm) while another AP exists`]].map(([l, v, m]) => `<div class="card"><div class="label">${l}</div><div class="value">${num(v)}</div><div class="meta">${m}</div></div>`).join('')}</div>
+    <div class="grid cols-5">${[['Clients', s.clients, 'seen in range'], ['Connected now', s.connected_now, ''], ['Roams', s.roams, `${s.pingpong || 0} ping-pong`],
+      ['Sticky clients', s.sticky, `weak signal (< -75 dBm) while another AP exists`],
+      ['Weak-AP sessions', s.weak_choice_sessions, 'connected weak when a stronger sibling AP existed']].map(([l, v, m]) => `<div class="card"><div class="label">${l}</div><div class="value">${num(v)}</div><div class="meta">${m}</div></div>`).join('')}</div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2"><header><h2>Connected clients over time</h2><span class="legend">${n.ssids.map((x, i) => `<span><span class="swatch" style="background:${[KINDS.wifi_client.color, KINDS.ap.color, KINDS.ble.color, KINDS.bt_classic.color][i % 4]}"></span>${esc(x)}</span>`).join('')}</span></header><div class="body"><div class="chart-box"><canvas id="mn-tl"></canvas></div></div></section>
       <section class="panel"><header><h2>Band use</h2><span class="faint">share of connected time</span></header><div class="body"><ul class="bars-list">${BAND_LIST.filter(([b]) => n.band_share[b] != null).map(([b, m]) => `<li><div><div class="name">${m.label}</div><div class="track"><i style="width:${n.band_share[b] * 100}%;background:${m.color}"></i></div></div><div class="n">${Math.round(n.band_share[b] * 100)}%</div></li>`).join('') || '<div class="empty">No data</div>'}</ul>
@@ -371,7 +372,8 @@ addRoute('/mynet', async (_, params) => {
           <td>${c.connected_to ? `${esc(c.connected_ssid)} <span class="faint">${c.connected_band}G</span>` : '<span class="faint">—</span>'}</td>
           <td class="num">${c.rssi_now != null ? c.rssi_now + ' dBm' : '—'}</td><td class="num muted">${c.avg_rssi != null ? c.avg_rssi + ' dBm' : '—'}</td><td class="num">${dur(c.secs)}</td>
           <td class="num muted">${c.sessions}</td><td class="num muted">${c.aps}</td><td class="num">${c.roams}${c.pingpong ? ` <span class="tag warn" title="A→B→A within 2 minutes">${c.pingpong} ping-pong</span>` : ''}</td>
-          <td class="num ${c.kicked ? '' : 'muted'}">${c.kicked}</td><td>${c.sticky ? '<span class="tag warn">sticky</span>' : ''}${c.connected_band === '2.4' && c.wifi_gen >= 5 ? ' <span class="tag" title="Supports 5 GHz but is on 2.4 GHz">on 2.4G</span>' : ''}</td></tr>`).join(''))}</div></section>
+          <td class="num ${c.kicked ? '' : 'muted'}">${c.kicked}</td><td>${c.sticky ? '<span class="tag warn">sticky</span>' : ''}${c.connected_band === '2.4' && c.wifi_gen >= 5 ? ' <span class="tag" title="Supports 5 GHz but is on 2.4 GHz">on 2.4G</span>' : ''}
+            ${c.weak_choice_sessions ? ` <span class="tag warn" title="${c.weak_choice_sessions} of ${c.choice_sessions} sessions on a sibling AP connected weak while this client was in range of a stronger one">weak AP ${c.weak_choice_sessions}/${c.choice_sessions}</span>` : ''}</td></tr>`).join(''))}</div></section>
       <section class="panel span-3"><header><h2>Network changes</h2><span class="faint">channel moves and security findings on my networks</span></header><div class="body flush" id="mn-changes"><div class="empty">Loading…</div></div></section>
     </div>`;
   linkRows(app);

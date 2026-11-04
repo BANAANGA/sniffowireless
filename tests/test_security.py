@@ -347,6 +347,37 @@ def test_mynet_changes(env):
     assert r["items"] == sorted(r["items"], key=lambda x: x["ts"], reverse=True)
 
 
+def test_mynet_weak_ap_choice(env):
+    ctx, c = env
+    login(c)
+    STRONG, WEAK = "24:a4:3c:00:00:01", "24:a4:3c:00:00:02"  # two of my APs, same SSID
+    OTHER_SSID = "24:a4:3c:00:00:03"  # a single-AP SSID: no "choice" exists, never counts as weak
+    CLIENT = "a4:83:e7:00:00:01"
+    assert c.put("/api/settings/networks", json={"ssids": ["HomeNet", "Solo"], "trusted_bssids": []},
+                headers=H).status_code == 200
+    now = time.time()
+    with ctx.wdb() as db:
+        for mac, ssid in ((STRONG, "HomeNet"), (WEAK, "HomeNet"), (OTHER_SSID, "Solo")):
+            db.execute("INSERT INTO devices(mac, kind, ssid, first_seen, last_seen) VALUES(?, 'ap', ?, ?, ?)",
+                      (mac, ssid, now - 3600, now))
+        db.execute("INSERT INTO devices(mac, kind, first_seen, last_seen) VALUES(?, 'wifi_client', ?, ?)",
+                  (CLIENT, now - 3600, now))
+        # A session on the weak sibling (avg rssi -85, well under STICKY_RSSI) ...
+        db.execute("INSERT INTO sessions(mac, type, peer, start_ts, end_ts, open, rssi_sum, rssi_count) "
+                  "VALUES(?, 'assoc', ?, ?, ?, 0, ?, ?)", (CLIENT, WEAK, now - 600, now - 500, -850, 10))
+        # ... and one on the strong sibling (avg rssi -50): not a weak choice.
+        db.execute("INSERT INTO sessions(mac, type, peer, start_ts, end_ts, open, rssi_sum, rssi_count) "
+                  "VALUES(?, 'assoc', ?, ?, ?, 0, ?, ?)", (CLIENT, STRONG, now - 400, now - 300, -500, 10))
+        # A weak session on the single-AP SSID: no sibling exists, so it's not a "choice" at all.
+        db.execute("INSERT INTO sessions(mac, type, peer, start_ts, end_ts, open, rssi_sum, rssi_count) "
+                  "VALUES(?, 'assoc', ?, ?, ?, 0, ?, ?)", (CLIENT, OTHER_SSID, now - 200, now - 100, -900, 10))
+
+    r = c.get("/api/mynet?days=7").json()
+    cl = next(x for x in r["clients"] if x["mac"] == CLIENT)
+    assert cl["choice_sessions"] == 2 and cl["weak_choice_sessions"] == 1
+    assert r["summary"]["weak_choice_sessions"] == 1
+
+
 def test_passersby(env):
     ctx, c = env
     login(c)
