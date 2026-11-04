@@ -429,8 +429,8 @@ def test_handshake_api_scope_and_auth(env):
     assert c.put("/api/settings/networks", json={"ssids": ["HomeNet"], "trusted_bssids": []}, headers=H).status_code == 200
     assert c.put("/api/handshakes/HomeNet", json={"enabled": True}, headers=H).status_code == 200
     assert c.get("/api/handshakes").json()["items"][0] == {
-        "ssid": "HomeNet", "enabled": True, "bssids": [], "pairs": 0, "usable_pairs": 0, "frames": 0,
-        "bytes": 0, "started": None, "updated": None, "downloadable": False}
+        "ssid": "HomeNet", "enabled": True, "known_bssids": [], "eapol_bssids": [], "pairs": 0, "usable_pairs": 0,
+        "frames": 0, "bytes": 0, "started": None, "updated": None, "downloadable": False}
     # No capture yet, so there's nothing to download.
     assert c.get("/api/handshakes/HomeNet/capture.pcap").status_code == 404
 

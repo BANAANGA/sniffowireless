@@ -105,7 +105,8 @@ class HandshakeCapture:
                 if not isinstance(ssid, str) or not ssid:
                     continue
                 self.state[ssid] = {
-                    "bssids": set(m.get("bssids") or []),
+                    "known_bssids": set(m.get("known_bssids") or []),
+                    "eapol_bssids": set(m.get("eapol_bssids") or m.get("bssids") or []),  # "bssids": pre-rename name
                     "pairs": {tuple(k.split("|", 1)): set(v) for k, v in (m.get("pairs") or {}).items()},
                     "frames": int(m.get("frames", 0)), "bytes": int(m.get("bytes", 0)),
                     "started": m.get("started"), "updated": m.get("updated"),
@@ -115,19 +116,35 @@ class HandshakeCapture:
 
     def _save_state(self, ssid):
         st = self.state[ssid]
-        m = {"ssid": ssid, "bssids": sorted(st["bssids"]), "frames": st["frames"], "bytes": st["bytes"],
-            "started": st["started"], "updated": st["updated"],
+        m = {"ssid": ssid, "known_bssids": sorted(st["known_bssids"]), "eapol_bssids": sorted(st["eapol_bssids"]),
+            "frames": st["frames"], "bytes": st["bytes"], "started": st["started"], "updated": st["updated"],
             "pairs": {f"{b}|{s}": sorted(v) for (b, s), v in st["pairs"].items()}}
         tmp = self._meta_path(ssid) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(m, fh)
         os.replace(tmp, self._meta_path(ssid))
 
+    def _entry(self, ssid):
+        return self.state.setdefault(ssid, {"known_bssids": set(), "eapol_bssids": set(), "pairs": {},
+                                            "frames": 0, "bytes": 0, "started": None, "updated": None})
+
     # -------------------------------------------------------------- live capture (WifiSensor capture thread)
     def note_ap(self, bssid, ssid):
-        """Learn which SSID a BSSID is currently broadcasting, from an already-parsed beacon/probe response."""
-        if ssid:
-            self.bssid_ssid[bssid] = ssid
+        """Learn which SSID a BSSID is currently broadcasting, from an already-parsed beacon/probe response.
+        Recorded in persisted state (as "known_bssids") only for a wanted SSID, so the admin can see yolo
+        has recognized an access point even before (or without) ever capturing an EAPOL frame from it —
+        otherwise a capture that simply hasn't caught a handshake yet looks identical to one that can't
+        even see the network, which is a real and confusing distinction when debugging why it's empty."""
+        if not ssid:
+            return
+        self.bssid_ssid[bssid] = ssid
+        if not self.want(ssid):
+            return
+        with self.lock:
+            st = self._entry(ssid)
+            if bssid not in st["known_bssids"]:
+                st["known_bssids"].add(bssid)
+                self._save_state(ssid)
 
     def feed(self, pkt, bssid, sta, msg):
         """Record one EAPOL-Key frame if its BSSID is currently broadcasting a wanted SSID."""
@@ -148,12 +165,13 @@ class HandshakeCapture:
             except OSError:
                 log.warning("Could not write handshake capture frame for %r", ssid, exc_info=True)
                 return
-            st = self.state.setdefault(ssid, {"bssids": set(), "pairs": {}, "frames": 0, "bytes": 0,
-                                               "started": time.time(), "updated": None})
-            st["bssids"].add(bssid)
+            st = self._entry(ssid)
+            st["known_bssids"].add(bssid)
+            st["eapol_bssids"].add(bssid)
             st["pairs"].setdefault((bssid, sta), set()).add(msg)
             st["frames"] += 1
             st["bytes"] += len(pkt)
+            st["started"] = st["started"] or time.time()
             st["updated"] = time.time()
             self._save_state(ssid)
 
@@ -176,7 +194,8 @@ class HandshakeCapture:
             # "usable" needs message 2 (the client's MIC'd nonce) paired with message 1 or 3 from the AP.
             usable = sum(1 for msgs in pairs.values() if 2 in msgs and (1 in msgs or 3 in msgs))
             path = self._pcap_path(ssid)
-            out.append({"ssid": ssid, "enabled": ssid in on, "bssids": sorted(st.get("bssids", [])),
+            out.append({"ssid": ssid, "enabled": ssid in on, "known_bssids": sorted(st.get("known_bssids", [])),
+                       "eapol_bssids": sorted(st.get("eapol_bssids", [])),
                        "pairs": len(pairs), "usable_pairs": usable, "frames": st.get("frames", 0),
                        "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
                        "started": st.get("started"), "updated": st.get("updated"),

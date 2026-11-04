@@ -90,15 +90,18 @@ SETTINGS_VIEWS.networks = async function (el) {
     body.innerHTML = `<p class="muted" style="margin-top:0">Captures the WPA 4-way handshake when a device (re)connects to one of your own networks, so you can test your own
       password's strength offline (e.g. with hashcat or aircrack-ng). Passive only — nothing is ever sent to force a reconnect, so capture can
       sit on while you wait for a device to naturally rejoin. Only available for networks listed above as “My networks”.</p>
-      ${tableHtml('<th>Network</th><th>Capture</th><th class="num">Access points heard</th><th>Handshake</th><th class="num">Size</th><th>Updated</th><th></th>',
+      <p class="muted small-text">A handshake only lasts a few milliseconds right as a device (re)connects, so a sensor that's hopping across many
+      channels can easily be elsewhere at that exact moment — this can take several reconnect attempts, or you may want to temporarily set
+      <code>WIFI_CHANNELS</code> to just this network's channel while testing.</p>
+      ${tableHtml('<th>Network</th><th>Capture</th><th class="num">Access points recognized</th><th>Handshake</th><th class="num">Size</th><th>Updated</th><th></th>',
       hs.items.map(x => `<tr>
         <td><b>${esc(x.ssid)}</b></td>
         <td><label class="switch"><input type="checkbox" data-hs-on="${esc(x.ssid)}" ${x.enabled ? 'checked' : ''}><span></span></label></td>
-        <td class="num">${num(x.bssids.length)}</td>
-        <td>${x.usable_pairs ? `<span class="tag on">${x.usable_pairs} captured</span>` : x.pairs ? `<span class="tag warn">${x.pairs} partial</span>` : '<span class="faint">none yet</span>'}</td>
+        <td class="num" title="Access points yolo has seen broadcasting this SSID while capture was on — not whether a handshake was captured">${num(x.known_bssids.length)}</td>
+        <td>${x.usable_pairs ? `<span class="tag on">${x.usable_pairs} captured</span>` : x.pairs ? `<span class="tag warn">${x.pairs} partial</span>` : '<span class="faint">no handshake yet</span>'}</td>
         <td class="num muted">${x.bytes ? bytes(x.bytes) : '—'}</td>
         <td class="muted">${x.updated ? ago(x.updated) : '—'}</td>
-        <td><div class="row" style="justify-content:flex-end">${x.downloadable ? `<a class="btn small" href="/api/handshakes/${enc(x.ssid)}/capture.pcap">Download</a>` : ''}${x.frames
+        <td><div class="row" style="justify-content:flex-end">${x.downloadable ? `<a class="btn small" href="/api/handshakes/${enc(x.ssid)}/capture.pcap">Download</a>` : ''}${x.frames || x.known_bssids.length
           ? `<button class="btn small" data-hs-clear="${esc(x.ssid)}" type="button">Clear</button>` : ''}</div></td></tr>`).join(''))}`;
     body.querySelectorAll('[data-hs-on]').forEach(cb => cb.onchange = async () => {
       const on = cb.checked;
