@@ -399,3 +399,23 @@ def test_stats_per_sensor(env):
     login(c)
     got = {(r["id"], r["kind"]): r["n"] for r in c.get("/api/stats?days=1").json()["sensor_kinds"]}
     assert got[("attic", "ap")] == 2 and got[("cellar", "ap")] == 1
+
+
+def test_sessions_drilldown_and_stats_limit(env):
+    ctx, c = env
+    now = time.time()
+    for i, d in enumerate((30, 120, 400, 400, 5000, 40000)):  # one per bucket, two in the 5-30 min one
+        ctx.execute("INSERT INTO sessions(mac,type,peer,start_ts,end_ts,open) VALUES(?,?,?,?,?,0)",
+                    (f"aa:bb:cc:00:01:{i:02x}", "assoc", None, now - 100 - d, now - 100))
+    login(c)
+    assert c.get("/api/sessions", params={"type": "assoc"}).json()["total"] == 6
+    assert c.get("/api/sessions", params={"b": 2}).json()["total"] == 2  # 5-30 min
+    assert c.get("/api/sessions", params={"b": 5}).json()["total"] == 1  # over 8 h
+    items = c.get("/api/sessions", params={"sort": "duration"}).json()["items"]
+    assert [round(x["end_ts"] - x["start_ts"]) for x in items][:2] == [40000, 5000]
+    # the stats lists honour ?limit=
+    for i in range(30):
+        ctx.store.process({"t": "wifi_probe", "ts": now, "mac": f"aa:bb:cc:02:00:{i:02x}", "ssid": f"P{i}", "rssi": -60})
+    ctx.store.flush()
+    assert len(c.get("/api/stats?days=1").json()["probes"]) <= 20
+    assert len(c.get("/api/stats?days=1&limit=5").json()["probes"]) <= 5

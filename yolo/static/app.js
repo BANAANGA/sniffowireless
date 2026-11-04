@@ -239,6 +239,7 @@ async function route() {
     else if (path === '/devices') await viewDevices(params);
     else if (path.startsWith('/device/')) await viewDevice(decodeURIComponent(path.slice(8)), params);
     else if (path === '/stats') await viewStats(params);
+    else if (path === '/sessions') await viewSessions(params);
     else if (path === '/events') await viewEvents(params);
     else app.innerHTML = '<div class="empty">Not found</div>';
   } catch (e) {
@@ -260,6 +261,45 @@ async function pollStatus() {
   } catch { el.className = 'live err'; el.textContent = 'offline'; }
 }
 setInterval(pollStatus, 10000);
+
+// ------------------------------------------------------------------ sessions
+// Drill-down of the Statistics "Session durations" chart: the sessions in one duration bucket.
+const DUR_LABELS = ['under 1 minute', '1–5 minutes', '5–30 minutes', '30 minutes – 2 hours', '2–8 hours', 'over 8 hours'];
+async function viewSessions(params) {
+  const st = { type: params.get('type') || 'assoc', b: params.get('b') ?? '', days: params.get('days') || '7', sort: params.get('sort') || 'start' };
+  const offset = +(params.get('offset') || 0), limit = 100;
+  const go = ch => { location.hash = hrefWith('/sessions', { ...st, ...ch }); };
+  const noun = st.type === 'assoc' ? 'Connections' : 'Visits';
+  app.innerHTML = `
+    <div class="page-head"><div><a class="muted" href="${hrefWith('/stats', { days: st.days })}">← Statistics</a><h1>${noun}${st.b !== '' ? ` · ${DUR_LABELS[+st.b] || ''}` : ''}</h1>
+      <div class="sub" id="count">&nbsp;</div></div>${seg('days', [[1, '24h'], [7, '7 days'], [30, '30 days']], st.days)}</div>
+    <div class="filters">
+      <select id="stype"><option value="assoc" ${st.type === 'assoc' ? 'selected' : ''}>Connections</option><option value="presence" ${st.type === 'presence' ? 'selected' : ''}>Visits</option></select>
+      <select id="sb"><option value="">Any duration</option>${DUR_LABELS.map((l, i) => `<option value="${i}" ${String(st.b) === String(i) ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select id="ssort"><option value="start" ${st.sort === 'start' ? 'selected' : ''}>Most recent first</option><option value="duration" ${st.sort === 'duration' ? 'selected' : ''}>Longest first</option></select>
+    </div>
+    <section class="panel"><div class="table-wrap" id="tbl"></div><div class="pager" id="pager"></div></section>`;
+  onSeg(app, 'days', v => go({ days: v, offset: '' }));
+  document.getElementById('stype').onchange = e => go({ type: e.target.value, offset: '' });
+  document.getElementById('sb').onchange = e => go({ b: e.target.value, offset: '' });
+  document.getElementById('ssort').onchange = e => go({ sort: e.target.value, offset: '' });
+  const d = await api('/api/sessions?' + new URLSearchParams({ type: st.type, days: st.days, sort: st.sort, limit, offset, ...(st.b !== '' ? { b: st.b } : {}) }));
+  document.getElementById('count').textContent = `${num(d.total)} session${d.total === 1 ? '' : 's'} in the last ${st.days === '1' ? '24 hours' : st.days + ' days'}`;
+  document.getElementById('tbl').innerHTML = d.items.length ? `<table><thead><tr><th>Device</th>${st.type === 'assoc' ? '<th>Connected to</th>' : ''}
+    <th>Started</th><th>Ended</th><th class="num">Duration</th><th>Signal</th><th>Ended because</th></tr></thead><tbody>
+    ${d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
+      <td>${x.kind ? kindBadge(x.kind) : ''} <span class="mono" style="margin-left:6px">${esc(x.label || x.name || x.vendor || x.mac)}</span></td>
+      ${st.type === 'assoc' ? `<td>${x.peer ? `${esc(x.peer_ssid || '')} <span class="mono faint">${esc(x.peer)}</span>` : '<span class="faint">—</span>'}</td>` : ''}
+      <td class="muted">${esc(dt(x.start_ts))}</td><td class="muted">${x.open ? '<span class="tag on">ongoing</span>' : esc(dt(x.end_ts))}</td>
+      <td class="num">${dur(x.end_ts - x.start_ts)}</td><td>${rssiBars(x.rssi_max)}</td><td class="muted">${esc((x.end_reason || '').replace(/_/g, ' ') || '—')}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="empty">No sessions match</div>';
+  linkRows(document.getElementById('tbl'));
+  const pager = document.getElementById('pager');
+  pager.innerHTML = `<span>${d.total ? `${offset + 1}–${Math.min(offset + limit, d.total)} of ${num(d.total)}` : ''}</span>
+    <span><button class="btn" id="prev" ${offset ? '' : 'disabled'}>Previous</button> <button class="btn" id="next" ${offset + limit < d.total ? '' : 'disabled'}>Next</button></span>`;
+  pager.querySelector('#prev').onclick = () => go({ offset: Math.max(0, offset - limit) });
+  pager.querySelector('#next').onclick = () => go({ offset: offset + limit });
+}
 
 // ------------------------------------------------------------------ overview
 // System resources: one meter per resource; the value is always printed, colour only adds emphasis above 80 / 95 %.
@@ -315,6 +355,8 @@ async function viewOverview(params) {
         <div class="body flush table-wrap" id="connected"></div>
       </section>
       <section class="panel"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
+      <section class="panel span-3"><header><h2>Watched devices</h2><a class="muted" href="#/devices?watch=1">View all →</a></header>
+        <div class="body flush table-wrap" id="watched"></div></section>
     </div>`;
   let hours = 24, lastCounts = null;
   const onVis = () => { if (!document.hidden && live) refresh(); };  // catch up when the tab comes back
@@ -366,6 +408,22 @@ async function viewOverview(params) {
       </tbody></table>` : '<div class="empty">No connected clients</div>';
     linkRows(document.getElementById('connected'));
   }
+  async function loadWatched() {
+    const d = await api('/api/devices?watch=1&limit=50&sort=last_seen');
+    document.getElementById('watched').innerHTML = d.items.length ? `<table><thead><tr>
+      <th>Device</th><th>Group</th><th>Status</th><th>Last seen</th><th>Signal</th></tr></thead><tbody>
+      ${d.items.map(x => {
+        const secs = d.now - x.last_seen;
+        const status = x.connected ? '<span class="tag on">connected</span>' : secs < actWin ? '<span class="tag on">active</span>' : '<span class="faint">away</span>';
+        return `<tr class="link" data-href="#/device/${enc(x.mac)}">
+        <td><span class="star" title="Watched">★</span> ${kindBadge(x.kind)} <span style="margin-left:8px">${x.label ? `<b>${esc(x.label)}</b>` : `<span class="mono">${esc(devLabel(x) || x.mac)}</span>`}</span></td>
+        <td>${x.group_name ? `<span class="tag">${esc(x.group_name)}</span>` : '<span class="faint">—</span>'}</td>
+        <td>${status}</td>
+        <td><span class="mono">${esc(dt(x.last_seen))}</span> <span class="muted">· ${ago(x.last_seen)}</span></td>
+        <td>${rssiBars(x.last_rssi)}</td></tr>`;
+      }).join('')}</tbody></table>` : '<div class="empty">No watched devices yet — open a device and star it to watch it here</div>';
+    linkRows(document.getElementById('watched'));
+  }
   async function loadSensors() {
     const s = await api('/api/status');
     renderSystem(s.system);
@@ -404,11 +462,11 @@ async function viewOverview(params) {
       chart(document.getElementById('tl'), { type: 'line', data: { datasets: ds }, options: opts() });
       return;
     }
-    // By band: one small chart per Wi-Fi band on a shared scale, plus Bluetooth & LAN (no band).
+    // By band: one small chart per Wi-Fi band, each auto-scaled to its own data (a quiet 6 GHz band stays readable),
+    // plus Bluetooth & LAN (no band).
     document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
       + sw(TEXT, 'Connected clients', true);
     const bands = t.bands || {};
-    const ymax = Math.max(1, ...BAND_PANELS.flatMap(([b]) => ['ap', 'wifi_client', 'connected'].flatMap(k => (bands[b] || {})[k] || [0])));
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
         <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} · ${num(now(b, 'connected'))} connected</span></div>
@@ -421,16 +479,16 @@ async function viewOverview(params) {
       const v = bands[b] || {};
       chart(document.getElementById(`tl-${b.replace('.', '')}`), { type: 'line', data: { datasets: [
         line('Access points', xy(v.ap), KINDS.ap.color), line('Wi-Fi clients', xy(v.wifi_client), KINDS.wifi_client.color),
-        line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(ymax, true) });
+        line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(null, true) });
     });
     chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: ['ble', 'bt_classic', 'lan'].map(k =>
       line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
   }
 
-  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), pollStatus()]);
+  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), pollStatus()]);
   lastUpdate = Date.now();
   setTimeout(() => { if (document.getElementById('system')) loadSensors(); }, 1500);  // CPU % needs a second sample
-  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); lastUpdate = Date.now(); };
+  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); loadWatched(); lastUpdate = Date.now(); };
   every(10000, () => { if (live && !document.hidden) refresh(); });
   document.addEventListener('visibilitychange', onVis);
   onLeave(() => document.removeEventListener('visibilitychange', onVis));
@@ -842,14 +900,19 @@ function breakdown(el, s, kind) {
   bindLi(el);
 }
 
+// Statistics lists show the top 20; the panel title opens the list in full (#/stats?list=<id>), or the page that owns it.
+const STAT_CAP = 20, STAT_FULL = 1000;
 async function viewStats(params) {
   const days = params.get('days') || '7';
+  const listId = params.get('list') || '';
+  const CAP = listId ? STAT_FULL : STAT_CAP;
+  const ttl = (id, text, href) => `<a class="h-link" href="${href || hrefWith('/stats', { days, list: id })}" title="Show the full list">${text}</a>`;
   app.innerHTML = `
-    <div class="page-head"><div><h1>Statistics</h1><div class="sub">Click any bar, row or slice to drill down into the matching devices.</div></div>
+    <div class="page-head"><div>${listId ? `<a class="muted" href="${hrefWith('/stats', { days })}">← Statistics</a>` : ''}<h1 id="stats-h1">Statistics</h1><div class="sub">${listId ? 'Full list.' : `Lists show the top ${STAT_CAP}: click a title for the full list, or any bar, row or slice to drill down.`}</div></div>
       ${seg('days', [[1, '24h'], [7, '7 days'], [30, '30 days']], days)}</div>
     <div class="grid cols-3" id="stats"><div class="empty span-all">Loading…</div></div>`;
-  onSeg(app, 'days', v => { location.hash = hrefWith('/stats', { days: v }); });
-  const s = await api(`/api/stats?days=${days}&tz=${TZ}`);
+  onSeg(app, 'days', v => { location.hash = hrefWith('/stats', { days: v, list: listId }); });
+  const s = await api(`/api/stats?days=${days}&tz=${TZ}&limit=${CAP}`);
   const root = document.getElementById('stats');
   root.innerHTML = `
     <section class="panel span-3" id="breakdown"></section>
@@ -857,22 +920,32 @@ async function viewStats(params) {
     <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
-    <section class="panel"><header><h2>Session durations</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
-    <section class="panel"><header><h2>Device types</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
-    <section class="panel"><header><h2>Brands</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
-    <section class="panel"><header><h2>Wi-Fi generation</h2><span class="faint">newest standard supported</span></header><div class="body"><ul class="bars-list" id="st-gen"></ul></div></section>
-    <section class="panel"><header><h2>Estimated age</h2><span class="faint">earliest possible year</span></header><div class="body"><ul class="bars-list" id="st-era"></ul></div></section>
-    <section class="panel"><header><h2>Operating systems</h2></header><div class="body"><ul class="bars-list" id="st-os"></ul></div></section>
-    <section class="panel"><header><h2>Shared fingerprints</h2><span class="faint">same probe layout = same model / OS</span></header><div class="body flush table-wrap" id="st-fp"></div></section>
-    <section class="panel"><header><h2>AP channels</h2><span class="legend" id="bandlegend"></span></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
-    <section class="panel"><header><h2>Events</h2></header><div class="body flush table-wrap" id="evtypes"></div></section>
-    <section class="panel span-3"><header><h2>Networks (SSIDs)</h2><span class="row"><span class="faint" id="ssids-count"></span><button class="btn small" id="ssids-more" hidden></button></span></header><div class="body flush table-wrap" id="ssids"></div></section>
-    <section class="panel"><header><h2>Most connected clients</h2></header><div class="body flush table-wrap" id="topc"></div></section>
-    <section class="panel"><header><h2>Busiest access points</h2></header><div class="body flush table-wrap" id="topap"></div></section>
-    <section class="panel"><header><h2>Probed SSIDs</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
+    <section class="panel"><header><h2>${ttl('', 'Session durations', hrefWith('/sessions', { type: 'assoc', days }))}</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
+    <section class="panel" data-list="st-type"><header><h2>${ttl('st-type', 'Device types')}</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
+    <section class="panel" data-list="st-brand"><header><h2>${ttl('st-brand', 'Brands')}</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
+    <section class="panel" data-list="st-gen"><header><h2>${ttl('st-gen', 'Wi-Fi generation')}</h2><span class="faint">newest standard supported</span></header><div class="body"><ul class="bars-list" id="st-gen"></ul></div></section>
+    <section class="panel" data-list="st-era"><header><h2>${ttl('st-era', 'Estimated age')}</h2><span class="faint">earliest possible year</span></header><div class="body"><ul class="bars-list" id="st-era"></ul></div></section>
+    <section class="panel" data-list="st-os"><header><h2>${ttl('st-os', 'Operating systems')}</h2></header><div class="body"><ul class="bars-list" id="st-os"></ul></div></section>
+    <section class="panel" data-list="st-fp"><header><h2>${ttl('st-fp', 'Shared fingerprints')}</h2><span class="faint">same probe layout = same model / OS</span></header><div class="body flush table-wrap" id="st-fp"></div></section>
+    <section class="panel"><header><h2>${ttl('', 'AP channels', '#/channels')}</h2><span class="legend" id="bandlegend"></span></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
+    <section class="panel"><header><h2>${ttl('', 'Events', '#/events')}</h2></header><div class="body flush table-wrap" id="evtypes"></div></section>
+    <section class="panel span-3"><header><h2>${ttl('', 'Networks (SSIDs)', '#/ssids')}</h2><span class="row"><span class="faint" id="ssids-count"></span><button class="btn small" id="ssids-more" hidden></button></span></header><div class="body flush table-wrap" id="ssids"></div></section>
+    <section class="panel" data-list="topc"><header><h2>${ttl('topc', 'Most connected clients')}</h2></header><div class="body flush table-wrap" id="topc"></div></section>
+    <section class="panel" data-list="topap"><header><h2>${ttl('topap', 'Busiest access points')}</h2></header><div class="body flush table-wrap" id="topap"></div></section>
+    <section class="panel" data-list="probes"><header><h2>${ttl('probes', 'Probed SSIDs')}</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
 
-  breakdown(document.getElementById('breakdown'), s, 'ble');
-  sensorPies(document.getElementById('per-sensor'), s.sensor_kinds || []);
+  if (listId) {
+    const keep = root.querySelector(`[data-list="${listId}"]`);
+    root.querySelectorAll(':scope > section').forEach(el => { el.hidden = el !== keep; });
+    if (keep) {
+      keep.classList.add('span-3');
+      document.getElementById('stats-h1').textContent = keep.querySelector('h2').textContent;
+    } else root.innerHTML = '<div class="empty span-all">Unknown list</div>';
+  }
+  if (!listId) {
+    breakdown(document.getElementById('breakdown'), s, 'ble');
+    sensorPies(document.getElementById('per-sensor'), s.sensor_kinds || []);
+  }
 
   // hourly
   const hours = Array.from({ length: 24 }, (_, i) => i);
@@ -899,10 +972,14 @@ async function viewStats(params) {
 
   // durations
   const DB = ['<1m', '1–5m', '5–30m', '30m–2h', '2–8h', '>8h'];
-  const drawDur = t => chart(document.getElementById('durs'), {
+  let durType = 'assoc';
+  const drawDur = t => (durType = t, chart(document.getElementById('durs'), {
     type: 'bar', data: { labels: DB, datasets: [{ data: DB.map((_, b) => (s.durations.find(r => r.type === t && r.b === b) || { n: 0 }).n), backgroundColor: TEXT + 'bb', borderRadius: 2, maxBarThickness: 40 }] },
-    options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale() } },
-  });
+    options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale() },
+      plugins: { tooltip: { callbacks: { footer: () => 'Click to list these sessions' } } },
+      onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
+      onClick: (e, els) => { if (els.length) location.hash = hrefWith('/sessions', { type: durType, b: els[0].index, days }); } },
+  }));
   drawDur('assoc');
   onSeg(root, 'dtype', drawDur);
 
@@ -919,7 +996,7 @@ async function viewStats(params) {
     <p class="faint" style="margin:12px 0 0">Randomized (locally administered / private) addresses rotate, so one physical device can appear as many entries. Connections usually keep a stable per-network address.</p>`;
 
   // identification breakdowns
-  const barList = (id, rows, label, filterKey, kind = '', limit = 12, order = null) => {
+  const barList = (id, rows, label, filterKey, kind = '', order = null) => {
     const agg = {};
     rows.filter(r => !kind || r.kind === kind).forEach(r => {
       const k = r.v == null ? '' : String(r.v);
@@ -928,7 +1005,7 @@ async function viewStats(params) {
     });
     let list = Object.entries(agg);
     list = order ? list.sort(order) : list.sort((a, b) => b[1].n - a[1].n);
-    list = list.slice(0, limit);
+    list = list.slice(0, CAP);
     const max = Math.max(1, ...list.map(([, o]) => o.n));
     document.getElementById(id).innerHTML = list.map(([v, o]) => `<li data-href="${hrefWith('/devices', { [filterKey]: v === '' ? (filterKey === 'wifi_gen' || filterKey === 'era' ? '0' : 'Unknown') : v, kind })}">
       <div><div class="name">${v === '' ? '<span class="faint">Unknown</span>' : esc(label(v))}</div><div class="track">${Object.entries(o.kinds).map(([k, n]) => `<i style="width:${n / max * 100}%;background:${KINDS[k].color}"></i>`).join('')}</div></div>
@@ -937,13 +1014,12 @@ async function viewStats(params) {
   };
   const numDesc = (a, b) => (b[0] === '' ? -1 : +b[0]) - (a[0] === '' ? -1 : +a[0]);
   barList('st-type', s.dev_type, typeLabel, 'dev_type');
-  barList('st-brand', s.brand, v => v, 'brand', '', 14);
+  barList('st-brand', s.brand, v => v, 'brand');
   const genRank = v => v === '' ? -1 : +v === 66 ? 6.5 : +v;  // 66 = Wi-Fi 6E sits between 6 and 7
-  barList('st-gen', s.wifi_gen.filter(r => r.kind === 'ap' || r.kind === 'wifi_client'), v => genLabel(+v), 'wifi_gen', '', 10,
-    (a, b) => genRank(b[0]) - genRank(a[0]));
-  barList('st-era', s.era, v => eraLabel(+v), 'era', '', 10, numDesc);
+  barList('st-gen', s.wifi_gen.filter(r => r.kind === 'ap' || r.kind === 'wifi_client'), v => genLabel(+v), 'wifi_gen', '', (a, b) => genRank(b[0]) - genRank(a[0]));
+  barList('st-era', s.era, v => eraLabel(+v), 'era', '', numDesc);
   barList('st-os', s.os, v => v, 'os');
-  document.getElementById('vkind').addEventListener('change', e => barList('st-brand', s.brand, v => v, 'brand', e.target.value, 14));
+  document.getElementById('vkind').addEventListener('change', e => barList('st-brand', s.brand, v => v, 'brand', e.target.value));
   const fpEl = document.getElementById('st-fp');
   fpEl.innerHTML = s.fingerprints.length ? `<table><thead><tr><th>Fingerprint</th><th>Likely</th><th class="num">MACs</th></tr></thead><tbody>${s.fingerprints.map(f => `<tr class="link" data-href="${hrefWith('/devices', { fp: f.fp_hash })}">
     <td class="mono">${esc(f.fp_hash)}</td><td class="trunc muted">${esc([f.brand, typeLabel(f.dev_type) !== 'Unknown' ? typeLabel(f.dev_type) : null, f.wifi_gen ? genLabel(f.wifi_gen) : null].filter(Boolean).join(' · ') || '—')}</td>

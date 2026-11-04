@@ -544,3 +544,9 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 .card.bump { animation: card-bump 1.4s ease-out; }
 @keyframes card-bump { 0% { border-color: var(--text); background: color-mix(in srgb, var(--text) 10%, var(--panel)); } 100% { } }
 @media (prefers-reduced-motion: reduce) { .live-btn.on .pulse-dot, .card.bump { animation: none; } }
+
+/* Panel titles that open the full list. */
+.h-link { color: inherit; text-decoration: none; }
+.h-link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.h-link::after { content: " →"; opacity: 0; transition: opacity .15s; }
+.h-link:hover::after, .h-link:focus-visible::after { opacity: .7; }
