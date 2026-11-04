@@ -767,6 +767,31 @@ const PIE_COLORS = ['#3690e3', '#d46a34', '#05a388', '#c34f4b', '#97902a'];
 const PIE_TOP = PIE_COLORS.length;
 const BREAKDOWN_KINDS = [['ble', 'BLE'], ['wifi_client', 'Wi-Fi clients'], ['bt_classic', 'BT classic'], ['ap', 'Access points'], ['lan', 'LAN']];
 
+// One doughnut per sensor: what kinds of device it heard in the selected period.
+function sensorPies(el, data) {
+  const by = {};
+  data.forEach(r => { (by[r.id] = by[r.id] || { name: r.name, kinds: {} }).kinds[r.kind] = r.n; });
+  const sensors = Object.entries(by).map(([id, v]) => ({ id, ...v, total: Object.values(v.kinds).reduce((a, n) => a + n, 0) }))
+    .sort((a, b) => b.total - a.total);
+  el.hidden = !sensors.length;
+  if (!sensors.length) return;
+  el.innerHTML = `<header><h2>Per sensor</h2><span class="faint">device types each sensor heard · a device heard by several sensors counts for each</span></header>
+    <div class="body"><div class="pie-grid">${sensors.map((x, i) => `<div class="pie-card"><h3 class="subhead">${esc(x.name)}</h3>
+      <div class="pie-wrap"><div class="pie-box"><canvas id="sp-${i}" role="img" aria-label="${esc(x.name)} device types"></canvas><div class="pie-total"><b>${num(x.total)}</b><span>devices</span></div></div>
+      <ul class="pie-legend">${Object.entries(KINDS).filter(([k]) => x.kinds[k]).map(([k, m]) => `<li><span class="swatch" style="background:${m.color}"></span><span class="pl-name">${esc(m.label)}</span>
+        <span class="pl-n">${num(x.kinds[k])}</span><span class="pl-p">${Math.round(x.kinds[k] / x.total * 100)}%</span></li>`).join('')}</ul></div></div>`).join('')}</div></div>`;
+  sensors.forEach((x, i) => {
+    const ks = Object.entries(KINDS).filter(([k]) => x.kinds[k]);
+    chart(document.getElementById(`sp-${i}`), {
+      type: 'doughnut',
+      data: { labels: ks.map(([, m]) => m.label), datasets: [{ data: ks.map(([k]) => x.kinds[k]), backgroundColor: ks.map(([, m]) => m.color),
+        borderColor: PANEL(), borderWidth: 2, hoverBorderColor: PANEL(), hoverOffset: 4, borderRadius: 2 }] },
+      options: { maintainAspectRatio: false, cutout: '64%', animation: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.label}: ${num(c.parsed)} (${Math.round(c.parsed / x.total * 100)}%)` } } } },
+    });
+  });
+}
+
 function breakdown(el, s, kind) {
   if (window.Chart) el.querySelectorAll('canvas').forEach(c => { const p = Chart.getChart(c); if (p) p.destroy(); });
   const of = (rows, key = 'v') => rows.filter(r => r.kind === kind).map(r => ({ v: r[key], n: r.n }));
@@ -828,6 +853,7 @@ async function viewStats(params) {
   const root = document.getElementById('stats');
   root.innerHTML = `
     <section class="panel span-3" id="breakdown"></section>
+    <section class="panel span-3" id="per-sensor" hidden></section>
     <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
@@ -846,6 +872,7 @@ async function viewStats(params) {
     <section class="panel"><header><h2>Probed SSIDs</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
 
   breakdown(document.getElementById('breakdown'), s, 'ble');
+  sensorPies(document.getElementById('per-sensor'), s.sensor_kinds || []);
 
   // hourly
   const hours = Array.from({ length: 24 }, (_, i) => i);

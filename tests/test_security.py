@@ -387,3 +387,15 @@ def test_clock_setting(env):
     assert "03:04:05 PM" in body
     _, body = describe(ev, None, None, None)
     assert "15:04:05" in body
+
+
+def test_stats_per_sensor(env):
+    ctx, c = env
+    now = time.time()
+    ctx.store.process({"t": "wifi_ap", "ts": now, "mac": "aa:bb:cc:00:00:01", "ssid": "A", "rssi": -50, "sensor": "attic"})
+    ctx.store.process({"t": "wifi_ap", "ts": now, "mac": "aa:bb:cc:00:00:02", "ssid": "B", "rssi": -50, "sensor": "attic"})
+    ctx.store.process({"t": "wifi_ap", "ts": now, "mac": "aa:bb:cc:00:00:02", "ssid": "B", "rssi": -50, "sensor": "cellar"})
+    ctx.store.flush()
+    login(c)
+    got = {(r["id"], r["kind"]): r["n"] for r in c.get("/api/stats?days=1").json()["sensor_kinds"]}
+    assert got[("attic", "ap")] == 2 and got[("cellar", "ap")] == 1
