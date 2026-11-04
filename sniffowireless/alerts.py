@@ -47,10 +47,13 @@ EVENT_TYPES = {
     "dfs_radar": "Radar on a DFS channel (access point had to leave)",
     "channel_switch_announced": "Access point announced a channel switch", "channel_change": "Access point changed channel",
     "fingerprint_changed": "A known device's fingerprint changed",
+    "handshake_attack": "Possible handshake-capture attack on my network", "ap_downgrade": "My access point's security got weaker",
+    "probe_scan": "Device probing for many networks (scanner)", "mac_duplicate": "Same MAC address from two devices (cloned / spoofed)",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
             "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
-            "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium", "fingerprint_changed": "medium"}
+            "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium", "fingerprint_changed": "medium",
+            "handshake_attack": "high", "ap_downgrade": "high", "probe_scan": "medium", "mac_duplicate": "medium"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
     "telegram": ["bot_token", "chat_id"],
@@ -63,7 +66,7 @@ MASK = "••••••••"
 DEFAULT_RULES = [
     ("Watched devices arrive or leave", ["arrived", "left", "group_arrived", "group_left"], {"mode": "watchlist"}, {}),
     ("Security alerts", ["rogue_ap", "deauth_flood", "karma_ap", "security_finding", "rogue_dhcp", "arp_spoof",
-                         "tracker_following"],
+                         "tracker_following", "handshake_attack", "ap_downgrade", "mac_duplicate"],
      {"mode": "any"}, {}),
     ("Unknown device at night", ["new_device", "arrived"], {"mode": "unknown"},
      {"start": "23:00", "end": "06:00"}),
@@ -199,6 +202,8 @@ def describe(ev, dev, meta, group, time_fmt="%H:%M:%S"):
         "channel_change": f"{name} {ev.get('detail')}",
         "investigated_connect": f"{name} {ev.get('detail')}", "investigated_probe": f"{name} is {ev.get('detail')}",
         "fingerprint_changed": f"Fingerprint changed: {name}",
+        "handshake_attack": f"Handshake-capture attack: {ev.get('detail')}", "ap_downgrade": f"Security downgrade: {ev.get('detail')}",
+        "probe_scan": f"Scanner: {ev.get('detail')}", "mac_duplicate": f"Duplicate MAC: {ev.get('detail')}",
     }
     lines = [time.strftime("%Y-%m-%d " + time_fmt, time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:

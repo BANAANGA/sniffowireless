@@ -214,7 +214,7 @@ def parse_frame(pkt, fp_gate=None, tuned=None):
                     out.append({"t": "event", "ts": ts, "mac": bssid, "type": "deauth_broadcast",
                                 "detail": f"{frame} to {target} reason {reason}"})
                 else:
-                    client(target, bssid, frame, reason=reason)
+                    client(target, bssid, frame, reason=reason, from_ap=True)
             else:
                 client(a2, bssid, frame, rssi, reason=reason)
     elif d.type == 2:

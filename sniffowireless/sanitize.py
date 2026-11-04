@@ -140,7 +140,8 @@ def remote_observation(o, now):
             r.update(ssid=clean_str(o.get("ssid"), 64), enc=clean_str(o.get("enc"), 64), csa=clean_csa(o.get("csa")))
         else:
             r.update(bssid=clean_mac(o.get("bssid")), frame=o.get("frame") if o.get("frame") in FRAMES else None,
-                     probe=clean_str(o.get("probe"), 64), reason=clean_num(o.get("reason"), 0, 65535, True))
+                     probe=clean_str(o.get("probe"), 64), reason=clean_num(o.get("reason"), 0, 65535, True),
+                     from_ap=True if o.get("from_ap") else None)
     elif t in ("bt", "bt_conn"):
         if o.get("kind") not in ("ble", "bt_classic"):
             return None
