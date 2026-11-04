@@ -258,6 +258,40 @@ def test_identify_bikes():
     assert identify({"kind": "ble", "name": "Cowboy 4", "extra": {}})["brand"] == "Cowboy"
 
 
+def test_identify_fixes_and_additions():
+    # Regression: a bare "Nintendo" in the name used to type the console itself as a "controller".
+    r = identify({"kind": "bt_classic", "name": "Nintendo Switch", "extra": {}})
+    assert (r["brand"], r["dev_type"]) == ("Nintendo", "console")
+    r = identify({"kind": "bt_classic", "name": "Joy-Con (L)", "extra": {}})
+    assert (r["brand"], r["dev_type"]) == ("Nintendo", "controller")
+    assert identify({"kind": "bt_classic", "name": "Nintendo 3DS", "extra": {}})["dev_type"] is None
+
+    # Regression: "Google Wifi" / "Nest Wifi" (a mesh router) used to be typed as a speaker.
+    r = identify({"kind": "wifi_client", "name": "Google Wifi", "extra": {}})
+    assert (r["brand"], r["dev_type"]) == ("Google", "router")
+    r = identify({"kind": "wifi_client", "name": "Google Home Mini", "extra": {}})
+    assert (r["brand"], r["dev_type"]) == ("Google", "speaker")
+
+    # Bose/JBL make both headphones and speakers; a bare brand name shouldn't claim either at high
+    # confidence — only the low-confidence MAC-vendor fallback should offer a type guess.
+    r = identify({"kind": "ble", "name": "Bose QuietComfort", "vendor": "Bose Corporation", "extra": {}})
+    assert r["brand"] == "Bose" and r["dev_type"] == "headphones" and r["ident"]["fields"]["type"]["level"] == "low"
+
+    # Bluetooth class-of-device: Imaging (major 6) decodes as Display/Camera/Scanner/Printer flag bits,
+    # not a blanket "printer" — a camera must not be mistyped.
+    assert identify({"kind": "bt_classic", "extra": {"cod": hex((6 << 8) | (0x8 << 2))}})["dev_type"] == "printer"
+    assert identify({"kind": "bt_classic", "extra": {"cod": hex((6 << 8) | (0x4 << 2))}})["dev_type"] == "camera"
+    # Toy (major 8) no longer blanket-guesses "console"; Health (major 9) defaults to "sensor".
+    assert identify({"kind": "bt_classic", "extra": {"cod": hex((8 << 8) | (1 << 2))}})["dev_type"] is None
+    assert identify({"kind": "bt_classic", "extra": {"cod": hex((9 << 8) | (1 << 2))}})["dev_type"] == "sensor"
+
+    # New entries.
+    assert identify({"kind": "wifi_client", "name": "WeMo Mini", "extra": {}})["brand"] == "Belkin Wemo"
+    assert identify({"kind": "wifi_client", "name": "eero-abcd", "extra": {}})["dev_type"] == "router"
+    assert identify({"kind": "wifi_client", "name": "NVIDIA SHIELD", "extra": {}})["brand"] == "NVIDIA"
+    assert identify({"kind": "wifi_client", "name": "my-shielded-router", "extra": {}})["brand"] is None
+
+
 def test_6ghz_mislabelled_by_driver():
     from sniffowireless.wifi import radio_freq
 

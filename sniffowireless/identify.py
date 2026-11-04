@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-IDENT_VERSION = 3
+IDENT_VERSION = 4
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -193,8 +193,14 @@ COD_MINOR = {
         8: "car", 9: "streaming", 10: "speaker", 12: "camera", 13: "camera", 14: "tv", 15: "tv", 18: "console"},
     7: {1: "watch", 2: "wearable", 3: "wearable", 4: "wearable", 5: "wearable"},
 }
-COD_MAJOR_TYPE = {1: "computer", 2: "phone", 3: "router", 4: "media", 5: "input", 6: "printer", 7: "wearable",
-                  8: "console", 9: "wearable"}
+# Major class 6 (Imaging) is the exception: its minor field is four independent flag bits (Display/Camera/
+# Scanner/Printer, bits 2-5 of the class of device, i.e. bits 0-3 of the extracted 6-bit minor value we
+# compute), not an enumerated value — treating it as one blanket "printer" mistypes any Bluetooth camera
+# or scanner. Printer wins when several bits are set, since it's the least ambiguous of the four.
+COD_IMAGING_FLAGS = (("printer", 0x8), ("camera", 0x4), ("camera", 0x2), ("tv", 0x1))  # scanner -> camera bucket
+# No blanket type for major 6 (Imaging, decoded above), 8 (Toy — "console" doesn't fit a toy robot/vehicle
+# and nothing else in TYPE_LABELS does either) or 31 (Uncategorized).
+COD_MAJOR_TYPE = {1: "computer", 2: "phone", 3: "router", 4: "media", 5: "input", 7: "wearable", 9: "sensor"}
 
 
 def ble_fingerprint(ad, ext=False):
@@ -389,7 +395,8 @@ NAME_RULES = [
     (r"\bPixel Buds\b", "Google", "headphones", None, True, None),
     (r"\bPixel ?\d+\w*( Pro| a)?\b", "Google", "phone", "Android", True, None),
     (r"\bChromecast\b", "Google", "streaming", None, True, None),
-    (r"\b(Google|Nest) (Home|Mini|Hub|Audio|Wifi)\b", "Google", "speaker", None, True, None),
+    (r"\b(Google|Nest) (Home|Mini|Hub|Audio)\b", "Google", "speaker", None, True, None),
+    (r"\b(Google|Nest) Wifi\b", "Google", "router", None, True, None),  # a mesh router, not a speaker
     (r"\bOnePlus\b", "OnePlus", "phone", "Android", False, None),
     (r"\b(Redmi|POCO)\b", "Xiaomi", "phone", "Android", False, None),
     (r"\b(Mi|Xiaomi) (Smart )?Band ?\d*", "Xiaomi", "wearable", None, True, None),
@@ -409,9 +416,15 @@ NAME_RULES = [
     (r"\bPS[345]\b|\bPlayStation\b", "Sony", "console", None, True, None),
     (r"\bWH-1000XM\d\b|\bWF-\w+\b|\bLinkBuds\b", "Sony", "headphones", None, True, None),
     (r"\bBRAVIA\b", "Sony", "tv", "Android TV", False, None),
-    (r"\b(Nintendo|Joy-Con|Pro Controller)\b", "Nintendo", "controller", None, True, None),
-    (r"\bBose\b", "Bose", "headphones", None, False, None),
-    (r"\bJBL\b", "JBL", "speaker", None, False, None),
+    # "Nintendo" alone names the console (a Switch), not a controller — only its actual controller
+    # accessories should type as "controller"; a bare brand mention stays untyped rather than guessed.
+    (r"\bNintendo Switch\b", "Nintendo", "console", None, True, None),
+    (r"\b(Joy-Con|Pro Controller)\b", "Nintendo", "controller", None, True, None),
+    (r"\bNintendo\b", "Nintendo", None, None, False, None),
+    # Bose and JBL both sell headphones and speakers in similar volume, so the brand name alone doesn't
+    # say which — leave the type to the (lower-confidence) MAC-vendor rule below instead of guessing here.
+    (r"\bBose\b", "Bose", None, None, False, None),
+    (r"\bJBL\b", "JBL", None, None, False, None),
     (r"\bSonos\b", "Sonos", "speaker", None, False, None),
     (r"\bMOMENTUM( True Wireless)?( \d+)?\b", "Sennheiser", "headphones", None, True, None),
     (r"\bSennheiser\b", "Sennheiser", "headphones", None, False, None),
@@ -440,6 +453,17 @@ NAME_RULES = [
     (r"\braspberrypi\b", "Raspberry Pi", "sbc", "Linux", False, None),
     (r"\b(Car Multimedia|CarPlay|Android Auto|Tesla|SYNC|MMI|BMW|VW|Mercedes|Toyota|Volvo)\b", None, "car", None,
      False, None),
+    (r"\bWeMo\b", "Belkin Wemo", "smart_home", None, False, None),
+    (r"\bSmartThings\b", "Samsung", "smart_home", None, False, None),
+    (r"\b(Kasa|Tapo)\b", "TP-Link", "smart_home", None, False, None),
+    (r"\bLIFX\b", "LIFX", "light", None, False, None),
+    (r"\bMeross\b", "Meross", "smart_home", None, False, None),
+    (r"\becobee\b", "ecobee", "smart_home", None, False, None),
+    (r"\b(Roomba|iRobot|Braava)\b", "iRobot", "iot", None, False, None),
+    (r"\beero\b", "eero", "router", None, False, None),
+    (r"\bOrbi\b", "Netgear", "router", None, False, None),
+    (r"\bVelop\b", "Linksys", "router", None, False, None),
+    (r"\bNVIDIA SHIELD\b|\bSHIELD TV\b", "NVIDIA", "streaming", None, True, None),  # not bare "shield": too common a word
 ]
 NAME_RULES = [(re.compile(r, re.I), *rest) for r, *rest in NAME_RULES]
 
@@ -470,6 +494,7 @@ VENDOR_RULES = [
     (r"\bHuawei\b", "Huawei", None, 0), (r"\bOnePlus\b", "OnePlus", "phone", 60), (r"\bGarmin\b", "Garmin", "watch", 50),
     (r"\bFitbit\b", "Fitbit", "wearable", 70), (r"\bTesla\b", "Tesla", "car", 70),
     (r"\bSynology\b", "Synology", "nas", 80), (r"\bQNAP\b", "QNAP", "nas", 80),
+    (r"\biRobot\b", "iRobot", "iot", 75), (r"\becobee\b", "ecobee", "smart_home", 75),
     (r"\b(Seiko Epson|Brother|Canon)\b", None, "printer", 55), (r"\bHewlett|\bHP Inc", "HP", None, 0),
     (r"\b(Ubiquiti|TP-LINK|TP-Link|Netgear|Cisco|Linksys|AVM|ASUSTek|Zyxel|MikroTik|Aruba|Ruckus|D-Link|"
      r"Arcadyan|Sagemcom|Technicolor|Compal Broadband|Eero|Juniper)\b", None, "network", 0),
@@ -665,7 +690,10 @@ def identify(dev):
             c = None
         if c:
             major, minor = (c >> 8) & 0x1F, (c >> 2) & 0x3F
-            typ = COD_MINOR.get(major, {}).get(minor) or COD_MAJOR_TYPE.get(major)
+            if major == 6:
+                typ = next((t for t, bit in COD_IMAGING_FLAGS if minor & bit), None)
+            else:
+                typ = COD_MINOR.get(major, {}).get(minor) or COD_MAJOR_TYPE.get(major)
             ev.add("type", typ, 80, f"Bluetooth class of device {cod}")
     elif extra.get("class") and kind == "bt_classic":
         ev.add("type", {"audio/video": "media", "computer": "computer", "phone": "phone",
