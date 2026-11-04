@@ -351,6 +351,11 @@ def create_app(ctx):
         for col, path in (("addr_type", "$.addr_type"), ("company", "$.company")):  # Bluetooth LE only
             out[col] = rows(f"SELECT json_extract(extra, '{path}') v, kind, COUNT(*) n FROM devices WHERE kind='ble' "
                             f"AND last_seen>=? GROUP BY v ORDER BY n DESC", (since,))
+        # Which kinds of device each sensor heard in the period (a device heard by two sensors counts for both).
+        out["sensor_kinds"] = rows(
+            "SELECT w.sensor id, COALESCE(s.name, w.sensor) name, d.kind, COUNT(*) n FROM sightings w "
+            "JOIN devices d ON d.mac = w.mac LEFT JOIN sensors s ON s.id = w.sensor WHERE w.last_seen>=? "
+            "GROUP BY w.sensor, d.kind", (since,))
         out["fingerprints"] = rows(
             "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
             "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
