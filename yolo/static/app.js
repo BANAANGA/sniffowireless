@@ -653,7 +653,8 @@ async function viewDevice(mac, params) {
     <div class="page-head"><div>
       <div class="crumbs"><a href="#/devices">Devices</a> / <a href="#/devices?kind=${enc(d.kind)}">${esc(m.label)}</a></div>
       <h1>${esc(title)}</h1><div class="sub mono">${esc(d.mac)}${d.randomized ? ' · randomized address' : ''}</div></div>
-      ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div>
+      <div class="row">${d.kind === 'ble' ? `<button class="btn" id="play-sound" type="button" title="Connects and asks the device to play its find-me sound. Doesn't work on genuine Apple AirTags — see the button for why.">Play sound</button>` : ''}
+        ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div></div>
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
       ${trackPanel(d)}
@@ -674,6 +675,17 @@ async function viewDevice(mac, params) {
   bindTrackPanel(d);
   bindLanPanel(d);
   bindMatchPanel(d);
+  const soundBtn = document.getElementById('play-sound');
+  if (soundBtn) soundBtn.onclick = async () => {
+    soundBtn.disabled = true;
+    const was = soundBtn.textContent;
+    soundBtn.textContent = 'Connecting…';
+    try {
+      await send('POST', `/api/devices/${enc(mac)}/sound`);
+      toast('Sound command sent');
+    } catch (e) { toast(e.message, true); }
+    finally { soundBtn.disabled = false; soundBtn.textContent = was; }
+  };
   // facts / static sections
   const peers = document.getElementById('peers');
   peers.innerHTML = d.peers.length ? `<table><thead><tr><th>${isAp ? 'Client' : 'Access point / adapter'}</th><th>${isAp ? 'Vendor' : 'SSID'}</th><th class="num">Sessions</th><th class="num">Total time</th><th class="num">First</th><th class="num">Last</th></tr></thead><tbody>

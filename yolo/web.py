@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 
 from . import (alerts, appearance, auth, backup, dfs, handshake, health, interference, investigate, lan, logs, manage,
-               matching, metrics, reports, search, security, sensors, status, survey, sysinfo, trackers)
+               matching, metrics, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -248,6 +248,26 @@ def create_app(ctx):
                            "WHERE e.mac=? OR e.peer=? ORDER BY e.id DESC LIMIT 200", (mac, mac))
         d["now"] = time.time()
         return d
+
+    @app.post("/api/devices/{mac}/sound", dependencies=[Depends(current_user)])
+    def play_sound(mac: str):
+        """Try to make a BLE tracker tag play its "find me" sound. Only works on devices that implement
+        the standard Immediate Alert Service — notably not genuine Apple AirTags (see tracker_sound.py)."""
+        mac = mac.lower()
+        d = one("SELECT kind, extra FROM devices WHERE mac=?", (mac,))
+        if not d:
+            raise HTTPException(404, "device not found")
+        if d["kind"] != "ble":
+            raise HTTPException(400, "only BLE devices can be asked to play a sound")
+        if not cfg.bt_devices:
+            raise HTTPException(400, "no Bluetooth adapter is configured (BT_DEVICES)")
+        extra = json.loads(d["extra"] or "null") or {}
+        addr_type = 0 if extra.get("addr_type") == "public" else 1
+        try:
+            tracker_sound.play_sound(cfg.bt_devices[0], mac, addr_type)
+        except tracker_sound.SoundError as e:
+            raise HTTPException(502, str(e))
+        return {"ok": True}
 
     @app.get("/api/devices/{mac}/rssi", dependencies=[Depends(current_user)])
     def device_rssi(mac: str, hours: float = 24):

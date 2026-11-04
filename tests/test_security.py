@@ -455,3 +455,34 @@ def test_handshake_api_scope_and_auth(env):
 
     assert c.delete("/api/handshakes/HomeNet", headers=H).status_code == 200
     assert c.get("/api/handshakes/HomeNet/capture.pcap").status_code == 404
+
+
+def test_play_sound_api(env, monkeypatch):
+    ctx, c = env
+    now = time.time()
+    AP = "24:a4:3c:10:00:01"
+    TAG = "aa:bb:cc:dd:ee:01"
+    ctx.store.process({"t": "wifi_ap", "ts": now, "mac": AP, "ssid": "HomeNet"})
+    ctx.store.process({"t": "bt", "kind": "ble", "ts": now, "mac": TAG, "rssi": -70, "randomized": True})
+    ctx.store.flush()
+    login(c)
+
+    # No Bluetooth adapter configured: a clear error, not a hang or a crash.
+    assert c.post(f"/api/devices/{AP}/sound", headers=H).status_code == 400  # not a BLE device
+    assert c.post(f"/api/devices/{TAG}/sound", headers=H).status_code == 400  # BT_DEVICES unset in this test env
+    assert c.post("/api/devices/aa:bb:cc:dd:ee:99/sound", headers=H).status_code == 404
+
+    # With an adapter "configured", the actual radio call is mocked: verify the endpoint wires it up and
+    # maps tracker_sound.SoundError to a clear HTTP error rather than a 500.
+    ctx.cfg.bt_devices = ["hci0"]
+    import yolo.web as web_mod
+
+    def fake_play_sound(iface, mac, addr_type):
+        assert iface == "hci0" and mac == TAG and addr_type == 1  # randomized -> non-public address type
+        raise web_mod.tracker_sound.SoundError("no sound-alert service")
+    monkeypatch.setattr(web_mod.tracker_sound, "play_sound", fake_play_sound)
+    r = c.post(f"/api/devices/{TAG}/sound", headers=H)
+    assert r.status_code == 502 and "no sound-alert service" in r.json()["detail"]
+
+    monkeypatch.setattr(web_mod.tracker_sound, "play_sound", lambda iface, mac, addr_type: None)
+    assert c.post(f"/api/devices/{TAG}/sound", headers=H).json() == {"ok": True}
