@@ -15,6 +15,38 @@ PINGPONG_GAP = 120     # A -> B -> A within this many seconds counts as ping-pon
 def routes(ctx):
     r = APIRouter()
 
+    @r.get("/api/mynet/changes")
+    def mynet_changes(days: float = 30, _=Depends(current_user)):
+        """A readable, chronological log of what's changed on the admin's own networks: channel moves
+        (from the DFS monitor, which already tracks every AP's channel history), and security findings
+        (open/weak encryption, WPS, evil twins) raised specifically for one of these SSIDs. Pulls from
+        detection that already runs continuously, rather than taking a fresh snapshot — a config dropped
+        back to how it was before still shows as two separate changes, which is what actually happened."""
+        n = ctx.settings.get("networks")
+        if not n["ssids"]:
+            return {"configured": False, "items": []}
+        since = time.time() - days * 86400
+        items = []
+        for r_ in ctx.rows("SELECT ts, mac, ssid, from_ch, to_ch, csa, dfs FROM dfs_events "
+                           "WHERE mine=1 AND ts >= ? ORDER BY ts DESC LIMIT 300", (since,)):
+            how = "radar forced it off" if r_["dfs"] else "it announced the move" if r_["csa"] else "noticed on the new channel"
+            items.append({"ts": r_["ts"], "mac": r_["mac"], "ssid": r_["ssid"], "type": "channel",
+                         "title": f"Channel {r_['from_ch']} → {r_['to_ch']} on “{r_['ssid'] or r_['mac']}”",
+                         "detail": how, "severity": "medium" if r_["dfs"] else "low"})
+        # Findings whose ssid is one of mine: config issues (open/WEP/WPS/no-WPA3) on my own APs, and
+        # rogue/evil-twin APs impersonating one of my SSIDs (both already keyed by "my" ssid, not the
+        # impostor's) — one query covers both.
+        q = ",".join("?" * len(n["ssids"]))
+        for r_ in ctx.rows(f"SELECT first_seen ts, mac, ssid, type, title, detail, severity, status FROM findings "
+                          f"WHERE ssid IN ({q}) AND first_seen >= ? ORDER BY first_seen DESC LIMIT 300",
+                          n["ssids"] + [since]):
+            items.append({"ts": r_["ts"], "mac": r_["mac"], "ssid": r_["ssid"],
+                         "type": "security" if r_["type"] != "rogue_ap" else "rogue_ap",
+                         "title": r_["title"], "detail": r_["detail"], "severity": r_["severity"],
+                         "status": r_["status"]})
+        items.sort(key=lambda x: x["ts"], reverse=True)
+        return {"configured": True, "items": items[:300]}
+
     @r.get("/api/mynet")
     def mynet(days: float = 7, _=Depends(current_user)):
         now = time.time()
