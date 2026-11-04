@@ -469,6 +469,29 @@ def test_stats_per_sensor(env):
     assert got[("attic", "ap")] == 2 and got[("cellar", "ap")] == 1
 
 
+def test_stats_weekly_heat_and_new_vendors(env):
+    ctx, c = env
+    now = time.time()
+    old_vendor_mac = "24:a4:3c:00:00:01"
+    ctx.store.process({"t": "wifi_ap", "ts": now - 30 * 86400, "mac": old_vendor_mac, "ssid": "Old", "vendor": "OldCo"})
+    ctx.store.flush()
+    new_vendor_mac = "a4:83:e7:00:00:02"
+    ctx.store.process({"t": "wifi_client", "ts": now, "mac": new_vendor_mac, "vendor": "NewCo", "rssi": -50})
+    ctx.store.flush()
+    login(c)
+    s = c.get("/api/stats?days=7").json()
+
+    heat = {(r["wd"], r["h"]): r["n"] for r in s["weekly_heat"]}
+    now_lt = now  # samples are keyed on the raw (unoffset) epoch minute at tz=0
+    wd = int((now_lt // 86400 + 3) % 7)
+    h = int((now_lt % 86400) // 3600)
+    assert heat.get((wd, h), 0) >= 1
+
+    vendors = {v["vendor"]: v for v in s["new_vendors"]}
+    assert "NewCo" in vendors and "OldCo" not in vendors  # OldCo's only device is 30 days old
+    assert vendors["NewCo"]["devices"] == 1
+
+
 def test_sessions_drilldown_and_stats_limit(env):
     ctx, c = env
     now = time.time()

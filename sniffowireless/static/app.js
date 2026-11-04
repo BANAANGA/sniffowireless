@@ -933,6 +933,8 @@ async function viewStats(params) {
     <section class="panel span-3" id="per-sensor" hidden></section>
     <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
+    <section class="panel span-2"><header><h2>Weekly activity pattern</h2><span class="faint">relative busyness by day and hour</span></header><div class="body" id="weekheat"></div></section>
+    <section class="panel" data-list="new-vendors"><header><h2>${ttl('new-vendors', 'New vendors')}</h2><span class="faint">first seen, ever, in this period</span></header><div class="body flush table-wrap" id="new-vendors"></div></section>
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
     <section class="panel"><header><h2>${ttl('', 'Session durations', hrefWith('/sessions', { type: 'assoc', days }))}</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
     <section class="panel" data-list="st-type"><header><h2>${ttl('st-type', 'Device types')}</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
@@ -1008,6 +1010,28 @@ async function viewStats(params) {
       <div class="track"><i style="width:${tot ? rn / tot * 100 : 0}%;background:${m.color}"></i><i style="width:${tot ? (tot - rn) / tot * 100 : 0}%;background:${m.color}44"></i></div></div>
       <div class="n">${num(tot)}</div></li>`).join('')}</ul>
     <p class="faint" style="margin:12px 0 0">Randomized (locally administered / private) addresses rotate, so one physical device can appear as many entries. Connections usually keep a stable per-network address.</p>`;
+
+  // weekly activity pattern: distinct devices per (weekday, hour), same heat-grid style as a device's own
+  const WDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const heatCell = {};
+  s.weekly_heat.forEach(r => { heatCell[`${r.wd}:${r.h}`] = r.n; });
+  const heatMax = Math.max(1, ...s.weekly_heat.map(r => r.n));
+  let weekHtml = '<div class="heat"><span></span>' + Array.from({ length: 24 }, (_, i) => `<span class="h">${i % 6 === 0 ? hourLabel(i, true) : ''}</span>`).join('');
+  WDAYS.forEach((label, wd) => {
+    weekHtml += `<span class="d">${label}</span>` + Array.from({ length: 24 }, (_, h) => {
+      const v = heatCell[`${wd}:${h}`] || 0;
+      return `<span class="cell" title="${label} ${hourLabel(h)} — ${v ? num(v) : 'no'} device${v === 1 ? '' : 's'}" style="${v ? `background:${TEXT};opacity:${(0.15 + 0.85 * v / heatMax).toFixed(2)}` : ''}"></span>`;
+    }).join('');
+  });
+  document.getElementById('weekheat').innerHTML = weekHtml + '</div>';
+
+  // new vendors: the first time ever this vendor was seen fell in this period
+  const nvEl = document.getElementById('new-vendors');
+  nvEl.innerHTML = s.new_vendors.length ? `<table><thead><tr><th>Vendor</th><th class="num">First seen</th><th class="num">Devices (all time)</th></tr></thead><tbody>
+    ${s.new_vendors.slice(0, listId ? 1000 : STAT_CAP).map(v => `<tr class="link" data-href="${hrefWith('/devices', { vendor: v.vendor })}">
+      <td>${esc(v.vendor)}</td><td class="num muted">${dt(v.first_seen)}</td><td class="num">${num(v.devices)}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="empty">No new vendors in this period</div>';
+  linkRows(nvEl);
 
   // identification breakdowns
   const barList = (id, rows, label, filterKey, kind = '', order = null) => {
