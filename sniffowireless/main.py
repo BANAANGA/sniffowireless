@@ -96,6 +96,7 @@ def build(cfg):
     from .context import Ctx
     from .lan import LanMonitor
     from .manage import apply_ignore, apply_meta
+    from .mqtt import MqttPublisher
     from .reports import ReportScheduler
     from .security import SecurityMonitor
     from .sensors import LocationTracker
@@ -119,11 +120,12 @@ def build(cfg):
     ctx.backups = BackupScheduler(ctx)
     ctx.investigate = InvestigationMonitor(ctx)
     ctx.handshake = HandshakeCapture(ctx)
+    ctx.mqtt = MqttPublisher(ctx)
     from .matching import SCHEMA as MATCHING_SCHEMA
     store.conn.executescript(MATCHING_SCHEMA)
     ctx.dfs = DfsMonitor(ctx)
     store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs]
-    store.listeners.append(ctx.alerts.on_events)
+    store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
     apply_ignore(ctx)
     apply_meta(ctx)
     return ctx
@@ -145,6 +147,7 @@ def main():
     store = ctx.store
     stop = threading.Event()
     ctx.alerts.start(stop)
+    ctx.mqtt.start(stop)
     ctx.reports.start(stop)
     ctx.backups.start(stop)
     if cfg.demo:
