@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 
 from . import (alerts, appearance, auth, backup, dfs, handshake, health, interference, investigate, lan, logs, manage,
-               matching, metrics, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers)
+               matching, metrics, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -481,8 +481,9 @@ def create_app(ctx):
                                                (time.time() - days * 86400,)))
 
     # ------------------------------------------------------------------ static
-    # investigate before manage: manage's catch-all /api/settings/{key} would otherwise shadow /api/settings/investigate
-    for mod in (auth, appearance, investigate, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, dfs,
+    # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
+    # /api/settings/investigate and /api/settings/mqtt
+    for mod in (auth, appearance, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, dfs,
                 trackers, backup, search, logs, matching, handshake):
         app.include_router(mod.routes(ctx))
 

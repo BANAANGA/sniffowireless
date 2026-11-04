@@ -468,7 +468,7 @@ addRoute('/reports', async (_, params) => {
 
 // ===================================================================== settings
 const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'],
-  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance']];
+  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance']];
 
 addRoute('/settings', async (_, params) => {
   const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore'].includes(k));
@@ -641,6 +641,42 @@ const SETTINGS_VIEWS = {
     const f = el.querySelector('#rf');
     f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour') }); toast('Saved'); };
     el.querySelector('#send').onclick = async () => { try { await send('POST', '/api/reports/send'); toast('Report sent'); } catch (e) { toast(e.message, true); } };
+  },
+  async mqtt(el) {
+    const cfg = await api('/api/settings/mqtt');
+    el.innerHTML = `<section class="panel"><header><h2>MQTT presence</h2>
+        <span class="faint"><span class="state-dot ${cfg.status.connected ? 'on' : ''}"></span>${cfg.status.connected ? 'Connected' : cfg.status.enabled ? 'Not connected' : 'Disabled'}</span></header>
+      <div class="body"><p class="muted" style="margin-top:0">Publishes arrived/left for devices you've labelled (or marked known) to an MQTT broker — e.g. for Home Assistant.
+        One retained topic per device, <code>&lt;prefix&gt;/presence/&lt;mac&gt;</code>, plus <code>&lt;prefix&gt;/status</code> (online/offline).
+        Devices without a label and not marked known are never published.</p>
+        <form id="mf" class="form-narrow">
+        <label class="check"><input type="checkbox" name="enabled" ${cfg.enabled ? 'checked' : ''}> Enabled</label>
+        <div class="row"><label class="field">Broker host<input name="host" value="${esc(cfg.host)}" placeholder="192.168.1.10" autocomplete="off"></label>
+          <label class="field">Port<input type="number" name="port" min="1" max="65535" value="${cfg.port}"></label></div>
+        <div class="row"><label class="field">Username (optional)<input name="username" value="${esc(cfg.username)}" autocomplete="off"></label>
+          <label class="field">Password (optional)<input type="password" name="password" value="${esc(cfg.password)}" autocomplete="new-password"></label></div>
+        <label class="check"><input type="checkbox" name="tls" ${cfg.tls ? 'checked' : ''}> Use TLS</label>
+        <label class="field">Topic prefix<input name="topic_prefix" value="${esc(cfg.topic_prefix)}" maxlength="64"></label>
+        <button class="btn primary">Save</button> <button type="button" class="btn" id="mqtt-test">Send test message</button>
+        ${cfg.status.last_error ? `<p class="faint small-text" style="color:var(--bad)">${esc(cfg.status.last_error)}</p>` : ''}</form></div></section>`;
+    const f = el.querySelector('#mf');
+    f.onsubmit = async e => {
+      e.preventDefault();
+      try {
+        await send('PUT', '/api/settings/mqtt', { enabled: fv(f, 'enabled'), host: fv(f, 'host'), port: +fv(f, 'port') || 1883,
+          username: fv(f, 'username'), password: fv(f, 'password'), tls: fv(f, 'tls'), topic_prefix: fv(f, 'topic_prefix') || 'sniffowireless',
+          qos: 0, retain: true });
+        toast('Saved');
+        SETTINGS_VIEWS.mqtt(el);
+      } catch (e) { toast(e.message, true); }
+    };
+    el.querySelector('#mqtt-test').onclick = async b => {
+      const btn = el.querySelector('#mqtt-test');
+      btn.disabled = true;
+      try { await send('POST', '/api/settings/mqtt/test'); toast('Test message sent'); }
+      catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    };
   },
   async security(el) {
     const cfg = await api('/api/settings/security');

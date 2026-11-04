@@ -21,6 +21,9 @@ DEFAULTS = {
     "investigate": {"ssids": []},
     # Appearance (admin): app name, icon (built-in glyph or uploaded file) and colours differing from the defaults.
     "appearance": {"name": "sniffowireless", "icon": "dot", "clock": "auto", "colors": {}, "icon_file": None, "icon_ver": 0},
+    # MQTT presence publish (e.g. for Home Assistant): arrived/left for known/labelled devices only.
+    "mqtt": {"enabled": False, "host": "", "port": 1883, "username": "", "password": "", "tls": False,
+             "topic_prefix": "sniffowireless", "qos": 0, "retain": True},
 }
 
 
