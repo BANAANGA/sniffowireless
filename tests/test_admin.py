@@ -146,6 +146,16 @@ def test_fingerprint_drift_alert(ctx):
     assert f and f["mac"] == CL and f["severity"] == "medium"
     assert "fingerprint_changed" in {r["type"] for r in ctx.rows("SELECT type FROM events")}
 
+    # The same device probing on another band with a different layout is normal, not drift.
+    s.process({"t": "wifi_client", "ts": t + 2, "mac": CL, "frame": "probe", "probe": "x", "band": "2.4",
+               "fp": {"wifi": {"sig": "sig-24"}, "src": "probe"}})
+    s.process({"t": "wifi_client", "ts": t + 3, "mac": CL, "frame": "probe", "probe": "x", "band": "5",
+               "fp": {"wifi": {"sig": "sig-5"}, "src": "probe"}})
+    s.process({"t": "wifi_client", "ts": t + 4, "mac": CL, "frame": "probe", "probe": "x", "band": "2.4",
+               "fp": {"wifi": {"sig": "sig-24"}, "src": "probe"}})
+    s.flush()
+    assert ctx.one("SELECT COUNT(*) n FROM findings WHERE type='fingerprint_changed'")["n"] == 1
+
     # An unknown device with the exact same kind of change raises nothing.
     other = "a4:83:e7:01:00:02"
     s.process({"t": "wifi_client", "ts": t, "mac": other, "frame": "probe", "probe": "x",
@@ -154,6 +164,126 @@ def test_fingerprint_drift_alert(ctx):
                "fp": {"wifi": {"sig": "sig-B"}, "src": "probe"}})
     s.flush()
     assert ctx.one("SELECT COUNT(*) n FROM findings WHERE type='fingerprint_changed'")["n"] == 1
+
+
+def _finding(ctx, type_):
+    ctx.store.flush()
+    return ctx.one("SELECT * FROM findings WHERE type=?", (type_,))
+
+
+def test_handshake_attack_detection(ctx):
+    s = ctx.store
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": [AP]})
+    t = time.time()
+    s.process({"t": "wifi_ap", "ts": t, "mac": AP, "ssid": "HomeNet", "enc": "WPA2/PSK,WPA3/SAE"})
+    kick = lambda ts, mac, **kw: s.process({"t": "wifi_client", "ts": ts, "mac": mac, "bssid": AP, "frame": "deauth",
+                                              "reason": 7, **kw})
+    rejoin = lambda ts, mac: s.process({"t": "wifi_client", "ts": ts, "mac": mac, "bssid": AP, "frame": "assoc"})
+
+    # The client leaving by itself (not sent by the AP), a slow rejoin and a rejoin that never happens: nothing.
+    for i in range(6):
+        kick(t + i * 20, CL)
+        rejoin(t + i * 20 + 2, CL)
+    slow = "a4:83:e7:01:00:02"
+    for i in range(6):
+        kick(t + i * 20, slow, from_ap=True)
+        rejoin(t + i * 20 + 60, slow)
+    s.process({"t": "wifi_client", "ts": t, "mac": "a4:83:e7:01:00:03", "bssid": "24:a4:3c:99:99:99", "frame": "deauth",
+               "from_ap": True})
+    assert not _finding(ctx, "handshake_attack")
+
+    # Kicked by the AP and straight back, four times in a few minutes: well under the flood threshold.
+    for i in range(4):
+        kick(t + 100 + i * 30, CL, from_ap=True)
+        rejoin(t + 100 + i * 30 + 2, CL)
+    f = _finding(ctx, "handshake_attack")
+    assert f and f["severity"] == "high" and f["mac"] == AP and f["ssid"] == "HomeNet" and CL in f["detail"]
+    assert not _finding(ctx, "deauth_flood")
+    assert "handshake_attack" in {r["type"] for r in ctx.rows("SELECT type FROM events")}
+
+
+def test_ap_security_downgrade(ctx):
+    s = ctx.store
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": [AP]})
+    t = time.time()
+    beacon = lambda i, enc: s.process({"t": "wifi_ap", "ts": t + i, "mac": AP, "ssid": "HomeNet", "enc": enc})
+    beacon(0, "WPA2/PSK,WPA3/SAE")
+    # A single odd beacon, or one that recovers before three in a row, isn't believed.
+    beacon(1, "WPA2/PSK"); beacon(2, "WPA2/PSK"); beacon(3, "WPA2/PSK,WPA3/SAE")
+    beacon(4, "WPA2/PSK"); beacon(5, "WPA2/PSK")
+    assert not _finding(ctx, "ap_downgrade")
+    beacon(6, "WPA2/PSK")
+    f = _finding(ctx, "ap_downgrade")
+    assert f and f["severity"] == "medium" and "WPA3/SAE" in f["detail"] and f["mac"] == AP
+    assert ctx.one("SELECT rank FROM ap_enc WHERE mac=?", (AP,))["rank"] == 4  # baseline survives for restarts
+
+    # Dropping all the way to open is the worst case.
+    for i in range(7, 10):
+        beacon(i, "OPN")
+    assert _finding(ctx, "ap_downgrade")["severity"] == "high"
+
+    # Resolving the finding accepts the new level as normal: the baseline is relearned from what's seen next.
+    ctx.security.accept_security(AP)
+    for i in range(10, 16):
+        beacon(i, "WPA2/PSK")
+    assert ctx.security.enc_base[AP][0] == 3 and ctx.security.down_count.get(AP) is None
+
+
+def test_probe_scan_detection(ctx):
+    s = ctx.store
+    t = time.time()
+    probe = lambda i, mac: s.process({"t": "wifi_client", "ts": t + i, "mac": mac, "frame": "probe", "probe": f"net-{i}"})
+    for i in range(20):  # a long saved-network list, but not scanner-long
+        probe(i, CL)
+    assert not _finding(ctx, "probe_scan")
+    scanner = "a4:83:e7:01:00:09"
+    for i in range(30):
+        probe(i, scanner)
+    f = _finding(ctx, "probe_scan")
+    assert f and f["mac"] == scanner and f["severity"] == "medium"
+    # The same names spread over far more than the window don't add up.
+    slow = "a4:83:e7:01:00:0a"
+    for i in range(30):
+        probe(i * 10, slow)
+    assert ctx.one("SELECT COUNT(*) n FROM findings WHERE type='probe_scan'")["n"] == 1
+
+
+def test_mac_duplicate_detection(ctx):
+    s = ctx.store
+    t = time.time()
+    fp = lambda sig: {"wifi": {"sig": sig}, "src": "probe"}
+    # One device on two bands legitimately sends different probe layouts on each; that's not a clone.
+    for i in range(8):
+        s.process({"t": "wifi_client", "ts": t + i, "mac": CL, "frame": "probe", "probe": "x", "band": "2.4" if i % 2 else "5",
+                   "fp": fp("sig-24" if i % 2 else "sig-5")})
+    assert not _finding(ctx, "mac_duplicate")
+    # Two chipsets sharing one address on the same band: the layout flips back and forth.
+    clone = "a4:83:e7:01:00:0b"
+    for i in range(6):
+        s.process({"t": "wifi_client", "ts": t + i, "mac": clone, "frame": "probe", "probe": "x", "band": "5",
+                   "fp": fp("sig-A" if i % 2 == 0 else "sig-B")})
+    f = _finding(ctx, "mac_duplicate")
+    assert f and f["mac"] == clone and f["severity"] == "medium" and "fingerprint" in f["detail"]
+    # One sensor hearing the address leap between close and far, again and again.
+    twin = "a4:83:e7:01:00:0c"
+    for i in range(8):
+        s.process({"t": "wifi_client", "ts": t + i, "mac": twin, "frame": "data", "rssi": -35 if i % 2 else -80})
+    s.flush()
+    assert ctx.one("SELECT detail FROM findings WHERE mac=? AND type='mac_duplicate'", (twin,))
+    # A steadily moving device (big change only once) is fine.
+    walker = "a4:83:e7:01:00:0d"
+    for i in range(8):
+        s.process({"t": "wifi_client", "ts": t + i, "mac": walker, "frame": "data", "rssi": -35 if i < 4 else -80})
+    s.flush()
+    assert not ctx.one("SELECT 1 FROM findings WHERE mac=? AND type='mac_duplicate'", (walker,))
+
+
+def test_remote_deauth_keeps_ap_origin():
+    from sniffowireless import sanitize
+    o = {"t": "wifi_client", "ts": time.time(), "mac": CL, "bssid": AP, "frame": "deauth", "reason": 7, "from_ap": True}
+    assert sanitize.remote_observation(o, time.time())["from_ap"] is True
+    o.pop("from_ap")
+    assert "from_ap" not in sanitize.remote_observation(o, time.time())
 
 
 def test_channel_recommendation():

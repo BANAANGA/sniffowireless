@@ -49,7 +49,8 @@ class Members(BaseModel):
 
 SETTING_SCHEMAS = {  # key -> {field: (type, min, max)}
     "security": {"deauth_threshold": (int, 3, 10_000), "deauth_window": (int, 1, 3600), "karma_ssids": (int, 2, 100),
-                 "karma_window": (int, 60, 86400)},
+                 "karma_window": (int, 60, 86400), "hs_cycles": (int, 2, 1000), "hs_window": (int, 30, 86400),
+                 "probe_ssids": (int, 5, 1000), "probe_window": (int, 10, 3600)},
     "report": {"email": (bool, None, None), "notifier_id": (int, 0, 10 ** 9), "weekday": (int, 0, 6),
                "hour": (int, 0, 23)},
 }

@@ -158,7 +158,8 @@ td.trunc { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .ev-connected, .ev-arrived, .ev-new_device { color: var(--good); }
 .ev-disconnected, .ev-left { color: var(--muted); }
 .ev-roamed, .ev-new_probe { color: var(--ap); }
-.ev-deauth_broadcast, .ev-deauth, .ev-rogue_ap, .ev-karma_ap, .ev-deauth_flood, .ev-security_finding { color: var(--bad); }
+.ev-deauth_broadcast, .ev-deauth, .ev-rogue_ap, .ev-karma_ap, .ev-deauth_flood, .ev-security_finding,
+.ev-handshake_attack, .ev-ap_downgrade, .ev-probe_scan, .ev-mac_duplicate { color: var(--bad); }
 .ev-group_arrived { color: var(--good); }
 .ev-group_left { color: var(--muted); }
 .ev-moved { color: var(--ap); }

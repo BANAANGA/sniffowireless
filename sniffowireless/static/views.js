@@ -262,7 +262,7 @@ addRoute('/security', async () => {
   const s = await api('/api/security');
   const cnt = Object.fromEntries(s.counts.map(c => [c.severity, c.n]));
   const open = s.findings.filter(f => f.status !== 'resolved');
-  app.innerHTML = `<div class="page-head"><div><h1>Security</h1><div class="sub">Evil-twin / rogue access points, deauthentication floods, KARMA-style APs and weak settings on your own networks.</div></div></div>
+  app.innerHTML = `<div class="page-head"><div><h1>Security</h1><div class="sub">Evil-twin / rogue access points, deauthentication floods, handshake-capture attempts, security downgrades, KARMA-style APs, scanners, cloned MAC addresses and weak settings on your own networks.</div></div></div>
     <div class="grid cols-4">
       ${[['high', 'High'], ['medium', 'Medium'], ['low', 'Low']].map(([k, l]) => `<div class="card"><div class="label">${sevTag(k)} open findings</div><div class="value">${cnt[k] || 0}</div></div>`).join('')}
       <div class="card"><div class="label">My networks</div><div class="value" style="font-size:18px">${s.networks.ssids.map(esc).join(', ') || '<span class="faint">not set</span>'}</div>
@@ -719,9 +719,14 @@ const SETTINGS_VIEWS = {
       <label class="field">within seconds<input type="number" name="deauth_window" min="1" value="${cfg.deauth_window}"></label></div>
       <div class="row"><label class="field">KARMA AP: distinct SSIDs<input type="number" name="karma_ssids" min="2" value="${cfg.karma_ssids}"></label>
       <label class="field">within seconds<input type="number" name="karma_window" min="60" value="${cfg.karma_window}"></label></div>
+      <div class="row"><label class="field">Handshake-capture attack: kick-and-rejoin cycles<input type="number" name="hs_cycles" min="2" value="${cfg.hs_cycles}"></label>
+      <label class="field">within seconds<input type="number" name="hs_window" min="30" value="${cfg.hs_window}"></label></div>
+      <div class="row"><label class="field">Scanner: distinct networks probed for<input type="number" name="probe_ssids" min="5" value="${cfg.probe_ssids}"></label>
+      <label class="field">within seconds<input type="number" name="probe_window" min="10" value="${cfg.probe_window}"></label></div>
+      <p class="faint small-text">A weaker-security drop on one of your own access points and an address that looks like two devices are detected automatically, with no thresholds to tune.</p>
       <button class="btn primary">Save</button></form></div></section>`;
     const f = el.querySelector('#sf');
-    f.onsubmit = async e => { e.preventDefault(); const b = {}; ['deauth_threshold', 'deauth_window', 'karma_ssids', 'karma_window'].forEach(k => { b[k] = +fv(f, k); }); await send('PUT', '/api/settings/security', b); toast('Saved'); };
+    f.onsubmit = async e => { e.preventDefault(); const b = {}; ['deauth_threshold', 'deauth_window', 'karma_ssids', 'karma_window', 'hs_cycles', 'hs_window', 'probe_ssids', 'probe_window'].forEach(k => { b[k] = +fv(f, k); }); await send('PUT', '/api/settings/security', b); toast('Saved'); };
   },
   async tokens(el) {
     const ts = await api('/api/tokens');
