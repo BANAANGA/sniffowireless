@@ -7,9 +7,9 @@ from scapy.layers.dns import DNS, DNSQR, DNSRR, DNSRRSRV
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.l2 import ARP, Ether
 
-from yolo.config import Config
-from yolo.ethernet import FrameParser
-from yolo.main import build
+from sniffowireless.config import Config
+from sniffowireless.ethernet import FrameParser
+from sniffowireless.main import build
 
 load_contrib("lldp")
 from scapy.contrib.lldp import (LLDPDUChassisID, LLDPDUEndOfLLDPDU, LLDPDUPortID,  # noqa: E402

@@ -2,14 +2,14 @@ import time
 
 import pytest
 
-from yolo.alerts import describe, in_schedule, matches
-from yolo.auth import hash_password, verify_password
-from yolo.config import Config
-from yolo.main import build
-from yolo.manage import apply_ignore, apply_meta
-from yolo.metrics import render
-from yolo.reports import occupancy
-from yolo.survey import recommend
+from sniffowireless.alerts import describe, in_schedule, matches
+from sniffowireless.auth import hash_password, verify_password
+from sniffowireless.config import Config
+from sniffowireless.main import build
+from sniffowireless.manage import apply_ignore, apply_meta
+from sniffowireless.metrics import render
+from sniffowireless.reports import occupancy
+from sniffowireless.survey import recommend
 
 AP = "24:a4:3c:10:00:01"
 CL = "a4:83:e7:01:00:01"
@@ -164,7 +164,7 @@ def test_occupancy_and_metrics(ctx):
     occ = occupancy(ctx, 1)
     assert occ["summary"]["unique"] == 2 and occ["summary"]["peak"] == 2
     text = render(ctx)
-    assert 'yolo_devices_total{kind="wifi_client"} 2' in text and "yolo_store_queue" in text
+    assert 'sniffowireless_devices_total{kind="wifi_client"} 2' in text and "sniffowireless_store_queue" in text
 
 
 def test_occupancy_splits_visits_at_midnight(ctx):
@@ -196,7 +196,7 @@ def test_occupancy_merges_group_devices(ctx):
 
 
 def test_global_search(ctx):
-    from yolo.search import search
+    from sniffowireless.search import search
     s = ctx.store
     t = time.time()
     s.process({"t": "wifi_ap", "ts": t, "mac": AP, "ssid": "HomeNet", "rssi": -40})

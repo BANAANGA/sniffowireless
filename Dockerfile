@@ -15,9 +15,9 @@ RUN mkdir -p /app/data /app/vendor \
  && (curl -fsSL --retry 3 https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js -o /app/vendor/chart.umd.min.js \
      || echo "WARNING: could not download Chart.js; the UI will load it from the CDN")
 
-COPY yolo /app/yolo
+COPY sniffowireless /app/sniffowireless
 
-ENV DB_PATH=/data/yolo.db \
+ENV DB_PATH=/data/sniffowireless.db \
     WEB_PORT=8080 \
     PYTHONUNBUFFERED=1
 VOLUME /data
@@ -26,4 +26,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
   CMD curl -fs "http://127.0.0.1:${WEB_PORT}/api/health" || exit 1
 
-CMD ["python", "-m", "yolo"]
+CMD ["python", "-m", "sniffowireless"]

@@ -111,7 +111,7 @@ regdomain_setup() {
   g=$(global_country)
   echo "    Current country: ${g:-unknown}"
   if [ -n "$reg" ] && [ "$g" != "$reg" ]; then
-    if yes_no "    Apply $reg now ('iw reg set $reg', uses sudo)? yolo also applies it at every start" y; then
+    if yes_no "    Apply $reg now ('iw reg set $reg', uses sudo)? sniffowireless also applies it at every start" y; then
       as_root iw reg set "$reg" || true
       applied=1
       sleep 2
@@ -120,7 +120,7 @@ regdomain_setup() {
     fi
   fi
   if [ "$g" = "00" ] && [ "$applied" = 0 ] && [ -n "$reg" ]; then
-    echo "    Still 00 for now; yolo applies $reg when it starts. If yolo then warns that it is still 00,"
+    echo "    Still 00 for now; sniffowireless applies $reg when it starts. If sniffowireless then warns that it is still 00,"
     echo "    run: ./scripts/configure.sh --regdomain"
   elif [ "$g" = "00" ]; then
     echo "    ! Still 00 (world rules): 6 GHz stays disabled."
@@ -128,7 +128,7 @@ regdomain_setup() {
     elif [ -n "$reg" ]; then echo "      The kernel didn't take $reg: reboot so it loads the regulatory database, then run this again."
     else echo "      Set WIFI_REGDOMAIN to your country code."; fi
   elif [ -z "$reg" ]; then
-    echo "    ! No WIFI_REGDOMAIN set: yolo can't make sure the country is right after a reboot."
+    echo "    ! No WIFI_REGDOMAIN set: sniffowireless can't make sure the country is right after a reboot."
   fi
   for n in ${ifaces//,/ }; do
     [ "$(six_ghz "$n" all)" -gt 0 ] || continue
@@ -142,7 +142,7 @@ if [ "${1:-}" = "--regdomain" ]; then
   [ -n "$wifi_now" ] || { echo "WIFI_INTERFACES is empty in .env: run ./scripts/configure.sh first."; exit 1; }
   regdomain_setup "$wifi_now" "$(env_val TZ)"
   echo
-  echo "Restart yolo to apply:  docker compose restart yolo"
+  echo "Restart sniffowireless to apply:  docker compose restart sniffowireless"
   exit 0
 fi
 
@@ -180,4 +180,4 @@ echo
 echo "Saved to $(pwd)/.env:"
 grep -E "^(WIFI_INTERFACES|WIFI_CHANNELS|WIFI_REGDOMAIN|ETH_INTERFACES|BT_DEVICES|TZ)=" .env | sed 's/^/    /'
 echo
-echo "Start yolo with:  docker compose up -d --build"
+echo "Start sniffowireless with:  docker compose up -d --build"
