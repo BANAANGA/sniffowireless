@@ -351,9 +351,25 @@ def create_app(ctx):
         ndays = one("SELECT COUNT(DISTINCT (minute - ?) / 86400) n FROM samples WHERE minute>=?",
                     (off, since))["n"] or 1
         out["hourly"] = {"days": ndays, "rows": hourly}
+        # Weekly activity pattern: distinct devices per (weekday, hour), same convention as a device's own
+        # "weekly pattern" heatmap (/api/devices/{mac}/heatmap) — epoch day 0 (1970-01-01) was a Thursday,
+        # so +3 aligns it to a Monday=0 week. Not normalised per how many of each weekday fall in the
+        # period (same simplification the per-device heatmap already makes), so it reads as relative
+        # busyness, not a literal daily average.
+        out["weekly_heat"] = rows(
+            "SELECT wd, h, COUNT(*) n FROM (SELECT DISTINCT s.mac, ((s.minute - ?) % 86400) / 3600 h, "
+            "((s.minute - ?) / 86400 + 3) % 7 wd, (s.minute - ?) / 86400 day FROM samples s WHERE s.minute >= ?) "
+            "GROUP BY wd, h", (off, off, off, since))
         out["new_per_day"] = rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
                                   "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day",
                                   (off, off, since))
+        # New vendors: the first time ever (not just in this period) a vendor was seen, if that fell in
+        # this period — distinct from "new devices per day", which is usually dominated by randomized-MAC
+        # churn; this filters down to genuinely new kinds of hardware showing up nearby.
+        out["new_vendors"] = rows(
+            "SELECT vendor, MIN(first_seen) first_seen, COUNT(*) devices FROM devices WHERE vendor IS NOT NULL "
+            "AND vendor != '' GROUP BY vendor HAVING MIN(first_seen) >= ? ORDER BY first_seen DESC LIMIT 100",
+            (since,))
         out["durations"] = rows(
             "SELECT type, CASE WHEN d<60 THEN 0 WHEN d<300 THEN 1 WHEN d<1800 THEN 2 WHEN d<7200 THEN 3 "
             "WHEN d<28800 THEN 4 ELSE 5 END b, COUNT(*) n FROM (SELECT type, end_ts-start_ts d FROM sessions "
