@@ -953,7 +953,7 @@ function breakdown(el, s, kind) {
 // Statistics lists show the top 20; the panel title opens the list in full (#/stats?list=<id>), or the page that owns it.
 const STAT_CAP = 20, STAT_FULL = 1000;
 async function viewStats(params) {
-  const days = params.get('days') || '7';
+  const days = params.get('days') || '1';
   const listId = params.get('list') || '';
   const CAP = listId ? STAT_FULL : STAT_CAP;
   const ttl = (id, text, href) => `<a class="h-link" href="${href || hrefWith('/stats', { days, list: id })}" title="Show the full list">${text}</a>`;
