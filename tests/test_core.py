@@ -344,11 +344,16 @@ def test_handshake_capture_scoped_to_my_networks(tmp_path):
     hc.enable("HomeNet", True)
     assert hc.want("HomeNet")
 
+    # A recognized access point shows up right away, well before (or even without) a captured handshake —
+    # this used to be indistinguishable from "capture isn't working at all", see the regression test below.
     hc.note_ap(AP, "HomeNet")
+    assert hc.status()[0]["known_bssids"] == [AP] and hc.status()[0]["eapol_bssids"] == []
+
     hc.feed(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA), AP, STA, 1)
     hc.feed(eapol_frame(ack=False, mic=True, secure=False, src=STA, dst=AP), AP, STA, 2)
     st = hc.status()
     assert len(st) == 1 and st[0]["ssid"] == "HomeNet" and st[0]["frames"] == 2 and st[0]["usable_pairs"] == 1
+    assert st[0]["known_bssids"] == [AP] and st[0]["eapol_bssids"] == [AP]
     assert st[0]["downloadable"] and hc.pcap_path("HomeNet")
 
     # Dropping the network from "My networks" stops and hides the capture, even though it stays enabled.
@@ -360,6 +365,32 @@ def test_handshake_capture_scoped_to_my_networks(tmp_path):
     # An unrelated SSID, even while nothing restricts it beforehand, is simply never fed without note_ap.
     hc.feed(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA), "aa:bb:cc:dd:ee:ff", STA, 1)
     assert hc.status() == []
+
+
+def test_handshake_known_bssids_distinct_from_captured(tmp_path):
+    """Regression test: a recognized access point must be reported even with zero captured EAPOL frames,
+    so "0 access points" in the UI means "yolo hasn't seen this network's beacons", not "no handshake
+    yet" — those used to be reported as the same number, which made a healthy-but-waiting capture
+    indistinguishable from one that was never wired up at all."""
+    from sniffowireless.config import Config
+    from sniffowireless.context import Ctx
+    from sniffowireless.handshake import HandshakeCapture
+    from sniffowireless.settings import Settings
+    from sniffowireless.store import Store, connect
+    from sniffowireless.oui import VendorLookup
+
+    cfg = Config(db_path=str(tmp_path / "t.db"), data_dir=str(tmp_path))
+    store = Store(cfg, VendorLookup(cfg.manuf_path))
+    ctx = Ctx(cfg, store, Settings(lambda: connect(cfg.db_path)))
+    hc = HandshakeCapture(ctx)
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
+    hc.enable("HomeNet", True)
+
+    for i in range(3):
+        hc.note_ap(f"24:a4:3c:10:00:0{i}", "HomeNet")
+    st = hc.status()[0]
+    assert len(st["known_bssids"]) == 3 and st["eapol_bssids"] == [] and st["frames"] == 0
+    assert not st["downloadable"]  # nothing captured yet, so nothing to download
 
 
 # ------------------------------------------------------------------ tracker sound ("play sound" button)

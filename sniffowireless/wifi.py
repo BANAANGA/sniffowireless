@@ -357,6 +357,7 @@ class WifiSensor:
         self.cur_freq = None
         self.band_frames = {}  # band -> frames received (after any frequency correction)
         self.relabelled = 0    # frames whose radiotap frequency was corrected to the tuned one
+        self.eapol_errors = 0  # frames that raised while checking for a handshake (see _handle)
         self.acc = {}  # freq -> [frames, bytes, airtime_us, retries, noise_sum, noise_cnt] for the channel survey
         self.stop = None
         status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
@@ -426,7 +427,10 @@ class WifiSensor:
             try:
                 self._capture_handshake(pkt)
             except Exception:
-                log.debug("Failed to inspect frame for EAPOL", exc_info=True)
+                self.eapol_errors += 1
+                if self.eapol_errors == 1:  # a bug here would otherwise look exactly like "no handshake yet"
+                    log.warning("%s: failed to inspect a frame for a handshake (will keep trying; only "
+                               "logging this once)", self.name, exc_info=True)
 
     def _capture_handshake(self, pkt):
         """Hand a 4-way-handshake frame to self.handshake, if this one is part of one. Passive only: this
