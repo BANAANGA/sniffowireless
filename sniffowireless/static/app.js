@@ -446,6 +446,7 @@ async function viewOverview(params) {
     const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, fill: false, borderWidth: 1.5,
       pointRadius: 0, tension: .3, ...extra });
     const xy = arr => t.t.map((x, i) => ({ x, y: (arr || [])[i] || 0 }));
+    const avg = arr => (arr && arr.length) ? Math.round(arr.reduce((a, v) => a + (v || 0), 0) / arr.length) : 0;
     const dashed = { borderDash: [4, 4], borderWidth: 1.2 };
     const opts = (ymax, small) => ({
       maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
@@ -455,7 +456,8 @@ async function viewOverview(params) {
     });
     const sw = (c, label, dash) => `<span><span class="swatch" style="background:${c}${dash ? ';opacity:.6' : ''}"></span>${label}</span>`;
     if (tlView === 'type') {
-      document.getElementById('tl-legend').innerHTML = Object.entries(KINDS).map(([, m]) => sw(m.color, m.label)).join('') + sw(TEXT, 'Connected clients', true);
+      document.getElementById('tl-legend').innerHTML = Object.entries(KINDS).map(([k, m]) => sw(m.color, `${m.label} · avg ${num(avg(t.series[k]))}`)).join('')
+        + sw(TEXT, `Connected clients · avg ${num(avg(t.connected))}`, true);
       box.innerHTML = '<div class="chart-box tall"><canvas id="tl"></canvas></div>';
       const ds = Object.entries(KINDS).map(([k, m]) => line(m.label, xy(t.series[k]), m.color));
       ds.push(line('Connected clients', xy(t.connected), TEXT, dashed));
@@ -469,12 +471,12 @@ async function viewOverview(params) {
     const bands = t.bands || {};
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
-        <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} · ${num(now(b, 'connected'))} connected</span></div>
+        <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).ap))})</span> · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).wifi_client))})</span> · ${num(now(b, 'connected'))} connected <span class="faint">(avg ${num(avg((bands[b] || {}).connected))})</span></span></div>
         <div class="chart-box short"><canvas id="tl-${b.replace('.', '')}"></canvas></div></div>`).join('')}
       <div class="band-cell"><div class="band-head"><b>Bluetooth &amp; LAN</b>
-        <span class="legend small-text">${['ble', 'bt_classic', 'lan'].map(k => sw(KINDS[k].color, KINDS[k].label)).join('')}</span></div>
+        <span class="legend small-text">${['ble', 'bt_classic', 'lan'].map(k => sw(KINDS[k].color, `${KINDS[k].label} · avg ${num(avg(t.series[k]))}`)).join('')}</span></div>
         <div class="chart-box short"><canvas id="tl-other"></canvas></div></div></div>
-      <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to.</p>`;
+      <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to. Averages are over the selected time range.</p>`;
     BAND_PANELS.forEach(([b]) => {
       const v = bands[b] || {};
       chart(document.getElementById(`tl-${b.replace('.', '')}`), { type: 'line', data: { datasets: [
