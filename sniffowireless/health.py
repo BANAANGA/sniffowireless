@@ -74,8 +74,11 @@ def routes(ctx):
             f"(SELECT DISTINCT mac FROM sessions WHERE type='assoc' AND peer IN ({bq}) AND end_ts >= ?)",
             bssids + [since])}
 
+        # How many of my APs broadcast each SSID — a client connecting to one of several has a choice.
+        ssid_siblings = Counter(a["ssid"] for a in aps)
         per = defaultdict(lambda: {"sessions": 0, "secs": 0.0, "rsum": 0, "rcnt": 0, "roams": 0, "pingpong": 0,
-                                   "kicked": 0, "timeouts": 0, "bands": Counter(), "aps": set(), "connected": None})
+                                   "kicked": 0, "timeouts": 0, "bands": Counter(), "aps": set(), "connected": None,
+                                   "choice_sessions": 0, "weak_choice_sessions": 0})
         by_client = defaultdict(list)
         band_time, ssid_time = Counter(), Counter()
         for s in sess:
@@ -96,6 +99,13 @@ def routes(ctx):
             band_time[ap["band"]] += max(0, dur)
             ssid_time[ap["ssid"]] += max(0, dur)
             by_client[s["mac"]].append(s)
+            # "Stuck" on a weak AP: this session had another AP for the same SSID to choose from, and the
+            # signal to the one it picked averaged below STICKY_RSSI for the whole session (not just now).
+            if ssid_siblings.get(ap["ssid"], 0) > 1:
+                p["choice_sessions"] += 1
+                avg = s["rssi_sum"] / s["rssi_count"] if s["rssi_count"] else None
+                if avg is not None and avg < STICKY_RSSI:
+                    p["weak_choice_sessions"] += 1
         for mac, lst in by_client.items():  # ping-pong: A -> B -> A with a short stay on B
             for a, b, c in zip(lst, lst[1:], lst[2:]):
                 if a["peer"] == c["peer"] != b["peer"] and b["end_ts"] - b["start_ts"] < PINGPONG_GAP:
@@ -121,6 +131,7 @@ def routes(ctx):
                 "avg_rssi": round(p["rsum"] / p["rcnt"]) if p["rcnt"] else None, "secs": round(p["secs"]),
                 "sessions": p["sessions"], "aps": len(p["aps"]), "roams": p["roams"], "pingpong": p["pingpong"],
                 "kicked": p["kicked"], "timeouts": p["timeouts"], "sticky": sticky,
+                "choice_sessions": p["choice_sessions"], "weak_choice_sessions": p["weak_choice_sessions"],
                 "band_share": {b: round(v / p["secs"], 3) for b, v in p["bands"].items()} if p["secs"] else {},
                 "last_seen": d.get("last_seen"),
             })
@@ -151,7 +162,8 @@ def routes(ctx):
             "summary": {"clients": len(clients), "connected_now": sum(1 for c in clients if c["connected_to"]),
                         "roams": sum(c["roams"] for c in clients), "pingpong": sum(c["pingpong"] for c in clients),
                         "sticky": sum(1 for c in clients if c["sticky"]),
-                        "kicked": sum(c["kicked"] for c in clients)},
+                        "kicked": sum(c["kicked"] for c in clients),
+                        "weak_choice_sessions": sum(c["weak_choice_sessions"] for c in clients)},
         }
 
     return r
