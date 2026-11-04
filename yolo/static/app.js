@@ -315,6 +315,8 @@ async function viewOverview(params) {
         <div class="body flush table-wrap" id="connected"></div>
       </section>
       <section class="panel"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
+      <section class="panel span-3"><header><h2>Watched devices</h2><a class="muted" href="#/devices?watch=1">View all →</a></header>
+        <div class="body flush table-wrap" id="watched"></div></section>
     </div>`;
   let hours = 24, lastCounts = null;
   const onVis = () => { if (!document.hidden && live) refresh(); };  // catch up when the tab comes back
@@ -366,6 +368,22 @@ async function viewOverview(params) {
       </tbody></table>` : '<div class="empty">No connected clients</div>';
     linkRows(document.getElementById('connected'));
   }
+  async function loadWatched() {
+    const d = await api('/api/devices?watch=1&limit=50&sort=last_seen');
+    document.getElementById('watched').innerHTML = d.items.length ? `<table><thead><tr>
+      <th>Device</th><th>Group</th><th>Status</th><th>Last seen</th><th>Signal</th></tr></thead><tbody>
+      ${d.items.map(x => {
+        const secs = d.now - x.last_seen;
+        const status = x.connected ? '<span class="tag on">connected</span>' : secs < actWin ? '<span class="tag on">active</span>' : '<span class="faint">away</span>';
+        return `<tr class="link" data-href="#/device/${enc(x.mac)}">
+        <td><span class="star" title="Watched">★</span> ${kindBadge(x.kind)} <span style="margin-left:8px">${x.label ? `<b>${esc(x.label)}</b>` : `<span class="mono">${esc(devLabel(x) || x.mac)}</span>`}</span></td>
+        <td>${x.group_name ? `<span class="tag">${esc(x.group_name)}</span>` : '<span class="faint">—</span>'}</td>
+        <td>${status}</td>
+        <td><span class="mono">${esc(dt(x.last_seen))}</span> <span class="muted">· ${ago(x.last_seen)}</span></td>
+        <td>${rssiBars(x.last_rssi)}</td></tr>`;
+      }).join('')}</tbody></table>` : '<div class="empty">No watched devices yet — open a device and star it to watch it here</div>';
+    linkRows(document.getElementById('watched'));
+  }
   async function loadSensors() {
     const s = await api('/api/status');
     renderSystem(s.system);
@@ -404,11 +422,11 @@ async function viewOverview(params) {
       chart(document.getElementById('tl'), { type: 'line', data: { datasets: ds }, options: opts() });
       return;
     }
-    // By band: one small chart per Wi-Fi band on a shared scale, plus Bluetooth & LAN (no band).
+    // By band: one small chart per Wi-Fi band, each auto-scaled to its own data (a quiet 6 GHz band stays readable),
+    // plus Bluetooth & LAN (no band).
     document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
       + sw(TEXT, 'Connected clients', true);
     const bands = t.bands || {};
-    const ymax = Math.max(1, ...BAND_PANELS.flatMap(([b]) => ['ap', 'wifi_client', 'connected'].flatMap(k => (bands[b] || {})[k] || [0])));
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
         <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} · ${num(now(b, 'connected'))} connected</span></div>
@@ -421,16 +439,16 @@ async function viewOverview(params) {
       const v = bands[b] || {};
       chart(document.getElementById(`tl-${b.replace('.', '')}`), { type: 'line', data: { datasets: [
         line('Access points', xy(v.ap), KINDS.ap.color), line('Wi-Fi clients', xy(v.wifi_client), KINDS.wifi_client.color),
-        line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(ymax, true) });
+        line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(null, true) });
     });
     chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: ['ble', 'bt_classic', 'lan'].map(k =>
       line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
   }
 
-  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), pollStatus()]);
+  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), pollStatus()]);
   lastUpdate = Date.now();
   setTimeout(() => { if (document.getElementById('system')) loadSensors(); }, 1500);  // CPU % needs a second sample
-  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); lastUpdate = Date.now(); };
+  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); loadWatched(); lastUpdate = Date.now(); };
   every(10000, () => { if (live && !document.hidden) refresh(); });
   document.addEventListener('visibilitychange', onVis);
   onLeave(() => document.removeEventListener('visibilitychange', onVis));
