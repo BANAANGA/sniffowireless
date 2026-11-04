@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>sniffowireless</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='%23e6e7e9'/%3E%3Ccircle cx='8' cy='8' r='6.5' fill='none' stroke='%23e6e7e9' stroke-opacity='.4'/%3E%3C/svg%3E">
+</head>
+<body>
+<aside class="side">
+  <a class="brand" href="#/"><span class="dot"></span>sniffowireless</a>
+  <div class="gsearch"><input type="search" id="gsearch" placeholder="Search everything…" autocomplete="off" spellcheck="false" aria-label="Search all records"><kbd>/</kbd>
+    <div class="gsearch-pop" id="gsearch-pop" hidden></div></div>
+  <button class="menu-btn" id="menu-btn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="side-nav"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+  <nav id="side-nav">
+    <div class="nav-group">
+      <a href="#/" data-nav="/">Overview</a>
+      <a href="#/devices" data-nav="/device">Devices</a>
+      <a href="#/groups" data-nav="/group">Groups</a>
+      <a href="#/matching" data-nav="/matching">Matching</a>
+      <a href="#/map" data-nav="/map">Map</a>
+      <a href="#/stats" data-nav="/stats">Statistics</a>
+      <a href="#/reports" data-nav="/reports">Reports</a>
+    </div>
+    <div class="nav-group"><span class="nav-title">Wi-Fi</span>
+      <a href="#/ssids" data-nav="/ssid">Networks</a>
+      <a href="#/mynet" data-nav="/mynet">My networks</a>
+      <a href="#/channels" data-nav="/channels">Channels</a>
+      <a href="#/security" data-nav="/security">Security</a>
+      <a href="#/investigations" data-nav="/investigation">Investigations</a>
+    </div>
+    <div class="nav-group"><span class="nav-title">Ethernet</span>
+      <a href="#/lan" data-nav="/lan">LAN</a>
+    </div>
+    <div class="nav-group"><span class="nav-title">Activity</span>
+      <a href="#/events" data-nav="/events">Events</a>
+      <a href="#/alerts" data-nav="/alerts">Alerts</a>
+      <a href="#/logs" data-nav="/logs" class="admin-only">Logs</a>
+    </div>
+    <div class="nav-group nav-bottom">
+      <a href="#/settings" data-nav="/settings">Settings</a>
+    </div>
+  </nav>
+  <div class="side-foot">
+    <span id="live" class="live" title="Sensor status"></span>
+    <div id="user" class="user"></div>
+  </div>
+</aside>
+<main id="app"></main>
+<script src="/static/theme.js"></script>
+<script src="/vendor/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/views.js"></script>
+<script src="/static/lan.js"></script>
+<script src="/static/extras.js"></script>
+<script src="/static/search.js"></script>
+<script src="/static/logs.js"></script>
+<script src="/static/investigations.js"></script>
+<script src="/static/networks.js"></script>
+<script src="/static/sort.js"></script>
+<script src="/static/appearance.js"></script>
+</body>
+</html>

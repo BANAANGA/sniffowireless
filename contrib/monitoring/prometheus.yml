@@ -1,10 +1,10 @@
 global:
   scrape_interval: 30s
 scrape_configs:
-  - job_name: yolo
+  - job_name: sniffowireless
     metrics_path: /metrics
     authorization:
       type: Bearer
-      credentials_file: /etc/prometheus/yolo_token
+      credentials_file: /etc/prometheus/sniffowireless_token
     static_configs:
       - targets: ["host.docker.internal:8080"]

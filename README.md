@@ -1,4 +1,4 @@
-# yolo
+# sniffowireless
 
 A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container. It works like a small Kismet, with one difference: it is built to track **how devices connect over time**. It records which Wi-Fi client was associated with which access point and when. It also records when phones, wearables and other Bluetooth devices come into and leave range. You can drill into all of it from a dark, minimal web UI.
 
@@ -127,26 +127,26 @@ To see 6 GHz networks you need a **6E-capable adapter** whose driver allows moni
    ./scripts/configure.sh --regdomain
    ```
 
-   If the country is still `00` when yolo starts with 6 GHz channels configured, yolo says so in the log and on the Sensors panel. `iw reg get` should list `country NL` (or yours) under `global`; a separate `phy#…` entry is the adapter's own country code, which the kernel combines with the global one.
+   If the country is still `00` when sniffowireless starts with 6 GHz channels configured, sniffowireless says so in the log and on the Sensors panel. `iw reg get` should list `country NL` (or yours) under `global`; a separate `phy#…` entry is the adapter's own country code, which the kernel combines with the global one.
 2. **Check the adapter can tune 6 GHz.** The command below should list frequencies from 5955 MHz upwards that are not marked `(disabled)`. `(no IR)` is fine, because monitoring is passive.
    ```bash
    iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -E "\* (59[5-9][0-9]|6[0-9]{3}|7[01][0-9]{2})"
    ```
 3. **Add 6 GHz channels.** Use `WIFI_CHANNELS=default,6ghz`, or `all`, which covers 2.4 + 5 GHz + the 6 GHz Preferred Scanning Channels. 6 GHz access points always beacon on one of the 15 PSCs (5, 21, 37 … 229), so `6ghz` finds them with far fewer hops than all 59 channels (`6all`).
 
-yolo reads each adapter's supported frequencies at startup and gives 6 GHz channels only to adapters that can tune them. A 2.4/5 GHz adapter and a 6E adapter can therefore share one channel list. 6 GHz clients nearly always use randomized MACs (WPA3 + MAC privacy are mandatory there), but connection sessions are still tracked per network.
+sniffowireless reads each adapter's supported frequencies at startup and gives 6 GHz channels only to adapters that can tune them. A 2.4/5 GHz adapter and a 6E adapter can therefore share one channel list. 6 GHz clients nearly always use randomized MACs (WPA3 + MAC privacy are mandatory there), but connection sessions are still tracked per network.
 
 **Channel tunes but no 6 GHz networks show up?** The Sensors panel on the Overview lists the frames received per band (`frames 2.4G … · 5G … · 6G …`). Then run the diagnostic on the machine with the adapter. It tunes each 6 GHz channel, listens for a few seconds, and prints frames, beacons, access points, SSIDs and the frequency the driver reported:
 
 ```bash
-docker compose stop yolo
-docker compose run --rm yolo python -m yolo.diag            # 6 GHz PSCs on the first WIFI_INTERFACES adapter
-docker compose run --rm yolo python -m yolo.diag wlan1 --channels 6g:37 --dwell 10
-docker compose start yolo
+docker compose stop sniffowireless
+docker compose run --rm sniffowireless python -m sniffowireless.diag            # 6 GHz PSCs on the first WIFI_INTERFACES adapter
+docker compose run --rm sniffowireless python -m sniffowireless.diag wlan1 --channels 6g:37 --dwell 10
+docker compose start sniffowireless
 ```
 
 - **0 frames everywhere:** the driver or firmware doesn't receive on 6 GHz in monitor mode. Update the kernel (≥ 6.1) and `linux-firmware`, and check the antennas.
-- **Frames but the driver reports another band:** some mt76 builds label 6 GHz frames as 5 GHz (channel 37 → 5185 MHz). yolo now uses the tuned frequency in that case, and the Sensors panel counts the corrected frames.
+- **Frames but the driver reports another band:** some mt76 builds label 6 GHz frames as 5 GHz (channel 37 → 5185 MHz). sniffowireless now uses the tuned frequency in that case, and the Sensors panel counts the corrected frames.
 - **Beacons on one channel only:** normal. An access point beacons on its primary 20 MHz channel only, even at 160/320 MHz.
 
 > **Don't use the adapter your host relies on for its own network.** Putting it in monitor mode disconnects it. Use a dedicated USB adapter. Two adapters (for example one locked to 2.4 GHz and one hopping 5 GHz) give much better coverage than one adapter that hops across everything.
@@ -188,7 +188,7 @@ If NetworkManager manages the adapter, it will keep switching it back to managed
 # one-off
 sudo nmcli device set wlan1 managed no
 
-# permanent: /etc/NetworkManager/conf.d/99-yolo.conf
+# permanent: /etc/NetworkManager/conf.d/99-sniffowireless.conf
 [keyfile]
 unmanaged-devices=interface-name:wlan1;mac:00:c0:ca:12:34:56
 ```
@@ -200,7 +200,7 @@ then run `sudo systemctl reload NetworkManager`. If you use plain `wpa_supplican
 USB adapters can be renamed between boots (`wlan1` ↔ `wlan2`, or `wlx…`). Pin a name with a udev rule. Use the adapter's MAC from `ip link`:
 
 ```bash
-# /etc/udev/rules.d/70-yolo-wifi.rules
+# /etc/udev/rules.d/70-sniffowireless-wifi.rules
 SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="00:c0:ca:12:34:56", NAME="wlmon0"
 ```
 
@@ -214,7 +214,7 @@ sudo rfkill unblock wifi
 sudo rfkill unblock bluetooth
 ```
 
-yolo switches the interface to monitor mode itself (`WIFI_SET_MONITOR=1`, default). If the driver refuses, it falls back to adding a `<iface>mon` virtual monitor interface. To do it manually instead:
+sniffowireless switches the interface to monitor mode itself (`WIFI_SET_MONITOR=1`, default). If the driver refuses, it falls back to adding a `<iface>mon` virtual monitor interface. To do it manually instead:
 
 ```bash
 sudo ip link set wlan1 down
@@ -224,7 +224,7 @@ sudo ip link set wlan1 up
 
 ### Bluetooth and the host's `bluetoothd`
 
-yolo talks to the adapter over a raw HCI socket. It can run **alongside** the host's BlueZ daemon. It enables LE scanning and periodic inquiry and listens to all controller events, so devices the host connects to (headphones, keyboards) show up as Bluetooth connections. If you want yolo to have the adapter to itself (best results on a dedicated dongle), stop BlueZ from using it: `sudo systemctl disable --now bluetooth`. Alternatively, give yolo a second dongle (`BT_DEVICES=hci1`).
+sniffowireless talks to the adapter over a raw HCI socket. It can run **alongside** the host's BlueZ daemon. It enables LE scanning and periodic inquiry and listens to all controller events, so devices the host connects to (headphones, keyboards) show up as Bluetooth connections. If you want sniffowireless to have the adapter to itself (best results on a dedicated dongle), stop BlueZ from using it: `sudo systemctl disable --now bluetooth`. Alternatively, give sniffowireless a second dongle (`BT_DEVICES=hci1`).
 
 ### Virtual machines and other platforms
 
@@ -247,16 +247,16 @@ Requirements: Linux host, Docker Engine ≥ 20.10 with the compose plugin, and t
 ### 1. Get the code
 
 ```bash
-git clone https://github.com/BANAANGA/yolo.git
+git clone https://github.com/BANAANGA/sniffowireless.git
 ```
 
 ```bash
-cd yolo
+cd sniffowireless
 ```
 
-### 2. Tell yolo which adapters to use
+### 2. Tell sniffowireless which adapters to use
 
-yolo reads its settings from a file called `.env` in the `yolo` folder. The easiest way to create it is the helper script. It lists the adapters it finds and asks which ones to use:
+sniffowireless reads its settings from a file called `.env` in the `sniffowireless` folder. The easiest way to create it is the helper script. It lists the adapters it finds and asks which ones to use:
 
 ```bash
 ./scripts/configure.sh
@@ -269,7 +269,7 @@ Wi-Fi adapters found:
   Use a dedicated adapter: monitor mode disconnects it from any network.
 WIFI_INTERFACES (comma-separated, empty = no Wi-Fi) [wlan1]:
 ...
-Saved to /home/you/yolo/.env:
+Saved to /home/you/sniffowireless/.env:
     WIFI_INTERFACES=wlan1
     BT_DEVICES=hci0
 ```
@@ -320,7 +320,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-The log should show a line like `Wi-Fi sensor on wlan1` for each adapter, and the setup code for the admin account. Press Ctrl+C to stop following the log; yolo keeps running.
+The log should show a line like `Wi-Fi sensor on wlan1` for each adapter, and the setup code for the admin account. Press Ctrl+C to stop following the log; sniffowireless keeps running.
 
 To change adapters later, edit `.env` (or run `./scripts/configure.sh` again) and apply it with:
 
@@ -328,7 +328,7 @@ To change adapters later, edit `.env` (or run `./scripts/configure.sh` again) an
 docker compose up -d
 ```
 
-Open **http://<host>:8080**. On the first visit you create the admin account (see [Accounts & access](#accounts--access)). Data is stored in `./data` (`yolo.db` plus an uploaded floor plan). Back up that folder to keep your history.
+Open **http://<host>:8080**. On the first visit you create the admin account (see [Accounts & access](#accounts--access)). Data is stored in `./data` (`sniffowireless.db` plus an uploaded floor plan). Back up that folder to keep your history.
 
 Try it without hardware:
 
@@ -336,17 +336,17 @@ Try it without hardware:
 DEMO_MODE=1 docker compose up -d --build
 ```
 
-Demo mode backfills 72 h of synthetic history and keeps generating live data. For a clean real deployment afterwards, delete `./data/yolo.db`.
+Demo mode backfills 72 h of synthetic history and keeps generating live data. For a clean real deployment afterwards, delete `./data/sniffowireless.db`.
 
 ### Without compose
 
 ```bash
-docker build -t yolo .
-docker run -d --name yolo --restart unless-stopped \
+docker build -t sniffowireless .
+docker run -d --name sniffowireless --restart unless-stopped \
   --network host --privileged \
   -v "$PWD/data:/data" \
   -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 -e TZ=Europe/Amsterdam \
-  yolo
+  sniffowireless
 ```
 
 ### Less privilege
@@ -374,7 +374,7 @@ The web UI and API need a login.
 
 - **First start without `WEB_USER`/`WEB_PASSWORD`:** the browser shows a *Create the admin account* page. To stop someone else on your network from claiming the admin account first, it asks for a one-time **setup code** printed in the container log:
   ```bash
-  docker compose logs yolo | grep "setup code"
+  docker compose logs sniffowireless | grep "setup code"
   ```
 - **With `WEB_USER` and `WEB_PASSWORD`:** that account is created (or reset) as an admin on every start, and no setup page is shown. Its password can only be changed through the environment.
 - **Roles:** *admins* can change settings, labels, groups, alert rules and the ignore list. *Viewers* can only look. Add users under **Settings → Users**.
@@ -385,12 +385,12 @@ The web UI and API need a login.
 
   Remote sensors get their own tokens, created under Settings → Sensors.
 - Passwords are stored as salted PBKDF2-SHA256 hashes. Sessions are HttpOnly cookies that expire after 14 days of inactivity. Logins are rate-limited per IP.
-- **HTTPS:** put yolo behind a reverse proxy (Caddy, Traefik, nginx) for TLS when you reach it from outside your LAN. The session cookie is marked `Secure` when the proxy sets `X-Forwarded-Proto: https`.
+- **HTTPS:** put sniffowireless behind a reverse proxy (Caddy, Traefik, nginx) for TLS when you reach it from outside your LAN. The session cookie is marked `Secure` when the proxy sets `X-Forwarded-Proto: https`.
 - `AUTH_DISABLED=1` turns login off entirely. Only use it on a network where you trust everyone, and set `ALLOWED_HOSTS` then; see below.
 
 ### Security hardening
 
-yolo treats everything it receives as untrusted. Device names and SSIDs are chosen by whoever is nearby, and remote sensors and API clients send data too.
+sniffowireless treats everything it receives as untrusted. Device names and SSIDs are chosen by whoever is nearby, and remote sensors and API clients send data too.
 
 - **Input validation:**
   - every API field has a type, a format (MACs, IPs, times, e-mail addresses, enums) and a length limit
@@ -408,7 +408,7 @@ yolo treats everything it receives as untrusted. Device names and SSIDs are chos
 - **Exports:** CSV cells that start with `=`, `+`, `-` or `@` are prefixed so spreadsheets don't run them as formulas.
 - **Proxies and hosts:**
   - `TRUSTED_PROXIES` (default `127.0.0.1`): only these addresses may set `X-Forwarded-For`/`-Proto`, so clients can't fake their IP to dodge the lockout. Set it to your reverse proxy's address.
-  - `ALLOWED_HOSTS` (e.g. `yolo.lan,192.168.1.10`): refuses requests for any other host name, which protects against DNS-rebinding attacks from malicious websites, especially with `AUTH_DISABLED=1`.
+  - `ALLOWED_HOSTS` (e.g. `sniffowireless.lan,192.168.1.10`): refuses requests for any other host name, which protects against DNS-rebinding attacks from malicious websites, especially with `AUTH_DISABLED=1`.
 
 The container needs `privileged`/host networking to capture, so run it on a machine you control and don't expose port 8080 to the internet; use a VPN or an authenticating reverse proxy with TLS for remote access.
 
@@ -446,9 +446,9 @@ All settings are environment variables (put them in `.env`).
 | `AUTH_DISABLED` | `0` | `1` disables login completely (trusted networks only). |
 | `ALLOWED_HOSTS` | – | Comma-separated host names/IPs the UI may be reached as (DNS-rebinding protection). Empty = any. |
 | `TRUSTED_PROXIES` | `127.0.0.1` | Addresses whose `X-Forwarded-*` headers are trusted (your reverse proxy). |
-| `YOLO_MODE` | `server` | `sensor` = capture only and forward to `SERVER_URL` (see [Multiple sensors](#multiple-sensors--the-map)). |
-| `SERVER_URL` / `SENSOR_TOKEN` | – | Sensor mode: URL of the main yolo server and the token from Settings → Sensors. |
-| `DB_PATH` | `/data/yolo.db` | SQLite database location. |
+| `SNIFFOWIRELESS_MODE` | `server` | `sensor` = capture only and forward to `SERVER_URL` (see [Multiple sensors](#multiple-sensors--the-map)). |
+| `SERVER_URL` / `SENSOR_TOKEN` | – | Sensor mode: URL of the main sniffowireless server and the token from Settings → Sensors. |
+| `DB_PATH` | `/data/sniffowireless.db` | SQLite database location. |
 | `DATA_DIR` | folder of `DB_PATH` | Where uploaded files (floor plan) are kept. |
 | `TZ` | `UTC` | Container time zone (logs). The UI always shows the viewer's local time. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` shows HCI command failures and parse errors. |
@@ -473,7 +473,7 @@ Tokens combine, e.g. `WIFI_CHANNELS=1,6,11,5common,6ghz`. A bare `5` or `6` on i
 
 ## Device identification
 
-yolo works out what each device is purely from what it broadcasts. Nothing is sent to the device. Every clue becomes a piece of evidence with a confidence score, and for each field the best-supported value wins. The device page shows the result, a confidence badge per field and the full evidence list.
+sniffowireless works out what each device is purely from what it broadcasts. Nothing is sent to the device. Every clue becomes a piece of evidence with a confidence score, and for each field the best-supported value wins. The device page shows the result, a confidence badge per field and the full evidence list.
 
 | Source | What it reveals |
 |---|---|
@@ -489,7 +489,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
 | **Names / SSIDs** | “iPhone”, “Galaxy Watch5”, “DESKTOP-XXXXXXX” (Windows), “[TV] Samsung…”, “DIRECT-xx-HP…” printers, phone hotspots, car hotspots |
 | **MAC vendor (OUI)** | Brand, plus a type hint for single-purpose vendors (Espressif → IoT, Sonos → speaker, Hikvision → camera…) |
 
-**Estimated age** comes from the newest standard a device supports (it can't predate it), or from the model's release year when that is known (AirPods/Beats). For phones, computers, TVs and routers yolo also gives an upper bound: a laptop with only Wi-Fi 5 is typically from 2013–2020. Printers and IoT devices still ship with Wi-Fi 4 today, so for those only "N or newer" is shown.
+**Estimated age** comes from the newest standard a device supports (it can't predate it), or from the model's release year when that is known (AirPods/Beats). For phones, computers, TVs and routers sniffowireless also gives an upper bound: a laptop with only Wi-Fi 5 is typically from 2013–2020. Printers and IoT devices still ship with Wi-Fi 4 today, so for those only "N or newer" is shown.
 
 **Limits:** results are best-effort. Devices with randomized MACs and no name (most phones while idle) can often only be identified as "Apple phone, Wi-Fi 6" or "phone". Clients only reveal capabilities in probe/association frames, so a device first has to scan or (re)connect while the sensor is on its channel. When the rules improve in a new version, all stored devices are re-identified automatically on startup.
 
@@ -503,7 +503,7 @@ yolo works out what each device is purely from what it broadcasts. Nothing is se
   - DNS lookups, events, alerts, security findings and sensors
 
   Results appear as you type; use the arrow keys and Enter to open one, or press Enter for the full results page with a filter per record type.
-- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band, plus Bluetooth & LAN), *By type* shows all device types in one chart, currently connected clients with the network they're on, a **System** panel (host CPU use and load average, memory use, database size and free space on the data disk, plus yolo's own CPU and memory), sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
+- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band, plus Bluetooth & LAN), *By type* shows all device types in one chart, currently connected clients with the network they're on, a **System** panel (host CPU use and load average, memory use, database size and free space on the data disk, plus sniffowireless's own CPU and memory), sensor health (packets/s, current channel, errors), and recent events. Every card and row links deeper.
 - **Devices:** a searchable, sortable list showing what each device was identified as. Filter by radio type, device type, recency or band (2.4 / 5 / 6 GHz), and hide randomized MACs. Drill-downs add filters for brand, OS, Wi-Fi generation, age and probe fingerprint. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
   - key facts, total time present, visits, average and longest visit, time connected
@@ -566,7 +566,7 @@ Ignored traffic never reaches the database, the UI or alerts. Tick *Also delete 
 
 ### Choosing networks
 
-The **My networks**, **Investigations** and **Ignore list** settings share a network picker (*Choose networks…*). It lists every SSID yolo has seen in the last 90 days with:
+The **My networks**, **Investigations** and **Ignore list** settings share a network picker (*Choose networks…*). It lists every SSID sniffowireless has seen in the last 90 days with:
 - its access points, connected clients and the devices that looked for it
 - security and when it was last seen
 - whether it is already one of yours, ignored or under investigation
@@ -579,7 +579,7 @@ Search it, tick networks and apply. Networks that are only *looked for* by devic
 
 ### Bluetooth ↔ Wi-Fi matching
 
-Phones, tablets and laptops have both radios, so yolo sees them twice. **Matching** (sidebar under Devices) guesses which Bluetooth address belongs to which Wi-Fi address from the last 7 days. It weighs:
+Phones, tablets and laptops have both radios, so sniffowireless sees them twice. **Matching** (sidebar under Devices) guesses which Bluetooth address belongs to which Wi-Fi address from the last 7 days. It weighs:
 - being present at the same minutes, and arriving and leaving together
 - signal strength rising and falling together
 - adjacent hardware addresses (vendors usually allocate both next to each other)
@@ -590,7 +590,7 @@ Earbuds, watches, tags and bikes are left out: they move with a phone but are se
 
 ### Networks under investigation
 
-Put SSIDs you want to keep an eye on under **Settings → Investigations**: an unknown network that appeared nearby, a suspected rogue hotspot, or a network one of your devices keeps joining. Add a note on why. You can also click **Investigate** on any network's dossier; open one from search or from an access point's page (*dossier →*). yolo then records:
+Put SSIDs you want to keep an eye on under **Settings → Investigations**: an unknown network that appeared nearby, a suspected rogue hotspot, or a network one of your devices keeps joining. Add a note on why. You can also click **Investigate** on any network's dossier; open one from search or from an access point's page (*dossier →*). sniffowireless then records:
 
 | Event | When |
 |---|---|
@@ -646,7 +646,7 @@ Use **Send test** to check a channel. Secrets are never sent back to the browser
 
 ## Security monitoring
 
-Configure **My networks** first (Settings → My networks), then mark your own access points as **trusted** (Security page, *Trust all listed* on a clean setup). yolo then reports:
+Configure **My networks** first (Settings → My networks), then mark your own access points as **trusted** (Security page, *Trust all listed* on a clean setup). sniffowireless then reports:
 
 | Finding | How it's detected |
 |---|---|
@@ -659,7 +659,7 @@ Configure **My networks** first (Settings → My networks), then mark your own a
 
 | **Unknown tracker following someone** | an AirTag/Find My device, Tile or SmartTag not marked as yours that is present ≥ 80 % of its time together with one person (a "person" group or a known phone) and arrived or left with them at least twice |
 
-Findings can be acknowledged (no repeat alerts) or resolved (they reopen if the condition returns). All detection is passive: yolo never transmits deauths or other attack frames.
+Findings can be acknowledged (no repeat alerts) or resolved (they reopen if the condition returns). All detection is passive: sniffowireless never transmits deauths or other attack frames.
 
 ### Bluetooth trackers
 
@@ -668,11 +668,11 @@ The Security page lists every tracker tag seen in the last 3 days:
 - who it moves with, what share of its time it spends with them, and how often they arrived or left together
 - its status: yours, unknown, or **possibly following**
 
-Click **It's mine** for your own tags (keys, bags, the car) and they're ignored from then on. A separated AirTag keeps its Bluetooth address for up to about 24 hours, so a planted tag shows up as "following" within a day of moving with someone. Phones' built-in unknown-tracker alerts complement this, but yolo also covers people without a smartphone and tags that phones don't report.
+Click **It's mine** for your own tags (keys, bags, the car) and they're ignored from then on. A separated AirTag keeps its Bluetooth address for up to about 24 hours, so a planted tag shows up as "following" within a day of moving with someone. Phones' built-in unknown-tracker alerts complement this, but sniffowireless also covers people without a smartphone and tags that phones don't report.
 
 ### Interference
 
-While the sensor hops channels it records each channel's noise floor and retransmission rate. Every 5 minutes, yolo compares the last 10 minutes, minute by minute, with that channel's own 24-hour baseline. Two or more minutes of **+6 dB noise**, or retries ≥ 30 % and double the normal rate while the channel isn't busy, open an **interference episode**. The episode is classified as:
+While the sensor hops channels it records each channel's noise floor and retransmission rate. Every 5 minutes, sniffowireless compares the last 10 minutes, minute by minute, with that channel's own 24-hour baseline. Two or more minutes of **+6 dB noise**, or retries ≥ 30 % and double the normal rate while the channel isn't busy, open an **interference episode**. The episode is classified as:
 - *Microwave oven likely:* a short burst centred on channels 6–13
 - *Broadband*, *narrowband* or *persistent* 2.4 GHz interferer (video senders, baby monitors, cordless phones, faulty power supplies)
 - *Non-Wi-Fi interference on 5 GHz:* radar, video links
@@ -681,7 +681,7 @@ Episodes are listed on the **Channels** page and can trigger alerts (event type 
 
 ### DFS / radar
 
-5 GHz channels 52–144 are shared with weather, airport and military radar. An access point on one of these **DFS** channels has to listen for radar; when it hears it, it must leave the channel within seconds and stay away for 30 minutes. Most access points warn their clients first with a **Channel Switch Announcement** (CSA) in their beacons. yolo reads these from every beacon it hears, along with each access point's channel, and records:
+5 GHz channels 52–144 are shared with weather, airport and military radar. An access point on one of these **DFS** channels has to listen for radar; when it hears it, it must leave the channel within seconds and stay away for 30 minutes. Most access points warn their clients first with a **Channel Switch Announcement** (CSA) in their beacons. sniffowireless reads these from every beacon it hears, along with each access point's channel, and records:
 
 | Event | When |
 |---|---|
@@ -691,13 +691,13 @@ Episodes are listed on the **Channels** page and can trigger alerts (event type 
 
 Neighbours' access points count too: radar is a property of the location, so their hits tell you which channels to avoid. The **Channels** page shows radar hits per DFS channel, channels that are closed right now, the switch history and the access points currently on DFS channels. The alert rule *Radar (DFS) on my networks* is created automatically; it fires for your own access points (Settings → My networks). If your own access point keeps getting pushed off a DFS channel, pick a non-DFS channel (36–48 or 149–165) or one without hits.
 
-Requires a sensor that hops over (or sits on) the DFS channels in `WIFI_CHANNELS`. A move is only seen while yolo hears the access point both before and after it.
+Requires a sensor that hops over (or sits on) the DFS channels in `WIFI_CHANNELS`. A move is only seen while sniffowireless hears the access point both before and after it.
 
 ---
 
 ## Ethernet monitoring
 
-Set `ETH_INTERFACES` to one or more wired interfaces and yolo listens passively, without sending anything.
+Set `ETH_INTERFACES` to one or more wired interfaces and sniffowireless listens passively, without sending anything.
 
 | From | It learns |
 |---|---|
@@ -721,7 +721,7 @@ Each device page gets a **Network (LAN)** panel with its traffic, peers and DNS 
 
 ### Where to plug it in
 
-| Setup | What yolo sees |
+| Setup | What sniffowireless sees |
 |---|---|
 | Ordinary switch port (e.g. the host's own NIC) | Discovery only: ARP, DHCP, mDNS, SSDP, LLDP broadcasts, plus the host's own traffic. Most devices still show up, with names and identification. |
 | **Mirror / SPAN port** on a managed switch (UniFi, TP-Link Omada/Easy Smart, Netgear ProSafe, MikroTik, Cisco…) | Everything that crosses the mirrored ports. Mirror the port your router uplink is on to see all internet traffic. |
@@ -738,7 +738,7 @@ sudo ip link set eth1 up
 ETH_INTERFACES=eth1
 ```
 
-Packets are decoded in Python. Header parsing is a fast path, but a Raspberry Pi 4 handles roughly a few tens of thousands of packets per second, which is fine for home and small-office links. Watch the sensor's pkt/s and the *dropped* counter on the overview. Remote sensors (`YOLO_MODE=sensor`) support `ETH_INTERFACES` too.
+Packets are decoded in Python. Header parsing is a fast path, but a Raspberry Pi 4 handles roughly a few tens of thousands of packets per second, which is fine for home and small-office links. Watch the sensor's pkt/s and the *dropped* counter on the overview. Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ETH_INTERFACES` too.
 
 **Privacy:** traffic and DNS logging reveal a lot about people's behaviour. Only monitor networks you're responsible for, tell the people using them, and keep `RETENTION_DAYS` short. Payloads are never stored; only byte counts, peers, ports and queried names are.
 
@@ -749,11 +749,11 @@ Packets are decoded in Python. Header parsing is a fast path, but a Raspberry Pi
 Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
 
 1. On the server: **Settings → Sensors → Add remote sensor**, then give it a name and room. You get a token and a ready-made `docker run` command.
-2. On the sensor machine: connect the adapters as described above, then run that command (build or copy the image first). It's the same image with `YOLO_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
+2. On the sensor machine: connect the adapters as described above, then run that command (build or copy the image first). It's the same image with `SNIFFOWIRELESS_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
    ```bash
-   docker run -d --name yolo-sensor --restart unless-stopped --network host --privileged \
-     -e YOLO_MODE=sensor -e SERVER_URL=http://192.168.1.10:8080 -e SENSOR_TOKEN=yolo_... \
-     -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 yolo:latest
+   docker run -d --name sniffowireless-sensor --restart unless-stopped --network host --privileged \
+     -e SNIFFOWIRELESS_MODE=sensor -e SERVER_URL=http://192.168.1.10:8080 -e SENSOR_TOKEN=sniffowireless_... \
+     -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 sniffowireless:latest
    ```
    The sensor buffers and retries if the server is unreachable, and corrects small clock differences.
 3. **Map → Edit layout:** upload a floor plan (PNG, JPEG, WebP or SVG) and drag each sensor to where it really is.
@@ -774,8 +774,8 @@ Every device gets a **room** (the sensor that hears it strongest, with 4 dB hyst
   - users, as password hashes
 
   It contains no measurement history and is small. Restoring it replaces those items and applies immediately, which makes it handy for moving to a new server or putting a configuration under version control.
-- **Full backup (`.tar.gz`):** the whole database plus the floor plan. It's taken with SQLite's online backup, so it's consistent while yolo keeps capturing. *Back up now* writes one to `data/backups/`, and **daily scheduled backups** with retention can be switched on.
-- **Restore a full backup:** pick one from the list or upload a file. yolo checks the archive (format, safe paths, database integrity), stages it, and restarts. On startup it swaps the database in and keeps the previous one as `data/backups/pre-restore-….db`. The restart relies on Docker's restart policy, which the compose file and the `docker run` example set (`restart: unless-stopped`).
+- **Full backup (`.tar.gz`):** the whole database plus the floor plan. It's taken with SQLite's online backup, so it's consistent while sniffowireless keeps capturing. *Back up now* writes one to `data/backups/`, and **daily scheduled backups** with retention can be switched on.
+- **Restore a full backup:** pick one from the list or upload a file. sniffowireless checks the archive (format, safe paths, database integrity), stages it, and restarts. On startup it swaps the database in and keeps the previous one as `data/backups/pre-restore-….db`. The restart relies on Docker's restart policy, which the compose file and the `docker run` example set (`restart: unless-stopped`).
 
 Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since a backup on the same disk doesn't survive a dead disk.
 
@@ -788,22 +788,22 @@ Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since 
 - clients per AP and per SSID
 - presence and signal of watched or labelled devices, and group presence
 - events per type, open findings by severity
-- channel airtime and retry ratios, radar hits per DFS channel (`yolo_dfs_radar_24h`) and DFS events (`yolo_dfs_events_total`)
+- channel airtime and retry ratios, radar hits per DFS channel (`sniffowireless_dfs_radar_24h`) and DFS events (`sniffowireless_dfs_events_total`)
 - sensor frames/s, and store queue/drops
 
 Create a token with scope `metrics` and scrape with it:
 
 ```yaml
 scrape_configs:
-  - job_name: yolo
-    authorization: { type: Bearer, credentials_file: /etc/prometheus/yolo_token }
-    static_configs: [{ targets: ["yolo-host:8080"] }]
+  - job_name: sniffowireless
+    authorization: { type: Bearer, credentials_file: /etc/prometheus/sniffowireless_token }
+    static_configs: [{ targets: ["sniffowireless-host:8080"] }]
 ```
 
-`contrib/monitoring/` holds a ready-to-run Prometheus + Grafana stack with a provisioned **yolo** dashboard:
+`contrib/monitoring/` holds a ready-to-run Prometheus + Grafana stack with a provisioned **sniffowireless** dashboard:
 
 ```bash
-echo -n "yolo_<your metrics token>" > contrib/monitoring/yolo_token
+echo -n "sniffowireless_<your metrics token>" > contrib/monitoring/sniffowireless_token
 GRAFANA_PASSWORD=choose-one docker compose -f contrib/monitoring/docker-compose.monitoring.yml up -d
 # Grafana: http://<host>:3000  (admin / GRAFANA_PASSWORD)
 ```
@@ -859,7 +859,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | Symptom | Fix |
 |---|---|
 | `cp .env.example .env` seems to do nothing | It worked: `cp` is silent and `.env` is hidden. Check with `ls -a` or `cat .env`. |
-| Settings in `.env` are ignored | `.env` must be in the `yolo` folder next to `docker-compose.yml`, and you have to run `docker compose up -d` again after editing it. `docker compose config` shows the values compose actually uses. |
+| Settings in `.env` are ignored | `.env` must be in the `sniffowireless` folder next to `docker-compose.yml`, and you have to run `docker compose up -d` again after editing it. `docker compose config` shows the values compose actually uses. |
 | `interface wlan1 not found` | Check `iw dev` on the host, make sure the container uses `network_mode: host`, and pin the name with udev. |
 | `driver refused monitor mode` | The chipset/driver doesn't support it (common for onboard Broadcom and many Realtek chips with in-kernel drivers). Use an adapter from the table above. |
 | Adapter keeps leaving monitor mode | NetworkManager / wpa_supplicant is managing it. See [step 2](#2-keep-networkmanager--wpa_supplicant-away-from-it). |
@@ -873,7 +873,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | Many short-lived "devices" | These are randomized MACs. Tick **Hide randomized MACs**. |
 | Locked out of the UI | Set `WEB_USER`/`WEB_PASSWORD` and restart: that account is reset to admin with the given password. |
 | "Too many failed logins" | Wait 5 minutes (per-IP limit after 8 failures). |
-| Remote sensor shows offline | Check `docker logs yolo-sensor` on the sensor; `SERVER_URL` must be reachable from it and the token must match the sensor. |
+| Remote sensor shows offline | Check `docker logs sniffowireless-sensor` on the sensor; `SERVER_URL` must be reachable from it and the token must match the sensor. |
 | Everyone is in the same room on the map | You need at least two sensors with room names; one sensor can only tell distance. |
 | LAN page shows devices but no internet traffic | The interface only sees broadcasts and its own traffic. Connect it to a mirror/SPAN port or TAP (see [Ethernet monitoring](#ethernet-monitoring)). |
 | `ETH_INTERFACES` error "not found" | Use the host's interface name (`ip -br link`), and run with `network_mode: host`. |
@@ -889,18 +889,18 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 
 ```bash
 # run tests inside the image
-docker build -t yolo . && docker run --rm -v "$PWD/tests:/app/tests" yolo \
+docker build -t sniffowireless . && docker run --rm -v "$PWD/tests:/app/tests" sniffowireless \
   sh -c "pip install -q pytest httpx && python -m pytest -q tests"
 
 # run locally (Python 3.11+; capture needs root)
 pip install -r requirements.txt
-DEMO_MODE=1 DB_PATH=./data/yolo.db python -m yolo
+DEMO_MODE=1 DB_PATH=./data/sniffowireless.db python -m sniffowireless
 ```
 
 Layout:
 
 ```
-yolo/
+sniffowireless/
   config.py     environment configuration
   wifi.py       monitor mode, channel hopping, 802.11 frame parsing
   bluetooth.py  raw HCI LE scanning / inquiry / connection tracking

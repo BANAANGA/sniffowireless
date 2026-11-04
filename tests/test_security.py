@@ -9,14 +9,14 @@ import pytest
 pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from yolo.auth import hash_password  # noqa: E402
-from yolo.config import Config  # noqa: E402
-from yolo.main import build  # noqa: E402
-from yolo.sanitize import clean_str, remote_observation  # noqa: E402
-from yolo.web import create_app  # noqa: E402
+from sniffowireless.auth import hash_password  # noqa: E402
+from sniffowireless.config import Config  # noqa: E402
+from sniffowireless.main import build  # noqa: E402
+from sniffowireless.sanitize import clean_str, remote_observation  # noqa: E402
+from sniffowireless.web import create_app  # noqa: E402
 
 PW = "correct-horse-battery"
-H = {"X-Yolo": "1"}
+H = {"X-Sniffowireless": "1"}
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def env(tmp_path):
                   (hash_password(PW, iterations=1000),))
         c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('viewer', ?, 'viewer', 0)",
                   (hash_password(PW, iterations=1000),))
-    client = TestClient(create_app(ctx), base_url="http://yolo.test")
+    client = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
     return ctx, client
 
 
@@ -65,10 +65,10 @@ def test_security_headers_and_csp(env):
 def test_csrf_and_origin(env):
     _, c = env
     login(c)
-    assert c.put("/api/settings/networks", json={"ssids": ["X"]}).status_code == 403  # no X-Yolo header
+    assert c.put("/api/settings/networks", json={"ssids": ["X"]}).status_code == 403  # no X-Sniffowireless header
     r = c.put("/api/settings/networks", json={"ssids": ["X"]}, headers={**H, "Origin": "https://evil.example"})
     assert r.status_code == 403
-    assert c.put("/api/settings/networks", json={"ssids": ["X"]}, headers={**H, "Origin": "http://yolo.test"}).status_code == 200
+    assert c.put("/api/settings/networks", json={"ssids": ["X"]}, headers={**H, "Origin": "http://sniffowireless.test"}).status_code == 200
     # login CSRF from another site is refused as well
     r = c.post("/api/auth/login", json={"username": "admin", "password": PW}, headers={"Origin": "https://evil.example"})
     assert r.status_code == 403
@@ -158,7 +158,7 @@ def test_ingest_sanitises_remote_data(env):
     login(c)
     s = c.post("/api/sensors", json={"name": "Pi"}, headers=H).json()
     tok = {"Authorization": f"Bearer {s['token']}"}
-    plain = TestClient(c.app, base_url="http://yolo.test")
+    plain = TestClient(c.app, base_url="http://sniffowireless.test")
     now = time.time()
     batch = {"sent_at": now, "obs": [
         {"t": "_cmd", "ts": now, "mac": "-", "fn": "boom"},                                   # internal command
@@ -172,7 +172,7 @@ def test_ingest_sanitises_remote_data(env):
     assert r.status_code == 200 and r.json() == {"accepted": 1, "rejected": 4}
     o = remote_observation(batch["obs"][3], now)
     assert o["ssid"] == "Evil<script>" and "band" not in o and "channel" not in o and o["rssi"] == -40
-    from yolo import status
+    from sniffowireless import status
     st = status.SENSORS[f"{s['id']}/wifi:wlan1"]
     assert "pps" not in st and "packets" not in st and len(st["state"]) == 32
     bomb = gzip.compress(b"[" + b"0," * (40 * 1024 * 1024) + b"0]")
@@ -220,9 +220,9 @@ def test_device_export_honours_filters(env):
 
 
 def test_allowed_hosts(tmp_path):
-    ctx = build(Config(db_path=str(tmp_path / "h.db"), data_dir=str(tmp_path), allowed_hosts=["yolo.lan"]))
+    ctx = build(Config(db_path=str(tmp_path / "h.db"), data_dir=str(tmp_path), allowed_hosts=["sniffowireless.lan"]))
     assert TestClient(create_app(ctx), base_url="http://evil.example").get("/api/health").status_code == 421
-    assert TestClient(create_app(ctx), base_url="http://yolo.lan").get("/api/health").status_code == 200
+    assert TestClient(create_app(ctx), base_url="http://sniffowireless.lan").get("/api/health").status_code == 200
 
 
 def test_clean_str():
@@ -234,12 +234,12 @@ def test_clean_str():
 def test_logs_admin_only_and_redacted(env):
     import logging
 
-    from yolo.logs import HANDLER, install
+    from sniffowireless.logs import HANDLER, install
     install("INFO")
     _, c = env
-    logging.getLogger("yolo.auth").warning("No accounts exist yet ... setup code: ABCD-1234-EF56")
-    logging.getLogger("yolo.test").info("token yolo_%s used", "x" * 30)
-    logging.getLogger("yolo.test").info("ssid <script>alert(1)</script>")
+    logging.getLogger("sniffowireless.auth").warning("No accounts exist yet ... setup code: ABCD-1234-EF56")
+    logging.getLogger("sniffowireless.test").info("token sniffowireless_%s used", "x" * 30)
+    logging.getLogger("sniffowireless.test").info("ssid <script>alert(1)</script>")
     assert c.get("/api/logs").status_code == 401
     login(c, "viewer")
     assert c.get("/api/logs").status_code == 403 and c.get("/api/logs/stream").status_code == 403
@@ -247,10 +247,10 @@ def test_logs_admin_only_and_redacted(env):
     login(c)
     items = c.get("/api/logs?limit=50").json()["items"]
     text = "\n".join(i["msg"] for i in items)
-    assert "ABCD-1234-EF56" not in text and "setup code: ••••" in text and "yolo_xxx" not in text
+    assert "ABCD-1234-EF56" not in text and "setup code: ••••" in text and "sniffowireless_xxx" not in text
     assert "<script>alert(1)</script>" in text  # raw in JSON; the page renders it as text, never HTML
     after = items[-1]["id"]
-    logging.getLogger("yolo.test").error("fresh line")
+    logging.getLogger("sniffowireless.test").error("fresh line")
     new = c.get(f"/api/logs?after={after}").json()["items"]
     assert [i["msg"] for i in new][-1] == "fresh line" and all(i["id"] > after for i in new)
     assert c.put("/api/logs/level", json={"level": "DEBUG"}, headers=H).json() == {"level": "DEBUG"}
@@ -283,7 +283,7 @@ def test_investigations_api(env):
 
 
 def test_remote_csa_is_validated():
-    from yolo.sanitize import remote_observation
+    from sniffowireless.sanitize import remote_observation
     base = {"t": "wifi_ap", "ts": time.time(), "mac": "0a:00:00:00:00:01", "channel": 100}
     ok = remote_observation({**base, "csa": {"mode": 1, "new_channel": 36, "count": 5, "x": "<script>"}}, time.time())
     assert ok["csa"] == {"mode": 1, "new_channel": 36, "count": 5}
@@ -318,7 +318,7 @@ def test_timeline_per_band(env):
 def test_appearance(env):
     ctx, c = env
     a = c.get("/api/appearance").json()  # public: the sign-in page uses it too
-    assert a["name"] == "yolo" and a["icon"] == "dot" and a["colors"]["ap"] == "#4cc2ff" and a["custom_colors"] == []
+    assert a["name"] == "sniffowireless" and a["icon"] == "dot" and a["colors"]["ap"] == "#4cc2ff" and a["custom_colors"] == []
     body = {"name": "Home <b>radar</b>", "icon": "radar", "colors": {"ap": "#FF8800", "bg": "#0b0c0e"}}
     assert c.put("/api/appearance", json=body, headers=H).status_code == 401
     login(c, "viewer")
@@ -373,12 +373,12 @@ def test_status_system(env):
 
 
 def test_clock_setting(env):
-    from yolo.alerts import describe
-    from yolo.appearance import time_format
+    from sniffowireless.alerts import describe
+    from sniffowireless.appearance import time_format
     ctx, c = env
     assert c.get("/api/appearance").json()["clock"] == "auto" and time_format(ctx) == "%H:%M"
     login(c)
-    base = {"name": "yolo", "icon": "dot", "colors": {}}
+    base = {"name": "sniffowireless", "icon": "dot", "colors": {}}
     assert c.put("/api/appearance", json={**base, "clock": "13"}, headers=H).status_code == 422
     assert c.put("/api/appearance", json={**base, "clock": "12"}, headers=H).json()["clock"] == "12"
     assert time_format(ctx, seconds=True) == "%I:%M:%S %p"
@@ -475,7 +475,7 @@ def test_play_sound_api(env, monkeypatch):
     # With an adapter "configured", the actual radio call is mocked: verify the endpoint wires it up and
     # maps tracker_sound.SoundError to a clear HTTP error rather than a 500.
     ctx.cfg.bt_devices = ["hci0"]
-    import yolo.web as web_mod
+    import sniffowireless.web as web_mod
 
     def fake_play_sound(iface, mac, addr_type):
         assert iface == "hci0" and mac == TAG and addr_type == 1  # randomized -> non-public address type

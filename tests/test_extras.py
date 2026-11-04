@@ -4,10 +4,10 @@ import time
 
 import pytest
 
-from yolo.backup import apply_staged_restore, create_full_backup, export_config, import_config, validate_full_backup
-from yolo.config import Config
-from yolo.main import build
-from yolo.trackers import score
+from sniffowireless.backup import apply_staged_restore, create_full_backup, export_config, import_config, validate_full_backup
+from sniffowireless.config import Config
+from sniffowireless.main import build
+from sniffowireless.trackers import score
 
 PHONE = "a4:83:e7:01:00:01"
 TAG = "7b:4f:00:00:00:01"
@@ -124,8 +124,8 @@ def test_full_backup_and_staged_restore(ctx, tmp_path):
     with open(os.path.join(ctx.cfg.data_dir, "floorplan.svg"), "w") as fh:
         fh.write("<svg/>")
     path = create_full_backup(ctx)
-    assert validate_full_backup(path)["format"] == "yolo-full"
-    target = Config(db_path=str(tmp_path / "r" / "yolo.db"), data_dir=str(tmp_path / "r"))
+    assert validate_full_backup(path)["format"] == "sniffowireless-full"
+    target = Config(db_path=str(tmp_path / "r" / "sniffowireless.db"), data_dir=str(tmp_path / "r"))
     os.makedirs(target.data_dir)
     import shutil
     shutil.copyfile(path, os.path.join(target.data_dir, "restore-pending.tar.gz"))
@@ -149,7 +149,7 @@ def test_bad_backup_rejected(tmp_path):
 
 # -------------------------------------------------------------- investigations
 def test_investigation_events_and_catalogue(ctx):
-    from yolo.investigate import ssid_catalogue
+    from sniffowireless.investigate import ssid_catalogue
     s = ctx.store
     ctx.settings.set("investigate", {"ssids": [{"ssid": "FreeWiFi", "note": "rogue?", "added": 1}]})
     ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
@@ -206,16 +206,16 @@ def test_dfs_radar_events(ctx):
         ctx.alerts.handle({"type": "dfs_radar", "mac": mac, "ts": t, "peer": None, "detail": "x"})
     assert [r["mac"] for r in ctx.rows("SELECT mac FROM alert_log")] == [mine]  # "mine" target
     from fastapi.testclient import TestClient
-    from yolo.web import create_app
+    from sniffowireless.web import create_app
     ctx.auth.disabled = True
-    d = TestClient(create_app(ctx), base_url="http://yolo.test").get("/api/dfs?days=1").json()
+    d = TestClient(create_app(ctx), base_url="http://sniffowireless.test").get("/api/dfs?days=1").json()
     per = {c["channel"]: c for c in d["channels"]}
     assert per[100]["radar"] == 1 and per[52]["radar"] == 1 and per[100]["closed_until"] and d["mine_radar"] == 1
 
 
 # ------------------------------------------------------------------ BT ↔ Wi-Fi matching
 def test_bt_wifi_matching(ctx):
-    from yolo.matching import mac_adjacent, name_score, suggestions
+    from sniffowireless.matching import mac_adjacent, name_score, suggestions
     assert mac_adjacent("5c:0a:5b:01:00:03", "5c:0a:5b:01:00:04") and not mac_adjacent("5c:0a:5b:01:00:03", "5c:0a:5b:01:00:99")
     assert name_score("Sam's iPhone", "Sams-iPhone") == 1.0 and name_score("MacBook Pro", "Robins-MacBook-Pro") >= 0.7
     s = ctx.store
@@ -245,6 +245,6 @@ def test_bt_wifi_matching(ctx):
         gid = c.execute("INSERT INTO groups(name, kind) VALUES('Sam', 'person')").lastrowid
         c.execute("INSERT INTO device_meta(mac, known, group_id) VALUES(?, 1, ?)", (wifi, gid))
     from fastapi.testclient import TestClient  # noqa: F401  (route logic exercised directly below)
-    from yolo.matching import pair
+    from sniffowireless.matching import pair
     ctx.execute("INSERT INTO device_links VALUES(?,?,?,?,?)", (*pair(bt, wifi), "rejected", 0.9, time.time()))
     assert not any((x["bt"]["mac"], x["wifi"]["mac"]) == (bt, wifi) for x in suggestions(ctx))  # rejected stays hidden

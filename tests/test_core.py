@@ -2,11 +2,11 @@ import time
 
 from scapy.layers.dot11 import (Dot11, Dot11Beacon, Dot11Deauth, Dot11Elt, Dot11ProbeReq, RadioTap)
 
-from yolo.bluetooth import parse_ad, parse_event
-from yolo.config import Config, chan_label, parse_channels
-from yolo.oui import VendorLookup
-from yolo.store import Store
-from yolo.wifi import assign_channels, parse_frame
+from sniffowireless.bluetooth import parse_ad, parse_event
+from sniffowireless.config import Config, chan_label, parse_channels
+from sniffowireless.oui import VendorLookup
+from sniffowireless.store import Store
+from sniffowireless.wifi import assign_channels, parse_frame
 
 AP = "24:a4:3c:10:00:01"
 CL = "a4:83:e7:01:00:01"
@@ -141,7 +141,7 @@ def test_band_migration(tmp_path):
 
 
 # ---------------------------------------------------------------- identification
-from yolo.identify import ble_fingerprint, identify, wifi_fingerprint  # noqa: E402
+from sniffowireless.identify import ble_fingerprint, identify, wifi_fingerprint  # noqa: E402
 
 
 def _ht(ss, w40=True):
@@ -203,14 +203,14 @@ def test_store_identifies_and_hashes(tmp_path):
     s.flush()
     rows = s.conn.execute("SELECT brand, dev_type, wifi_gen, fp_hash FROM devices").fetchall()
     assert len({r["fp_hash"] for r in rows}) == 1 and rows[0]["brand"] == "Apple" and rows[0]["dev_type"] == "phone"
-    from yolo.identify import IDENT_VERSION
+    from sniffowireless.identify import IDENT_VERSION
     assert s.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()[0] == str(IDENT_VERSION)
 
 
 def test_bt_filter_size_and_extended_scan_fallback():
     import threading
 
-    from yolo.bluetooth import BluetoothSensor
+    from sniffowireless.bluetooth import BluetoothSensor
 
     class FakeSock:
         def __init__(self):
@@ -259,7 +259,7 @@ def test_identify_bikes():
 
 
 def test_6ghz_mislabelled_by_driver():
-    from yolo.wifi import radio_freq
+    from sniffowireless.wifi import radio_freq
 
     def beacon(present, **rt):
         p = RadioTap(present=present, dBm_AntSignal=-60, **rt) / \
@@ -279,7 +279,7 @@ def test_6ghz_mislabelled_by_driver():
 
 
 def test_regulatory_warning(monkeypatch):
-    from yolo import wifi
+    from sniffowireless import wifi
     out = "global\ncountry 00: DFS-UNSET\n\t(2402 - 2472 @ 40), (6, 20), (N/A)\n\nphy#1\ncountry US: DFS-FCC\n"
     monkeypatch.setattr(wifi, "run_cmd", lambda *a: (0, out))
     assert wifi.global_regdomain() == "00"
@@ -311,7 +311,7 @@ def eapol_frame(ack, mic, secure, src, dst, ts=1000.0):
 
 
 def test_eapol_message_classification():
-    from yolo.handshake import eapol_message
+    from sniffowireless.handshake import eapol_message
     STA = "a4:83:e7:01:00:01"
     assert eapol_message(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA)) == 1
     assert eapol_message(eapol_frame(ack=False, mic=True, secure=False, src=STA, dst=AP)) == 2
@@ -321,12 +321,12 @@ def test_eapol_message_classification():
 
 
 def test_handshake_capture_scoped_to_my_networks(tmp_path):
-    from yolo.config import Config
-    from yolo.context import Ctx
-    from yolo.handshake import HandshakeCapture
-    from yolo.settings import Settings
-    from yolo.store import Store, connect
-    from yolo.oui import VendorLookup
+    from sniffowireless.config import Config
+    from sniffowireless.context import Ctx
+    from sniffowireless.handshake import HandshakeCapture
+    from sniffowireless.settings import Settings
+    from sniffowireless.store import Store, connect
+    from sniffowireless.oui import VendorLookup
 
     cfg = Config(db_path=str(tmp_path / "t.db"), data_dir=str(tmp_path))
     store = Store(cfg, VendorLookup(cfg.manuf_path))
@@ -367,7 +367,7 @@ def test_tracker_sound_packet_framing():
     """The HCI/ATT framing tracker_sound.py builds and parses, checked without any real adapter."""
     import struct
 
-    from yolo.tracker_sound import _att_write, _parse_packet
+    from sniffowireless.tracker_sound import _att_write, _parse_packet
 
     class FakeSocket:
         def __init__(self):
@@ -398,7 +398,7 @@ def test_tracker_sound_packet_framing():
 
 def test_tracker_sound_requires_real_hardware(monkeypatch):
     """No Bluetooth hardware here: just check play_sound() fails closed (socket error) rather than hanging."""
-    from yolo.tracker_sound import SoundError, play_sound
+    from sniffowireless.tracker_sound import SoundError, play_sound
     import pytest as pt
 
     with pt.raises((SoundError, OSError, PermissionError)):
