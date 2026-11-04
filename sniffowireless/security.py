@@ -62,12 +62,9 @@ class SecurityMonitor:
         self.ap_ssids = defaultdict(dict)   # bssid -> {ssid: last seen} (KARMA detection)
         self.pending = {}                   # finding key -> finding dict to upsert
         self.status = {r["key"]: r["status"] for r in ctx.rows("SELECT key, status FROM findings")}
-        # Fingerprint drift: last-known fp_hash per known/labelled device. Seeded from the database so a
-        # drift that happens shortly after a restart is still caught, not just ones seen fresh in this process.
+        # Fingerprint drift: last probe fingerprint per (known device, band), learned as probes arrive.
         self.known_macs = {r["mac"] for r in ctx.rows("SELECT mac FROM device_meta WHERE known=1")}
-        self.fp_seen = {r["mac"]: r["fp_hash"] for r in ctx.rows(
-            "SELECT d.mac, d.fp_hash FROM devices d JOIN device_meta m ON m.mac=d.mac "
-            "WHERE m.known=1 AND d.fp_hash IS NOT NULL")}
+        self.fp_seen = {}
         self.known_refreshed = 0
         self.kicks = {}                     # (bssid, station) -> (ts, reason) of the last AP-sent deauth/disassoc
         self.cycles = defaultdict(deque)    # (bssid, station) -> timestamps of kick-then-rejoin cycles
@@ -160,12 +157,15 @@ class SecurityMonitor:
     def _check_drift(self, store, o, dev):
         """A known device's probe-request fingerprint (chipset + OS build signature) changed to a
         different, previously-unseen value: the MAC may now belong to a different physical device, either
-        because it was reassigned (the usual, harmless reason) or because it's being spoofed."""
-        mac, fp = dev["mac"], dev.get("fp_hash")
-        if not fp:
+        because it was reassigned (the usual, harmless reason) or because it's being spoofed. Compared per
+        band, since one device legitimately sends different probe layouts on 2.4, 5 and 6 GHz."""
+        fpd = o.get("fp") or {}
+        sig = (fpd.get("wifi") or {}).get("sig")
+        if fpd.get("src") != "probe" or not sig:
             return
-        prev = self.fp_seen.get(mac)
-        self.fp_seen[mac] = fp
+        mac, fp, key = dev["mac"], probe_hash(sig), (dev["mac"], o.get("band"))
+        prev = self.fp_seen.get(key)
+        self.fp_seen[key] = fp
         if not prev or prev == fp:
             return
         ts = o["ts"]
@@ -176,6 +176,8 @@ class SecurityMonitor:
         store._event(ts, mac, "fingerprint_changed", None, detail, dev=dev, always=True)
         self.finding(store, ts, f"fpdrift:{mac}:{fp}", "fingerprint_changed", "medium", mac, ssid,
                      "A known device's fingerprint changed", detail, event="fingerprint_changed")
+        if len(self.fp_seen) > 50_000:
+            self.fp_seen.clear()
 
     # A handshake-capture attack forces a client off the network so it reconnects and re-sends the WPA
     # handshake, which is then cracked offline. Done to one client a few times it stays far below the

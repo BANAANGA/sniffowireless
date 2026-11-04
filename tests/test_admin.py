@@ -146,6 +146,16 @@ def test_fingerprint_drift_alert(ctx):
     assert f and f["mac"] == CL and f["severity"] == "medium"
     assert "fingerprint_changed" in {r["type"] for r in ctx.rows("SELECT type FROM events")}
 
+    # The same device probing on another band with a different layout is normal, not drift.
+    s.process({"t": "wifi_client", "ts": t + 2, "mac": CL, "frame": "probe", "probe": "x", "band": "2.4",
+               "fp": {"wifi": {"sig": "sig-24"}, "src": "probe"}})
+    s.process({"t": "wifi_client", "ts": t + 3, "mac": CL, "frame": "probe", "probe": "x", "band": "5",
+               "fp": {"wifi": {"sig": "sig-5"}, "src": "probe"}})
+    s.process({"t": "wifi_client", "ts": t + 4, "mac": CL, "frame": "probe", "probe": "x", "band": "2.4",
+               "fp": {"wifi": {"sig": "sig-24"}, "src": "probe"}})
+    s.flush()
+    assert ctx.one("SELECT COUNT(*) n FROM findings WHERE type='fingerprint_changed'")["n"] == 1
+
     # An unknown device with the exact same kind of change raises nothing.
     other = "a4:83:e7:01:00:02"
     s.process({"t": "wifi_client", "ts": t, "mac": other, "frame": "probe", "probe": "x",
