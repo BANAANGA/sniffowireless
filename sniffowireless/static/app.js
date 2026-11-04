@@ -363,6 +363,8 @@ async function viewOverview(params) {
       <section class="panel"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
       <section class="panel span-3"><header><h2>Watched devices</h2><a class="muted" href="#/devices?watch=1">View all →</a></header>
         <div class="body flush table-wrap" id="watched"></div></section>
+      <section class="panel span-3"><header><h2>Latest discovered devices</h2><a class="muted" href="#/devices?sort=first_seen&order=desc">View all →</a></header>
+        <div class="body flush table-wrap" id="discovered"></div></section>
     </div>`;
   let hours = 24, lastCounts = null;
   const ifaceHist = {}, ifaceColors = {};  // name -> [{t, pps}], reset each time this page is entered
@@ -431,6 +433,18 @@ async function viewOverview(params) {
         <td>${rssiBars(x.last_rssi)}</td></tr>`;
       }).join('')}</tbody></table>` : '<div class="empty">No watched devices yet — open a device and star it to watch it here</div>';
     linkRows(document.getElementById('watched'));
+  }
+  async function loadDiscovered() {
+    const d = await api('/api/devices?limit=20&sort=first_seen&order=desc');
+    document.getElementById('discovered').innerHTML = d.items.length ? `<table><thead><tr>
+      <th>Device</th><th>Identified as</th><th>Vendor</th><th>Signal</th><th class="num">Discovered</th></tr></thead><tbody>
+      ${d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
+        <td>${kindBadge(x.kind)} <span class="mono" style="margin-left:8px">${esc(devLabel(x) || x.mac)}</span>${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}</td>
+        <td class="trunc muted">${identCell(x)}</td>
+        <td class="trunc muted">${esc(x.vendor || (x.randomized ? 'Randomized MAC' : '—'))}</td>
+        <td>${rssiBars(x.last_rssi)}</td><td class="num muted" title="${esc(dt(x.first_seen))}">${ago(x.first_seen)}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">No devices discovered yet</div>';
+    linkRows(document.getElementById('discovered'));
   }
   async function loadSensors() {
     const s = await api('/api/status');
@@ -523,10 +537,10 @@ async function viewOverview(params) {
       line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
   }
 
-  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), pollStatus()]);
+  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), loadDiscovered(), pollStatus()]);
   lastUpdate = Date.now();
   setTimeout(() => { if (document.getElementById('system')) loadSensors(); }, 1500);  // CPU % needs a second sample
-  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); loadWatched(); lastUpdate = Date.now(); };
+  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); loadWatched(); loadDiscovered(); lastUpdate = Date.now(); };
   every(10000, () => { if (live && !document.hidden) refresh(); });
   document.addEventListener('visibilitychange', onVis);
   onLeave(() => document.removeEventListener('visibilitychange', onVis));
