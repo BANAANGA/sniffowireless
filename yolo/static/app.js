@@ -72,6 +72,15 @@ async function send(method, path, body) {
   }
   return data;
 }
+// Copy to the clipboard; falls back to a temporary textarea where the async API isn't available (plain http).
+async function copyText(text, done = 'Copied') {
+  try { await navigator.clipboard.writeText(text); toast(done); return; } catch { /* fall through */ }
+  const t = document.createElement('textarea');
+  t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+  document.body.appendChild(t); t.select();
+  try { document.execCommand('copy'); toast(done); } catch { toast('Copy failed — select the address bar instead', true); }
+  t.remove();
+}
 function toast(msg, bad = false) {
   const t = document.createElement('div');
   t.className = 'toast' + (bad ? ' bad' : '');
@@ -226,7 +235,7 @@ async function route() {
   try {
     const custom = ROUTES.find(([p]) => p.endsWith('/') ? path.startsWith(p) : path === p);
     if (custom) await custom[1](decodeURIComponent(path.slice(custom[0].length)), params);
-    else if (path === '/') await viewOverview();
+    else if (path === '/') await viewOverview(params);
     else if (path === '/devices') await viewDevices(params);
     else if (path.startsWith('/device/')) await viewDevice(decodeURIComponent(path.slice(8)), params);
     else if (path === '/stats') await viewStats(params);
@@ -281,10 +290,16 @@ const ACT_WINDOWS = [[120, '2 min'], [300, '5 min'], [600, '10 min'], [3600, '60
 const actLabel = () => (ACT_WINDOWS.find(([v]) => v === actWin) || [0, '5 min'])[1];
 const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
 
-async function viewOverview() {
+async function viewOverview(params) {
+  // A shared link may carry the window (?window=<seconds>); it wins over the remembered choice.
+  const w = +(params && params.get('window'));
+  if (ACT_WINDOWS.some(([v]) => v === w)) actWin = w;
+  let live = true, lastUpdate = 0;
   app.innerHTML = `
     <div class="page-head"><div><h1>Overview</h1><div class="sub">Devices seen within the selected window are counted as active.</div></div>
-      <div class="row"><span class="muted">Active = seen in last</span><select id="actwin">${ACT_WINDOWS.map(([v, l]) => `<option value="${v}" ${v === actWin ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+      <div class="row"><button class="btn small ghost live-btn on" id="livebtn" type="button" aria-pressed="true" title="Pause or resume automatic refresh"><span class="pulse-dot"></span><span id="livetxt">Live</span></button>
+        <button class="btn small ghost" id="ov-link" type="button" title="Copy a link to this view">Copy link</button>
+        <span class="muted">Active = seen in last</span><select id="actwin">${ACT_WINDOWS.map(([v, l]) => `<option value="${v}" ${v === actWin ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
     <div class="grid cols-5" id="cards"></div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2">
@@ -301,12 +316,21 @@ async function viewOverview() {
       </section>
       <section class="panel"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
     </div>`;
-  let hours = 24;
+  let hours = 24, lastCounts = null;
+  const onVis = () => { if (!document.hidden && live) refresh(); };  // catch up when the tab comes back
   document.getElementById('actwin').addEventListener('change', e => {
     actWin = +e.target.value;
     try { localStorage.setItem('yolo.actwin', String(actWin)); } catch { /* private mode */ }
+    history.replaceState(null, '', hrefWith('/', { window: actWin }));
     loadSummary();
   });
+  document.getElementById('ov-link').onclick = () => copyText(location.origin + location.pathname + hrefWith('/', { window: actWin }), 'Link copied');
+  const liveBtn = document.getElementById('livebtn'), liveTxt = document.getElementById('livetxt');
+  const paintLive = () => {
+    liveBtn.classList.toggle('on', live); liveBtn.setAttribute('aria-pressed', String(live));
+    liveTxt.textContent = live ? 'Live' : 'Paused' + (lastUpdate ? ' · ' + new Date(lastUpdate).toLocaleTimeString() : '');
+  };
+  liveBtn.onclick = () => { live = !live; paintLive(); if (live) refresh(); };
   onSeg(app, 'range', v => { hours = +v; loadTimeline(); });
   onSeg(app, 'tlview', v => { tlView = v; try { localStorage.setItem('yolo.tlview', v); } catch { /* private mode */ } loadTimeline(); });
 
@@ -314,11 +338,14 @@ async function viewOverview() {
 
   async function loadSummary() {
     const s = await api(`/api/summary?window=${actWin}`);
+    const prev = lastCounts; lastCounts = {};
     document.getElementById('cards').innerHTML = Object.entries(KINDS).map(([k, m]) => {
       const v = s.kinds[k] || {};
       const conn = k === 'wifi_client' || k === 'bt_classic' || k === 'ble'
         ? `<a href="#/devices?kind=${k}&connected=1">${num(v.connected || 0)} connected</a>` : '';
-      return `<div class="card link" data-href="#/devices?kind=${k}&active=${actWin}">
+      lastCounts[k] = v.active || 0;
+      const changed = prev && prev[k] !== undefined && prev[k] !== lastCounts[k];
+      return `<div class="card link${changed ? ' bump' : ''}" data-href="#/devices?kind=${k}&active=${actWin}">
         <div class="label"><span class="swatch" style="background:${m.color}"></span>${m.label}</div>
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span>${conn ? `<span>${conn}</span>` : ''}</div></div>`;
@@ -401,8 +428,12 @@ async function viewOverview() {
   }
 
   await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), pollStatus()]);
+  lastUpdate = Date.now();
   setTimeout(() => { if (document.getElementById('system')) loadSensors(); }, 1500);  // CPU % needs a second sample
-  every(10000, () => { loadSummary(); loadSensors(); loadConnected(); });
+  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); lastUpdate = Date.now(); };
+  every(10000, () => { if (live && !document.hidden) refresh(); });
+  document.addEventListener('visibilitychange', onVis);
+  onLeave(() => document.removeEventListener('visibilitychange', onVis));
   every(60000, loadTimeline);
 }
 
@@ -433,13 +464,19 @@ async function viewDevices(params) {
   st.sort = st.sort || 'last_seen';
   st.order = st.order || 'desc';
   const offset = +(st.offset || 0), limit = 100;
+  const exportHref = fmt => {
+    const q = new URLSearchParams(st); q.delete('offset');
+    return `/api/export/devices.${fmt}${q.toString() ? '?' + q : ''}`;
+  };
   const chips = Object.keys(FILTER_LABELS).filter(k => st[k]).map(k => {
     const rest = { ...st }; delete rest[k]; delete rest.offset;
     return `<span class="chip">${FILTER_LABELS[k]}${k === 'connected' ? '' : ': <b>' + esc(FILTER_FMT[k] ? FILTER_FMT[k](st[k]) : st[k]) + '</b>'}<a href="${hrefWith('/devices', rest)}">✕</a></span>`;
   }).join('');
   app.innerHTML = `
     <div class="page-head"><div><h1>Devices</h1><div class="sub" id="count">&nbsp;</div></div>
-      <a class="btn muted" href="/api/export/devices.csv">Export CSV</a></div>
+      <div class="row"><button class="btn muted" id="copylink" type="button" title="Copy a link to this filtered view">Copy link</button>
+        <a class="btn muted" id="exp-csv" href="${exportHref('csv')}" title="Download the devices matching the current filters">Export CSV</a>
+        <a class="btn muted" id="exp-json" href="${exportHref('json')}" title="Download the devices matching the current filters">Export JSON</a></div></div>
     <div class="filters">
       <input type="search" id="q" placeholder="Search MAC, name, SSID, brand, model…" value="${esc(st.q || '')}">
       <select id="kind"><option value="">All types</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
@@ -457,6 +494,7 @@ async function viewDevices(params) {
     if (!('offset' in changes)) delete next.offset;
     location.hash = hrefWith('/devices', next);
   };
+  document.getElementById('copylink').onclick = () => copyText(location.href.replace(/&offset=\d+/, ''), 'Link copied');
   let qTimer;
   document.getElementById('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => go({ q: e.target.value }), 350); });
   document.getElementById('kind').addEventListener('change', e => go({ kind: e.target.value }));

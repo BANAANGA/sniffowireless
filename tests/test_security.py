@@ -203,6 +203,22 @@ def test_csv_formula_injection(env):
     assert "'=HYPERLINK" in body
 
 
+def test_device_export_honours_filters(env):
+    ctx, c = env
+    now = time.time()
+    ctx.store.process({"t": "wifi_ap", "ts": now, "mac": "aa:bb:cc:dd:ee:10", "ssid": "Keep"})
+    ctx.store.process({"t": "wifi_ap", "ts": now, "mac": "aa:bb:cc:dd:ee:11", "ssid": "Skip"})
+    ctx.store.flush()
+    login(c)
+    assert "Keep" in c.get("/api/export/devices.csv").text and "Skip" in c.get("/api/export/devices.csv").text
+    body = c.get("/api/export/devices.csv", params={"q": "Keep"}).text
+    assert "Keep" in body and "Skip" not in body
+    r = c.get("/api/export/devices.json", params={"q": "Keep"})
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert [d["ssid"] for d in r.json()["devices"]] == ["Keep"]
+    assert c.get("/api/devices", params={"q": "Skip"}).json()["total"] == 1
+
+
 def test_allowed_hosts(tmp_path):
     ctx = build(Config(db_path=str(tmp_path / "h.db"), data_dir=str(tmp_path), allowed_hosts=["yolo.lan"]))
     assert TestClient(create_app(ctx), base_url="http://evil.example").get("/api/health").status_code == 421
