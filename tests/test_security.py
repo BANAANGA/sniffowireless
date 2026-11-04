@@ -378,6 +378,42 @@ def test_mynet_weak_ap_choice(env):
     assert r["summary"]["weak_choice_sessions"] == 1
 
 
+def test_passersby(env):
+    ctx, c = env
+    login(c)
+    REPEAT = "a4:83:e7:00:00:01"   # 5 short visits -> a passerby
+    ONCE = "a4:83:e7:00:00:02"     # 2 short visits -> below the default 3-visit threshold
+    LONG = "a4:83:e7:00:00:03"     # visits long enough that they don't count as short
+    now = time.time()
+    with ctx.wdb() as db:
+        for mac in (REPEAT, ONCE, LONG):
+            db.execute("INSERT INTO devices(mac, kind, first_seen, last_seen) VALUES(?, 'wifi_client', ?, ?)",
+                      (mac, now - 3600 * 5, now))
+        for i in range(5):
+            db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, open) VALUES(?, 'presence', ?, ?, 0)",
+                      (REPEAT, now - 3600 * i, now - 3600 * i + 20))  # 20s visits
+        for i in (100, 200):
+            db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, open) VALUES(?, 'presence', ?, ?, 0)",
+                      (ONCE, now - i, now - i + 10))
+        db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, open) VALUES(?, 'presence', ?, ?, 0)",
+                  (LONG, now - 1000, now - 200))  # 800s, well over a minute
+
+    r = c.get("/api/passersby?days=7&min_visits=3&max_secs=60").json()
+    macs = {x["mac"] for x in r["items"]}
+    assert macs == {REPEAT}
+    row = next(x for x in r["items"] if x["mac"] == REPEAT)
+    assert row["visits"] == 5 and 19 <= row["avg_secs"] <= 21
+
+    # A lower threshold (the minimum allowed, 2) picks up the twice-seen device too.
+    r2 = c.get("/api/passersby?days=7&min_visits=2&max_secs=60").json()
+    assert {ONCE, REPEAT} <= {x["mac"] for x in r2["items"]} and LONG not in {x["mac"] for x in r2["items"]}
+
+    # hide_known drops it once it's marked known.
+    assert c.put(f"/api/devices/{REPEAT}/meta", json={"known": True}, headers=H).status_code == 200
+    r3 = c.get("/api/passersby?days=7&min_visits=3&max_secs=60&hide_known=1").json()
+    assert REPEAT not in {x["mac"] for x in r3["items"]}
+
+
 def test_appearance(env):
     ctx, c = env
     a = c.get("/api/appearance").json()  # public: the sign-in page uses it too
@@ -462,6 +498,29 @@ def test_stats_per_sensor(env):
     login(c)
     got = {(r["id"], r["kind"]): r["n"] for r in c.get("/api/stats?days=1").json()["sensor_kinds"]}
     assert got[("attic", "ap")] == 2 and got[("cellar", "ap")] == 1
+
+
+def test_stats_weekly_heat_and_new_vendors(env):
+    ctx, c = env
+    now = time.time()
+    old_vendor_mac = "24:a4:3c:00:00:01"
+    ctx.store.process({"t": "wifi_ap", "ts": now - 30 * 86400, "mac": old_vendor_mac, "ssid": "Old", "vendor": "OldCo"})
+    ctx.store.flush()
+    new_vendor_mac = "a4:83:e7:00:00:02"
+    ctx.store.process({"t": "wifi_client", "ts": now, "mac": new_vendor_mac, "vendor": "NewCo", "rssi": -50})
+    ctx.store.flush()
+    login(c)
+    s = c.get("/api/stats?days=7").json()
+
+    heat = {(r["wd"], r["h"]): r["n"] for r in s["weekly_heat"]}
+    now_lt = now  # samples are keyed on the raw (unoffset) epoch minute at tz=0
+    wd = int((now_lt // 86400 + 3) % 7)
+    h = int((now_lt % 86400) // 3600)
+    assert heat.get((wd, h), 0) >= 1
+
+    vendors = {v["vendor"]: v for v in s["new_vendors"]}
+    assert "NewCo" in vendors and "OldCo" not in vendors  # OldCo's only device is 30 days old
+    assert vendors["NewCo"]["devices"] == 1
 
 
 def test_sessions_drilldown_and_stats_limit(env):
