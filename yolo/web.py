@@ -290,7 +290,8 @@ def create_app(ctx):
 
     # ------------------------------------------------------------------- stats
     @app.get("/api/stats", dependencies=[Depends(current_user)])
-    def stats(days: float = 7, tz: int = 0):
+    def stats(days: float = 7, tz: int = 0, limit: int = 20):
+        limit = max(1, min(limit, 1000))  # rows in the top-N lists; the page asks for more when a list is opened in full
         now = time.time()
         since = now - days * 86400
         off = tz * 60
@@ -314,7 +315,7 @@ def create_app(ctx):
         out["ssids"] = ssids
         out["probes"] = rows("SELECT ssid, COUNT(DISTINCT mac) clients, SUM(count) frames, "
                              "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "
-                             "FROM probes p WHERE last_seen>=? GROUP BY ssid ORDER BY clients DESC LIMIT 50", (since,))
+                             "FROM probes p WHERE last_seen>=? GROUP BY ssid ORDER BY clients DESC LIMIT ?", (since, limit))
         out["channels"] = rows("SELECT channel, COALESCE(band, CASE WHEN channel <= 14 THEN '2.4' ELSE '5' END) AS b, "
                                "COUNT(*) aps FROM devices WHERE kind='ap' AND channel IS NOT NULL AND last_seen>=? "
                                "GROUP BY b, channel ORDER BY b = '6', b = '5', channel", (since,))
@@ -336,12 +337,12 @@ def create_app(ctx):
         out["top_clients"] = rows(
             "SELECT s.mac, d.kind, d.vendor, d.name, d.randomized, COUNT(*) sessions, COUNT(DISTINCT s.peer) peers, "
             "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s LEFT JOIN devices d ON d.mac=s.mac "
-            "WHERE s.type='assoc' AND s.end_ts>=? GROUP BY s.mac ORDER BY secs DESC LIMIT 15", (now, since, since))
+            "WHERE s.type='assoc' AND s.end_ts>=? GROUP BY s.mac ORDER BY secs DESC LIMIT ?", (now, since, since, limit))
         out["top_aps"] = rows(
             "SELECT s.peer mac, a.ssid, a.channel, a.band, a.vendor, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions, "
             "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s JOIN devices a ON a.mac=s.peer "
-            "WHERE s.type='assoc' AND s.end_ts>=? AND a.kind='ap' GROUP BY s.peer ORDER BY clients DESC LIMIT 15",
-            (now, since, since))
+            "WHERE s.type='assoc' AND s.end_ts>=? AND a.kind='ap' GROUP BY s.peer ORDER BY clients DESC LIMIT ?",
+            (now, since, since, limit))
         out["randomized"] = rows("SELECT kind, randomized, COUNT(*) n FROM devices WHERE last_seen>=? "
                                  "GROUP BY kind, randomized", (since,))
         out["events"] = rows("SELECT type, COUNT(*) n FROM events WHERE ts>=? GROUP BY type ORDER BY n DESC", (since,))
@@ -359,8 +360,37 @@ def create_app(ctx):
         out["fingerprints"] = rows(
             "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
             "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
-            "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT 15", (since,))
+            "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT ?", (since, limit))
         return out
+
+    # Session-duration buckets of the Statistics chart (index -> seconds [lo, hi)); keep in sync with the CASE in stats().
+    DURATION_BUCKETS = [(0, 60), (60, 300), (300, 1800), (1800, 7200), (7200, 28800), (28800, None)]
+
+    @app.get("/api/sessions", dependencies=[Depends(current_user)])
+    def sessions(type: str = "assoc", b: int = -1, days: float = 7, mac: str = None, sort: str = "start",
+                 limit: int = 100, offset: int = 0):
+        """Sessions that ended within the period, optionally only one duration bucket: the drill-down of the chart."""
+        where, params = ["s.type = ?", "s.end_ts >= ?"], [type if type in ("assoc", "presence") else "assoc",
+                                                          time.time() - days * 86400]
+        if 0 <= b < len(DURATION_BUCKETS):
+            lo, hi = DURATION_BUCKETS[b]
+            where.append("s.end_ts - s.start_ts >= ?")
+            params.append(lo)
+            if hi is not None:
+                where.append("s.end_ts - s.start_ts < ?")
+                params.append(hi)
+        if mac:
+            where.append("s.mac = ?")
+            params.append(mac.lower())
+        w = " WHERE " + " AND ".join(where)
+        order = "(s.end_ts - s.start_ts) DESC" if sort == "duration" else "s.start_ts DESC"
+        total = one(f"SELECT COUNT(*) n FROM sessions s{w}", params)["n"]
+        items = rows("SELECT s.id, s.mac, s.type, s.peer, s.start_ts, s.end_ts, s.open, s.end_reason, s.packets, "
+                     "s.rssi_min, s.rssi_max, d.kind, d.name, d.vendor, d.randomized, m.label, a.ssid peer_ssid, "
+                     "a.kind peer_kind FROM sessions s LEFT JOIN devices d ON d.mac = s.mac "
+                     "LEFT JOIN devices a ON a.mac = s.peer LEFT JOIN device_meta m ON m.mac = s.mac"
+                     f"{w} ORDER BY {order} LIMIT ? OFFSET ?", params + [max(1, min(limit, 500)), max(0, offset)])
+        return {"total": total, "items": items, "now": time.time()}
 
     @app.get("/api/events", dependencies=[Depends(current_user)])
     def events(type: str = None, mac: str = None, kind: str = None, before: int = 0, limit: int = 100):
