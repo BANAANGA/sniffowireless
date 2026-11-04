@@ -82,6 +82,38 @@ async function bindTrackPanel(d) {
   });
 }
 
+// ===================================================================== passers-by
+addRoute('/passersby', async (_, params) => {
+  const st = { days: params.get('days') || '30', min_visits: params.get('min_visits') || '3',
+    max_secs: params.get('max_secs') || '60', hide_known: params.get('hide_known') || '0' };
+  const go = ch => { location.hash = hrefWith('/passersby', { ...st, ...ch }); };
+  app.innerHTML = `<div class="page-head"><div><h1>Passers-by</h1>
+      <div class="sub">Devices that keep coming within range for a short visit — a neighbour's regular walk, a delivery route, traffic on a nearby street.
+        A device with a randomized (rotating) address will under-count here: each new address looks like a new, less frequent visitor.</div></div></div>
+    <div class="filters">
+      <select id="pb-days"><option value="7" ${st.days === '7' ? 'selected' : ''}>Last 7 days</option><option value="30" ${st.days === '30' ? 'selected' : ''}>Last 30 days</option><option value="90" ${st.days === '90' ? 'selected' : ''}>Last 90 days</option></select>
+      <select id="pb-min"><option value="2" ${st.min_visits === '2' ? 'selected' : ''}>2+ visits</option><option value="3" ${st.min_visits === '3' ? 'selected' : ''}>3+ visits</option><option value="5" ${st.min_visits === '5' ? 'selected' : ''}>5+ visits</option><option value="10" ${st.min_visits === '10' ? 'selected' : ''}>10+ visits</option></select>
+      <select id="pb-max"><option value="30" ${st.max_secs === '30' ? 'selected' : ''}>Under 30 sec</option><option value="60" ${st.max_secs === '60' ? 'selected' : ''}>Under 1 min</option><option value="120" ${st.max_secs === '120' ? 'selected' : ''}>Under 2 min</option></select>
+      <label class="check"><input type="checkbox" id="pb-hide" ${st.hide_known === '1' ? 'checked' : ''}>Hide known devices</label>
+    </div>
+    <section class="panel"><div class="body flush table-wrap" id="pb-list"></div></section>`;
+  document.getElementById('pb-days').onchange = e => go({ days: e.target.value });
+  document.getElementById('pb-min').onchange = e => go({ min_visits: e.target.value });
+  document.getElementById('pb-max').onchange = e => go({ max_secs: e.target.value });
+  document.getElementById('pb-hide').onchange = e => go({ hide_known: e.target.checked ? '1' : '0' });
+  const d = await api(`/api/passersby?${new URLSearchParams(st)}`);
+  const el = document.getElementById('pb-list');
+  el.innerHTML = tableHtml(
+    '<th>Device</th><th class="num">Visits</th><th class="num">Avg. visit</th><th class="num">Longest</th><th class="num">First seen</th><th class="num">Last seen</th><th>Signal</th>',
+    d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
+      <td>${kindBadge(x.kind)} <span style="margin-left:8px">${x.label ? `<b>${esc(x.label)}</b>` : esc(x.ident || x.vendor || x.name || x.mac)}</span>
+        ${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}${x.watch ? ' <span class="star" title="Watched">★</span>' : ''}</td>
+      <td class="num">${num(x.visits)}</td><td class="num muted">${dur(x.avg_secs)}</td><td class="num muted">${dur(x.max_secs)}</td>
+      <td class="num muted">${dt(x.first_seen)}</td><td class="num muted">${ago(x.last_seen)}</td><td>${rssiBars(x.last_rssi)}</td></tr>`).join(''),
+    'No repeat short visits in this period — try a longer period, a lower visit count, or a longer visit length');
+  linkRows(el);
+});
+
 // ===================================================================== groups
 addRoute('/groups', async () => {
   const gs = await api('/api/groups');
