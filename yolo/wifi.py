@@ -9,9 +9,11 @@ import time
 from scapy.all import conf, sniff
 from scapy.layers.dot11 import (Dot11, Dot11AssoResp, Dot11Beacon, Dot11Deauth, Dot11Disas,
                                 Dot11Elt, Dot11ProbeResp, Dot11ReassoResp, RadioTap)
+from scapy.layers.eap import EAPOL
 
 from . import status
 from .config import band_of, chan_label, freq_to_channel
+from .handshake import eapol_message
 from .identify import wifi_fingerprint
 from .survey import frame_airtime_us, rate_from_radiotap
 
@@ -345,8 +347,9 @@ def regulatory_warning(country, wanted, want_6ghz):
 
 
 class WifiSensor:
-    def __init__(self, iface, channels, cfg, store):
+    def __init__(self, iface, channels, cfg, store, handshake=None):
         self.iface, self.channels, self.cfg, self.store = iface, list(channels), cfg, store
+        self.handshake = handshake  # HandshakeCapture, only passed where capture settings are reachable (server mode)
         self.name = f"wifi:{iface}"
         self.mon = None
         self.packets = 0
@@ -415,8 +418,38 @@ class WifiSensor:
         try:
             for o in parse_frame(pkt, self.fp_gate, tuned):
                 self.store.put(o)
+                if self.handshake and o["t"] == "wifi_ap" and o.get("ssid"):
+                    self.handshake.note_ap(o["mac"], o["ssid"])
         except Exception:
             log.debug("Failed to parse frame", exc_info=True)
+        if self.handshake and self.handshake.wanted:  # skip the EAPOL check entirely when nothing is enabled
+            try:
+                self._capture_handshake(pkt)
+            except Exception:
+                log.debug("Failed to inspect frame for EAPOL", exc_info=True)
+
+    def _capture_handshake(self, pkt):
+        """Hand a 4-way-handshake frame to self.handshake, if this one is part of one. Passive only: this
+        never transmits anything (no deauth), so a handshake is only captured if a client naturally
+        (re)associates while capture is enabled for its SSID."""
+        if not pkt.haslayer(Dot11):
+            return
+        d = pkt[Dot11]
+        if d.type != 2 or not pkt.haslayer(EAPOL):  # EAPOL rides on a Data frame
+            return
+        msg = eapol_message(pkt)
+        if not msg:
+            return
+        fc = int(d.FCfield)
+        to_ds, from_ds = bool(fc & 0x1), bool(fc & 0x2)
+        if to_ds and not from_ds:      # client -> AP (message 2 or 4)
+            sta, bssid = d.addr2, d.addr1
+        elif from_ds and not to_ds:    # AP -> client (message 1 or 3)
+            bssid, sta = d.addr2, d.addr1
+        else:
+            return
+        if bssid and sta:
+            self.handshake.feed(pkt, bssid.lower(), sta.lower(), msg)
 
     def _capture_loop(self):
         while not self.stop.is_set():

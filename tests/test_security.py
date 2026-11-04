@@ -419,3 +419,39 @@ def test_sessions_drilldown_and_stats_limit(env):
     ctx.store.flush()
     assert len(c.get("/api/stats?days=1").json()["probes"]) <= 20
     assert len(c.get("/api/stats?days=1&limit=5").json()["probes"]) <= 5
+
+
+def test_handshake_api_scope_and_auth(env):
+    ctx, c = env
+    login(c)
+    # Enabling capture for a network not in "My networks" is refused.
+    assert c.put("/api/handshakes/HomeNet", json={"enabled": True}, headers=H).status_code == 400
+    assert c.put("/api/settings/networks", json={"ssids": ["HomeNet"], "trusted_bssids": []}, headers=H).status_code == 200
+    assert c.put("/api/handshakes/HomeNet", json={"enabled": True}, headers=H).status_code == 200
+    assert c.get("/api/handshakes").json()["items"][0] == {
+        "ssid": "HomeNet", "enabled": True, "bssids": [], "pairs": 0, "usable_pairs": 0, "frames": 0,
+        "bytes": 0, "started": None, "updated": None, "downloadable": False}
+    # No capture yet, so there's nothing to download.
+    assert c.get("/api/handshakes/HomeNet/capture.pcap").status_code == 404
+
+    # A viewer (non-admin) can't see or change any of this.
+    c.cookies.clear()
+    login(c, "viewer")
+    assert c.get("/api/handshakes").status_code == 403
+    assert c.put("/api/handshakes/HomeNet", json={"enabled": False}, headers=H).status_code == 403
+    assert c.get("/api/handshakes/HomeNet/capture.pcap").status_code == 403
+    assert c.delete("/api/handshakes/HomeNet", headers=H).status_code == 403
+
+    c.cookies.clear()
+    login(c)
+    ctx.handshake.note_ap("24:a4:3c:10:00:01", "HomeNet")
+    from tests.test_core import eapol_frame
+    STA = "a4:83:e7:01:00:01"
+    ctx.handshake.feed(eapol_frame(ack=True, mic=False, secure=False, src="24:a4:3c:10:00:01", dst=STA),
+                       "24:a4:3c:10:00:01", STA, 1)
+    r = c.get("/api/handshakes/HomeNet/capture.pcap")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/vnd.tcpdump.pcap"
+    assert len(r.content) > 0
+
+    assert c.delete("/api/handshakes/HomeNet", headers=H).status_code == 200
+    assert c.get("/api/handshakes/HomeNet/capture.pcap").status_code == 404

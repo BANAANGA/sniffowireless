@@ -69,7 +69,8 @@ SETTINGS_VIEWS.networks = async function (el) {
       ${ro ? '' : '<div style="margin-top:16px"><button class="btn primary" id="save-net">Save</button></div>'}
       ${n.bssids.length ? `<h3 class="subhead">Access points broadcasting them</h3>${tableHtml('<th>BSSID</th><th>SSID</th><th>Channel</th><th>Security</th><th>Trusted</th>',
         n.bssids.map(b => `<tr><td>${devLink(b.mac)}</td><td>${esc(b.ssid)}</td><td>${chText(b.channel, b.band)}</td><td class="muted">${esc(b.enc || '')}</td><td>${n.trusted_bssids.includes(b.mac) ? '<span class="tag on">yes</span>' : '<span class="tag">no</span>'}</td></tr>`).join(''))}
-        <p class="faint small-text">Mark trusted access points on the <a href="#/security">Security</a> page.</p>` : ''}</div></section>`;
+        <p class="faint small-text">Mark trusted access points on the <a href="#/security">Security</a> page.</p>` : ''}</div></section>
+      ${ro ? '' : '<section class="panel"><header><h2>Handshake capture</h2><span class="faint">for auditing your own password strength</span></header><div class="body" id="hs-body"><div class="empty">Loading…</div></div></section>'}`;
     el.querySelectorAll('[data-rm]').forEach(a => a.onclick = e => { e.preventDefault(); ssids.splice(+a.dataset.rm, 1); render(); });
     const pick = el.querySelector('#pick');
     if (pick) pick.onclick = async () => {
@@ -78,7 +79,38 @@ SETTINGS_VIEWS.networks = async function (el) {
     };
     const sv = el.querySelector('#save-net');
     if (sv) sv.onclick = async () => { try { await send('PUT', '/api/settings/networks', { ssids, trusted_bssids: n.trusted_bssids }); toast('Saved'); } catch (e) { toast(e.message, true); } };
+    if (!ro) loadHandshakes();
   };
+  async function loadHandshakes() {
+    const body = el.querySelector('#hs-body');
+    if (!body) return;
+    let hs;
+    try { hs = await api('/api/handshakes'); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    if (!hs.items.length) { body.innerHTML = '<div class="empty">Add a network above, then save, to enable capture for it.</div>'; return; }
+    body.innerHTML = `<p class="muted" style="margin-top:0">Captures the WPA 4-way handshake when a device (re)connects to one of your own networks, so you can test your own
+      password's strength offline (e.g. with hashcat or aircrack-ng). Passive only — nothing is ever sent to force a reconnect, so capture can
+      sit on while you wait for a device to naturally rejoin. Only available for networks listed above as “My networks”.</p>
+      ${tableHtml('<th>Network</th><th>Capture</th><th class="num">Access points heard</th><th>Handshake</th><th class="num">Size</th><th>Updated</th><th></th>',
+      hs.items.map(x => `<tr>
+        <td><b>${esc(x.ssid)}</b></td>
+        <td><label class="switch"><input type="checkbox" data-hs-on="${esc(x.ssid)}" ${x.enabled ? 'checked' : ''}><span></span></label></td>
+        <td class="num">${num(x.bssids.length)}</td>
+        <td>${x.usable_pairs ? `<span class="tag on">${x.usable_pairs} captured</span>` : x.pairs ? `<span class="tag warn">${x.pairs} partial</span>` : '<span class="faint">none yet</span>'}</td>
+        <td class="num muted">${x.bytes ? bytes(x.bytes) : '—'}</td>
+        <td class="muted">${x.updated ? ago(x.updated) : '—'}</td>
+        <td><div class="row" style="justify-content:flex-end">${x.downloadable ? `<a class="btn small" href="/api/handshakes/${enc(x.ssid)}/capture.pcap">Download</a>` : ''}${x.frames
+          ? `<button class="btn small" data-hs-clear="${esc(x.ssid)}" type="button">Clear</button>` : ''}</div></td></tr>`).join(''))}`;
+    body.querySelectorAll('[data-hs-on]').forEach(cb => cb.onchange = async () => {
+      const on = cb.checked;
+      try { await send('PUT', `/api/handshakes/${enc(cb.dataset.hsOn)}`, { enabled: on }); toast(on ? 'Capture enabled' : 'Capture disabled'); loadHandshakes(); }
+      catch (e) { cb.checked = !on; toast(e.message, true); }
+    });
+    body.querySelectorAll('[data-hs-clear]').forEach(b => b.onclick = async () => {
+      if (!confirm(`Delete the captured handshake data for “${b.dataset.hsClear}”? This can't be undone.`)) return;
+      try { await send('DELETE', `/api/handshakes/${enc(b.dataset.hsClear)}`); toast('Cleared'); loadHandshakes(); }
+      catch (e) { toast(e.message, true); }
+    });
+  }
   render();
 };
 
@@ -153,11 +185,29 @@ async function renderSsid(ssid, params, base) {
   Object.entries(byClient).slice(0, 25).forEach(([m, ss]) => lanes.push([`<a href="#/device/${enc(m)}" title="${esc(m)}">${esc(cname[m] || m)}</a>`,
     ss.map(s => ({ s: s.start_ts, e: s.end_ts, color: KINDS.wifi_client.color, title: `Connected ${dt(s.start_ts)} → ${dt(s.end_ts)}` }))]));
   const who = x => x.label ? `<b>${esc(x.label)}</b>` : esc(x.name || x.ident || x.vendor || '');
+  // SSID stats: summary cards, same shape as the Overview's per-kind cards.
+  const bands = [...new Set(d.aps.map(a => a.band).filter(Boolean))].sort();
+  const channels = [...new Set(d.aps.map(a => a.band === '6' ? `6G:${a.channel}` : a.channel).filter(v => v != null))];
+  const encs = [...new Set(d.aps.map(a => a.enc).filter(Boolean))];
+  const connectedNow = d.clients.filter(c => c.connected).length;
+  const bestRssi = d.aps.reduce((m, a) => a.best_rssi != null && (m == null || a.best_rssi > m) ? a.best_rssi : m, null);
   app.innerHTML = `<div class="page-head"><div><div class="crumbs">${base === 'ssid' ? '<a href="#/ssids">Networks</a>' : '<a href="#/investigations">Investigations</a>'}</div>
       <h1>${esc(d.ssid)} ${d.investigated ? '<span class="tag warn">under investigation</span>' : ''} ${d.mine ? '<span class="tag on">my network</span>' : ''}</h1>
       <div class="sub">${d.entry && d.entry.note ? esc(d.entry.note) : `${d.aps.length} access point${d.aps.length === 1 ? '' : 's'} · ${d.clients.length} client${d.clients.length === 1 ? '' : 's'} · ${d.probers.length} device${d.probers.length === 1 ? '' : 's'} looked for it`}</div></div>
     <div class="row">${seg('days', [[1, '24h'], [7, '7d'], [30, '30d']], days)}
       ${isAdmin() ? `<button class="btn ${d.investigated ? '' : 'primary'}" id="inv-toggle">${d.investigated ? 'Stop investigating' : 'Investigate'}</button>` : ''}</div></div>
+    <div class="grid cols-5" style="margin-bottom:16px">
+      <div class="card"><div class="label">Access points</div><div class="value">${num(d.aps.length)}</div>
+        <div class="meta">${bands.length ? bands.map(b => `<span>${esc(b)} GHz</span>`).join('') : '<span class="faint">none seen</span>'}</div></div>
+      <div class="card"><div class="label">Clients</div><div class="value">${num(d.clients.length)}</div>
+        <div class="meta"><span>${connectedNow} connected now</span></div></div>
+      <div class="card"><div class="label">Looked for by</div><div class="value">${num(d.probers.length)}</div>
+        <div class="meta"><span>device${d.probers.length === 1 ? '' : 's'} probing</span></div></div>
+      <div class="card"><div class="label">Security</div><div class="value" style="font-size:16px">${encs.length ? esc(encs.join(', ')) : '—'}</div>
+        <div class="meta">${encs.some(e => e.includes('OPN')) ? '<span class="tag bad">open network seen</span>' : encs.length ? '<span class="tag on">encrypted</span>' : ''}</div></div>
+      <div class="card"><div class="label">Best signal</div><div class="value" style="font-size:16px">${bestRssi != null ? rssiBars(bestRssi) : '—'}</div>
+        <div class="meta">${channels.length ? `<span>ch ${channels.slice(0, 4).map(c => esc(String(c))).join(', ')}${channels.length > 4 ? '…' : ''}</span>` : ''}</div></div>
+    </div>
     <div class="grid cols-3">
       <section class="panel span-3"><header><h2>Timeline</h2><span class="legend"><span><span class="swatch" style="background:${KINDS.ap.color}"></span>access point on the air</span><span><span class="swatch" style="background:${KINDS.wifi_client.color}"></span>device connected</span></span></header>
         <div class="body">${lanes.length ? ganttHtml(lanes, d.since, d.now) : '<div class="empty">Not seen in this period</div>'}</div></section>
