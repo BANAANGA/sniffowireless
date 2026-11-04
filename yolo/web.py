@@ -11,8 +11,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (alerts, appearance, auth, backup, dfs, health, interference, investigate, lan, logs, manage, matching, metrics,
-               reports, search, security, sensors, status, survey, sysinfo, trackers)
+from . import (alerts, appearance, auth, backup, dfs, handshake, health, interference, investigate, lan, logs, manage,
+               matching, metrics, reports, search, security, sensors, status, survey, sysinfo, trackers)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -459,7 +459,7 @@ def create_app(ctx):
     # ------------------------------------------------------------------ static
     # investigate before manage: manage's catch-all /api/settings/{key} would otherwise shadow /api/settings/investigate
     for mod in (auth, appearance, investigate, manage, alerts, security, survey, health, metrics, sensors, reports, lan, interference, dfs,
-                trackers, backup, search, logs, matching):
+                trackers, backup, search, logs, matching, handshake):
         app.include_router(mod.routes(ctx))
 
     # Cache-busting: reference static files as /static/x.js?v=<content hash>, so browsers pick up new

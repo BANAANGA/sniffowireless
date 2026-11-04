@@ -9,8 +9,13 @@ from .oui import VendorLookup
 log = logging.getLogger("yolo")
 
 
-def start_sensors(cfg, sink, stop):
-    """Start Wi-Fi / Bluetooth capture; `sink` is the Store (server) or a Forwarder (remote sensor)."""
+def start_sensors(cfg, sink, stop, handshake=None):
+    """Start Wi-Fi / Bluetooth capture; `sink` is the Store (server) or a Forwarder (remote sensor).
+
+    `handshake` (a HandshakeCapture) is only passed in server mode, where admin settings are reachable;
+    a remote sensor process (YOLO_MODE=sensor) only forwards observations, so it can't honour capture
+    settings and doesn't offer this feature.
+    """
     n = 0
     if cfg.wifi_interfaces:
         from .config import band_of, chan_label
@@ -43,7 +48,7 @@ def start_sensors(cfg, sink, stop):
                                 "'iw reg get' and 'iw phy' on the host)", iface, len(six))
         for iface in cfg.wifi_interfaces:
             chans = cfg.wifi_channels_per_iface.get(iface) or plan.get(iface) or cfg.wifi_channels
-            sensor = WifiSensor(iface, chans, cfg, sink)
+            sensor = WifiSensor(iface, chans, cfg, sink, handshake=handshake)
             if reg_warning:
                 status.update(sensor.name, warning=reg_warning)
             sensor.start(stop)
@@ -84,6 +89,7 @@ def build(cfg):
     from .auth import Auth
     from .backup import BackupScheduler, apply_staged_restore
     from .dfs import DfsMonitor
+    from .handshake import HandshakeCapture
     from .interference import InterferenceDetector
     from .investigate import InvestigationMonitor
     from .trackers import TrackerMonitor
@@ -112,6 +118,7 @@ def build(cfg):
     ctx.trackers = TrackerMonitor(ctx)
     ctx.backups = BackupScheduler(ctx)
     ctx.investigate = InvestigationMonitor(ctx)
+    ctx.handshake = HandshakeCapture(ctx)
     from .matching import SCHEMA as MATCHING_SCHEMA
     store.conn.executescript(MATCHING_SCHEMA)
     ctx.dfs = DfsMonitor(ctx)
@@ -146,7 +153,7 @@ def main():
         demo.backfill(cfg.demo_backfill_hours)
         threading.Thread(target=demo.run, args=(stop,), daemon=True, name="demo").start()
         log.info("Demo mode enabled: generating synthetic devices")
-    if not start_sensors(cfg, store, stop) and not cfg.demo:
+    if not start_sensors(cfg, store, stop, handshake=ctx.handshake) and not cfg.demo:
         log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES and/or BT_DEVICES, add remote sensors in "
                     "Settings → Sensors, or use DEMO_MODE=1")
 

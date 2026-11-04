@@ -289,3 +289,74 @@ def test_regulatory_warning(monkeypatch):
     assert wifi.regulatory_warning("00", "NL", False) is None  # no 6 GHz configured: nothing to warn about
     assert wifi.regulatory_warning("NL", "NL", True) is None
     assert "was not applied" in wifi.regulatory_warning("US", "NL", True)
+
+
+# ------------------------------------------------------------------ handshake capture
+def eapol_frame(ack, mic, secure, src, dst, ts=1000.0):
+    """A synthetic EAPOL-Key Data frame, like a real WPA 4-way-handshake message."""
+    import struct
+
+    from scapy.layers.eap import EAPOL
+    from scapy.all import LLC, SNAP, Raw
+
+    ki = (2 << 0) | (1 << 3) | (ack << 7) | (mic << 8) | (secure << 9)
+    body = struct.pack(">B H H 8s 32s 16s 8s 8s 16s H", 2, ki, 0, b"\x00" * 8, b"\x11" * 32, b"\x00" * 16,
+                       b"\x00" * 8, b"\x00" * 8, b"\x22" * 16, 0)
+    fc = "to-DS" if src != AP else "from-DS"
+    pkt = RadioTap() / Dot11(type=2, subtype=0, FCfield=fc, addr1=dst, addr2=src, addr3=AP) / \
+        LLC() / SNAP(OUI=0, code=0x888e) / EAPOL(version=1, type=3) / Raw(load=body)
+    pkt = pkt.__class__(bytes(pkt))
+    pkt.time = ts
+    return pkt
+
+
+def test_eapol_message_classification():
+    from yolo.handshake import eapol_message
+    STA = "a4:83:e7:01:00:01"
+    assert eapol_message(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA)) == 1
+    assert eapol_message(eapol_frame(ack=False, mic=True, secure=False, src=STA, dst=AP)) == 2
+    assert eapol_message(eapol_frame(ack=True, mic=True, secure=True, src=AP, dst=STA)) == 3
+    assert eapol_message(eapol_frame(ack=False, mic=True, secure=True, src=STA, dst=AP)) == 4
+    assert eapol_message(frame(Dot11Beacon(cap="ESS") / Dot11Elt(ID=0, info=b"x"))) is None
+
+
+def test_handshake_capture_scoped_to_my_networks(tmp_path):
+    from yolo.config import Config
+    from yolo.context import Ctx
+    from yolo.handshake import HandshakeCapture
+    from yolo.settings import Settings
+    from yolo.store import Store, connect
+    from yolo.oui import VendorLookup
+
+    cfg = Config(db_path=str(tmp_path / "t.db"), data_dir=str(tmp_path))
+    store = Store(cfg, VendorLookup(cfg.manuf_path))
+    ctx = Ctx(cfg, store, Settings(lambda: connect(cfg.db_path)))
+    hc = HandshakeCapture(ctx)
+    STA = "a4:83:e7:01:00:01"
+
+    # Enabling capture for a network that isn't "mine" is refused outright.
+    import pytest as pt
+    with pt.raises(ValueError):
+        hc.enable("HomeNet", True)
+    assert not hc.want("HomeNet")
+
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
+    hc.enable("HomeNet", True)
+    assert hc.want("HomeNet")
+
+    hc.note_ap(AP, "HomeNet")
+    hc.feed(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA), AP, STA, 1)
+    hc.feed(eapol_frame(ack=False, mic=True, secure=False, src=STA, dst=AP), AP, STA, 2)
+    st = hc.status()
+    assert len(st) == 1 and st[0]["ssid"] == "HomeNet" and st[0]["frames"] == 2 and st[0]["usable_pairs"] == 1
+    assert st[0]["downloadable"] and hc.pcap_path("HomeNet")
+
+    # Dropping the network from "My networks" stops and hides the capture, even though it stays enabled.
+    ctx.settings.set("networks", {"ssids": [], "trusted_bssids": []})
+    assert not hc.want("HomeNet")
+    assert hc.status() == []
+    assert hc.pcap_path("HomeNet") is None  # can't download what's no longer "mine" either
+
+    # An unrelated SSID, even while nothing restricts it beforehand, is simply never fed without note_ap.
+    hc.feed(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA), "aa:bb:cc:dd:ee:ff", STA, 1)
+    assert hc.status() == []
