@@ -360,3 +360,46 @@ def test_handshake_capture_scoped_to_my_networks(tmp_path):
     # An unrelated SSID, even while nothing restricts it beforehand, is simply never fed without note_ap.
     hc.feed(eapol_frame(ack=True, mic=False, secure=False, src=AP, dst=STA), "aa:bb:cc:dd:ee:ff", STA, 1)
     assert hc.status() == []
+
+
+# ------------------------------------------------------------------ tracker sound ("play sound" button)
+def test_tracker_sound_packet_framing():
+    """The HCI/ATT framing tracker_sound.py builds and parses, checked without any real adapter."""
+    import struct
+
+    from yolo.tracker_sound import _att_write, _parse_packet
+
+    class FakeSocket:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, data):
+            self.sent.append(data)
+
+    sock = FakeSocket()
+    _att_write(sock, handle=0x002A, att_pdu=bytes([0x12, 0x34, 0x12, 0x02]))
+    (pkt,) = sock.sent
+    assert pkt[0] == 0x02  # HCI ACL Data packet type
+    handle_flags, total_len = struct.unpack_from("<HH", pkt, 1)
+    assert handle_flags & 0x0FFF == 0x002A and (handle_flags >> 12) == 0b10
+    l2len, cid = struct.unpack_from("<HH", pkt, 5)
+    assert cid == 0x0004 and l2len == 4 and pkt[9:9 + l2len] == bytes([0x12, 0x34, 0x12, 0x02])
+
+    # Round-trips through _parse_packet the same way the controller's ACL data would arrive.
+    ev = _parse_packet(pkt)
+    assert ev == {"ev": "att", "handle": 0x002A, "data": bytes([0x12, 0x34, 0x12, 0x02])}
+
+    # LE connection complete and disconnection complete events.
+    conn_evt = bytes([0x04, 0x3E, 0x13, 0x01, 0x00]) + bytes([0x2A, 0x00]) + b"\x00" * 13
+    assert _parse_packet(conn_evt) == {"ev": "conn", "status": 0, "handle": 0x002A}
+    disc_evt = bytes([0x04, 0x05, 0x04, 0x00, 0x2A, 0x00, 0x13])
+    assert _parse_packet(disc_evt) == {"ev": "disc", "handle": 0x002A}
+
+
+def test_tracker_sound_requires_real_hardware(monkeypatch):
+    """No Bluetooth hardware here: just check play_sound() fails closed (socket error) rather than hanging."""
+    from yolo.tracker_sound import SoundError, play_sound
+    import pytest as pt
+
+    with pt.raises((SoundError, OSError, PermissionError)):
+        play_sound("hci99", "aa:bb:cc:dd:ee:ff")
