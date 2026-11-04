@@ -321,6 +321,32 @@ def test_timeline_per_band(env):
         assert r["series"]["wifi_client"][i] == b["2.4"]["wifi_client"][i] + b["5"]["wifi_client"][i] + b["6"]["wifi_client"][i]
 
 
+def test_mynet_changes(env):
+    ctx, c = env
+    login(c)
+    assert c.get("/api/mynet/changes").json() == {"configured": False, "items": []}
+
+    AP = "24:a4:3c:00:00:09"
+    assert c.put("/api/settings/networks", json={"ssids": ["HomeNet"], "trusted_bssids": []}, headers=H).status_code == 200
+    s = ctx.store
+    t = time.time() - 60
+    # Channel change: an AP on 36 moves to 40, confirmed over a few sightings (no CSA).
+    s.process({"t": "wifi_ap", "ts": t, "mac": AP, "ssid": "HomeNet", "band": "5", "channel": 36, "enc": "WPA2/PSK"})
+    for i in range(1, 4):
+        s.process({"t": "wifi_ap", "ts": t + i, "mac": AP, "ssid": "HomeNet", "band": "5", "channel": 40, "enc": "WPA2/PSK"})
+    # Security finding: that same AP is (also) seen broadcasting in the open.
+    s.process({"t": "wifi_ap", "ts": t + 5, "mac": AP, "ssid": "HomeNet", "band": "5", "channel": 40, "enc": "OPN"})
+    s.flush()
+
+    r = c.get("/api/mynet/changes").json()
+    assert r["configured"] and {"channel", "security"} <= {x["type"] for x in r["items"]}
+    chg = next(x for x in r["items"] if x["type"] == "channel")
+    assert chg["mac"] == AP and "36" in chg["title"] and "40" in chg["title"]
+    sec = next(x for x in r["items"] if x["type"] == "security")
+    assert sec["mac"] == AP and sec["severity"] == "high"  # open network
+    assert r["items"] == sorted(r["items"], key=lambda x: x["ts"], reverse=True)
+
+
 def test_appearance(env):
     ctx, c = env
     a = c.get("/api/appearance").json()  # public: the sign-in page uses it too

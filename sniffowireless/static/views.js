@@ -340,9 +340,19 @@ addRoute('/mynet', async (_, params) => {
           <td class="num">${c.rssi_now != null ? c.rssi_now + ' dBm' : '—'}</td><td class="num muted">${c.avg_rssi != null ? c.avg_rssi + ' dBm' : '—'}</td><td class="num">${dur(c.secs)}</td>
           <td class="num muted">${c.sessions}</td><td class="num muted">${c.aps}</td><td class="num">${c.roams}${c.pingpong ? ` <span class="tag warn" title="A→B→A within 2 minutes">${c.pingpong} ping-pong</span>` : ''}</td>
           <td class="num ${c.kicked ? '' : 'muted'}">${c.kicked}</td><td>${c.sticky ? '<span class="tag warn">sticky</span>' : ''}${c.connected_band === '2.4' && c.wifi_gen >= 5 ? ' <span class="tag" title="Supports 5 GHz but is on 2.4 GHz">on 2.4G</span>' : ''}</td></tr>`).join(''))}</div></section>
+      <section class="panel span-3"><header><h2>Network changes</h2><span class="faint">channel moves and security findings on my networks</span></header><div class="body flush" id="mn-changes"><div class="empty">Loading…</div></div></section>
     </div>`;
   linkRows(app);
   onSeg(app, 'days', v => { location.hash = hrefWith('/mynet', { days: v }); });
+  api(`/api/mynet/changes?days=${days}`).then(r => {
+    const el = document.getElementById('mn-changes');
+    const kind = x => x.type === 'channel' ? 'channel' : x.type === 'rogue_ap' ? 'rogue AP' : 'security';
+    el.innerHTML = r.items.length ? `<ul class="events wide">${r.items.map(x => `<li>
+        <span class="t" title="${esc(dt(x.ts))}">${ago(x.ts)}</span><span class="ev ev-${esc(x.type)}">${kind(x)}</span>
+        <span>${devLink(x.mac)} <b>${esc(x.title)}</b>${x.detail ? ` <span class="faint">${esc(x.detail)}</span>` : ''}
+          ${x.severity ? sevTag(x.severity) : ''}${x.status === 'resolved' ? ' <span class="tag on">resolved</span>' : ''}</span></li>`).join('')}</ul>`
+      : '<div class="empty">No changes recorded in this period</div>';
+  }).catch(() => {});
   const colors = [KINDS.wifi_client.color, KINDS.ap.color, KINDS.ble.color, KINDS.bt_classic.color];
   const tl = n.timeline;
   chart(document.getElementById('mn-tl'), { type: 'line', data: { datasets: Object.entries(tl.series).map(([ssid, v], i) => ({
