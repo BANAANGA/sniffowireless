@@ -313,6 +313,12 @@ def test_timeline_per_band(env):
     assert max(b["2.4"]["ap"]) == 1 and max(b["5"]["ap"]) == 1 and max(b["6"]["ap"]) == 1
     assert max(b["2.4"]["connected"]) == 1 and max(b["5"]["connected"]) == 1 and max(b["6"]["connected"]) == 0
     assert max(b["5"]["wifi_client"]) == 1 and max(b["2.4"]["wifi_client"]) == 0  # last heard on 5 GHz
+    # The per-band and overall series come from one combined query now; they must still add up exactly
+    # (each device has one band at a time, so summing the per-band distinct counts for a kind reconstructs
+    # the same distinct count the unbanded series reports).
+    for i in range(len(r["t"])):
+        assert r["series"]["ap"][i] == b["2.4"]["ap"][i] + b["5"]["ap"][i] + b["6"]["ap"][i]
+        assert r["series"]["wifi_client"][i] == b["2.4"]["wifi_client"][i] + b["5"]["wifi_client"][i] + b["6"]["wifi_client"][i]
 
 
 def test_appearance(env):

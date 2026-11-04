@@ -78,21 +78,25 @@ def create_app(ctx):
         auto = max(60, int(hours * 3600 / 288) // 60 * 60)
         bucket = max(bucket, int(hours * 3600 / 2000), 60) if bucket else auto  # never more than ~2000 buckets
         since = int((now - hours * 3600) // bucket * bucket)
+        # One pass over `samples` (grouped by bucket, kind AND band) instead of two: the per-kind series is
+        # exactly the per-band figures summed back up (each device has one band at a time), and the GROUP BY
+        # + COUNT(DISTINCT) here is the expensive part of this endpoint at a 30-day range — halving how many
+        # times it scans `samples` is worth more than the SQL staying simple.
         series = {k: {} for k in KINDS}
-        for r in rows("SELECT (s.minute / ?) * ? AS t, d.kind, COUNT(DISTINCT s.mac) n FROM samples s "
-                      "JOIN devices d ON d.mac = s.mac WHERE s.minute >= ? GROUP BY t, d.kind",
+        bands = {b: {"ap": {}, "wifi_client": {}} for b in ("2.4", "5", "6")}
+        for r in rows("SELECT (s.minute / ?) * ? AS t, d.kind, d.band, COUNT(DISTINCT s.mac) n FROM samples s "
+                      "JOIN devices d ON d.mac = s.mac WHERE s.minute >= ? GROUP BY t, d.kind, d.band",
                       (bucket, bucket, since)):
-            series.setdefault(r["kind"], {})[r["t"]] = r["n"]
+            k, t, n = r["kind"], r["t"], r["n"]
+            s = series.setdefault(k, {})
+            s[t] = s.get(t, 0) + n
+            if k in ("ap", "wifi_client") and r["band"] in bands:
+                bands[r["band"]][k][t] = n
         sess = rows("SELECT mac, start_ts, end_ts FROM sessions WHERE type='assoc' AND end_ts >= ?", (since,))
         connected = overlap_counts([(s["mac"], s["start_ts"], s["end_ts"]) for s in sess], since, now, bucket)
         ts = [since + i * bucket for i in range(len(connected))]
         # Per Wi-Fi band: APs and active clients (on the band the device was last heard on), plus connected
         # clients counted on the band of the AP they were connected to at that time (correct when roaming).
-        bands = {b: {"ap": {}, "wifi_client": {}} for b in ("2.4", "5", "6")}
-        for r in rows("SELECT (s.minute / ?) * ? AS t, d.kind, d.band, COUNT(DISTINCT s.mac) n FROM samples s "
-                      "JOIN devices d ON d.mac = s.mac WHERE s.minute >= ? AND d.kind IN ('ap', 'wifi_client') "
-                      "AND d.band IN ('2.4', '5', '6') GROUP BY t, d.kind, d.band", (bucket, bucket, since)):
-            bands[r["band"]][r["kind"]][r["t"]] = r["n"]
         by_band = {}
         for r in rows("SELECT s.mac, s.start_ts, s.end_ts, a.band FROM sessions s JOIN devices a ON a.mac = s.peer "
                       "WHERE s.type='assoc' AND s.end_ts >= ? AND a.band IN ('2.4', '5', '6')", (since,)):
