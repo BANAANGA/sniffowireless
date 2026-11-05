@@ -5,6 +5,7 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Wi-Fi:** passive monitor-mode capture with channel hopping across 2.4 GHz, 5 GHz and **6 GHz (Wi-Fi 6E/7)**, on one or more USB adapters
 - **Bluetooth:** BLE advertising plus Classic inquiry over a raw HCI socket. No BlueZ daemon is needed inside the container.
 - **Ethernet / LAN:** passive capture on a wired interface. It discovers devices via ARP, DHCP, mDNS, SSDP and LLDP, and shows per-device traffic, who each device talks to, and DNS lookups. It also detects rogue DHCP servers and ARP spoofing.
+- **Zigbee / IEEE 802.15.4:** with a USB coordinator stick, finds Zigbee networks and listens passively to all 802.15.4 traffic: frames per channel, addresses, frame types, channel interference and a protocol hint. It never transmits, and encrypted contents stay hidden.
 - **Connectivity history:** presence sessions ("visits") for every device, connection sessions for Wi-Fi client→AP links (including roaming between BSSIDs and deauths), and Bluetooth links to the sensor's adapter
 - **Passive device identification:** brand, model, device type, OS, Wi-Fi generation and estimated age, worked out from capability elements, WPS data, Apple/Microsoft/Google Bluetooth beacons, Bluetooth class of device, names and MAC vendor. Each result shows its evidence and confidence. Probe fingerprints group randomized MACs that belong to the same model/OS.
 - **Labels, groups and watch list:** name devices, mark them known, and group a person's phone, watch and earbuds (or a phone's rotating MACs, with merge suggestions) into one presence history
@@ -72,13 +73,14 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 9. [Alerts & notifications](#alerts--notifications)
 10. [Security monitoring](#security-monitoring)
 11. [Ethernet monitoring](#ethernet-monitoring)
-12. [Multiple sensors & the map](#multiple-sensors--the-map)
-13. [Backup & restore](#backup--restore)
-14. [Prometheus & Grafana](#prometheus--grafana)
-15. [API](#api)
-16. [Troubleshooting](#troubleshooting)
-17. [Development](#development)
-18. [Legal](#legal)
+12. [Zigbee & 802.15.4](#zigbee--802154)
+13. [Multiple sensors & the map](#multiple-sensors--the-map)
+14. [Backup & restore](#backup--restore)
+15. [Prometheus & Grafana](#prometheus--grafana)
+16. [API](#api)
+17. [Troubleshooting](#troubleshooting)
+18. [Development](#development)
+19. [Legal](#legal)
 
 ---
 
@@ -87,7 +89,8 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 ```
  USB Wi-Fi (monitor mode) ──► scapy sniffer + channel hopper ─┐
                                                               ├─► queue ─► store (SQLite, WAL) ◄── FastAPI ◄── browser UI
- USB / onboard Bluetooth ───► raw HCI socket: LE scan + inquiry┘
+ USB / onboard Bluetooth ───► raw HCI socket: LE scan + inquiry┤
+ USB Zigbee stick ──────────► serial: network scan + capture ──┘
 ```
 
 | Concept | Meaning |
@@ -154,6 +157,10 @@ docker compose start sniffowireless
 ### Bluetooth adapters
 
 Any adapter the Linux kernel exposes as `hciX` works: an onboard controller, or a USB dongle such as CSR8510 A10, Realtek RTL8761B (BT 5.0) or Intel AX200/AX210 combo cards. For BLE range, a dongle with an external antenna helps a lot. Ubertooth / nRF sniffers are not supported. They capture differently.
+
+### Zigbee sticks
+
+Optional. See [Zigbee & 802.15.4](#zigbee--802154) for what each kind of stick can do. A Silicon Labs stick such as the Sonoff ZBDongle-E does the most.
 
 ---
 
@@ -428,6 +435,11 @@ All settings are environment variables (put them in `.env`).
 | `WIFI_SET_MONITOR` | `1` | Put interfaces in monitor mode automatically. |
 | `BT_DEVICES` | *(empty)* | Bluetooth adapters, e.g. `hci0`. Empty disables Bluetooth. |
 | `ETH_INTERFACES` | *(empty)* | Wired interfaces to capture on, e.g. `eth1` or `enp3s0`. Empty disables Ethernet capture. |
+| `ZIGBEE_DEVICES` | *(empty)* | USB Zigbee sticks, ideally by stable path under `/dev/serial/by-id/`. Empty disables Zigbee / 802.15.4 monitoring. |
+| `ZIGBEE_CHANNELS` | all (`11-26`) | Channels to listen on, e.g. `15,20-25`. One channel catches brief traffic best. |
+| `ZIGBEE_HOP_INTERVAL` | `2` | Seconds spent on each channel when listening to more than one. |
+| `ZIGBEE_SCAN_INTERVAL` | `600` | Seconds between network scans (minimum 30). |
+| `ZIGBEE_SNIFF` | `1` | `0` turns passive listening off, leaving only network scans. |
 | `ETH_PROMISC` | `1` | Put the Ethernet interface in promiscuous mode (needed on a mirror/SPAN port). |
 | `LAN_SESSION_TIMEOUT` | `900` | Seconds without traffic before a LAN device counts as offline. |
 | `BT_ACTIVE_SCAN` | `1` | Active LE scanning (sends scan requests, which gets device names). `0` is fully passive. |
@@ -744,6 +756,45 @@ Packets are decoded in Python. Header parsing is a fast path, but a Raspberry Pi
 
 ---
 
+## Zigbee & 802.15.4
+
+Set `ZIGBEE_DEVICES` to a USB coordinator stick and sniffowireless adds a **Zigbee & 802.15.4** page. sniffowireless works out the firmware by asking the stick, since the USB chip doesn't reveal it.
+
+```bash
+ls /dev/serial/by-id/          # find the stick's stable path
+ZIGBEE_DEVICES=/dev/serial/by-id/usb-...
+```
+
+| Firmware | Example sticks | Network scan | Channel interference | Passive listening |
+|---|---|---|---|---|
+| Silicon Labs EZSP | Sonoff ZBDongle-E, Home Assistant SkyConnect / ZBT-1 | Yes | Yes | If the firmware includes `mfglib` |
+| TI Z-Stack | Sonoff ZBDongle-P, CC2652, CC2531 | Yes | No | No |
+| deCONZ | ConBee II | No | No | No |
+
+**Passive listening** runs between network scans. It uses the firmware's manufacturing test library (`mfglib`) in receive-only mode, so no reflashing is needed if the firmware includes it; if it doesn't, the sensor shows a warning and keeps scanning. It hears other 802.15.4 systems as well as Zigbee, and shows frames per channel, PAN IDs, short and long addresses, frame types, signal strength and whether frames are encrypted at the radio layer.
+
+**The stick is left as it was.** sniffowireless never transmits a frame of its own and never writes the stick's stored settings. Silicon Labs sticks do get a firmware restart around each listening period, which keeps their stored data. Z-Stack tools usually widen a stick's channel list by rewriting it; sniffowireless doesn't, so a stick set to specific channels may miss networks elsewhere, and the sensor says so.
+
+**Limits:**
+
+- Protocol labels ("Looks like Zigbee", "Looks like Thread / 6LoWPAN") are guesses from unencrypted fields. Anything else stays "Unknown protocol" or "Encrypted, protocol unknown". There are no labels for specific products, such as Aperio locks, because no verified signature for them is built in.
+- Encrypted contents stay hidden, and frames with radio errors are dropped.
+- A network scan only reaches routers and coordinators. Battery devices appear only if they transmit while the stick is on their channel, so a hopping sensor easily misses them: set `ZIGBEE_CHANNELS` to one channel to watch them.
+- A short address only means something within its PAN, and it can change if a device rejoins.
+- A vendor shown with a question mark comes from a long address or extended PAN ID, and many coordinators pick those at random.
+- This has only been run against simulated sticks so far. Real USB behaviour, and whether a given firmware includes `mfglib`, are unproven.
+
+**Connecting the stick:**
+
+- Only one program can use a stick at a time. Stop Zigbee2MQTT, ZHA or similar first; that network is offline while the stick is here. If you have a spare stick, use that.
+- `privileged: true` exposes the devices present when the container starts, so restart the container after plugging the stick in or replugging it.
+- With [less privilege](#less-privilege), pass it explicitly with `--device /dev/serial/by-id/usb-...`.
+- On Ubuntu, `brltty` can claim CP210x and CH340 sticks, making the port vanish. Remove it if the stick doesn't show up.
+
+Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
+
+---
+
 ## Multiple sensors & the map
 
 Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
@@ -916,6 +967,8 @@ sniffowireless/
   sensors.py    remote sensor forwarding, ingest, room location, floor plan
   ethernet.py   raw-socket Ethernet capture: fast header parsing + ARP/DHCP/mDNS/SSDP/LLDP/DNS decoding
   lan.py        LAN traffic, conversations, DNS log, DHCP servers, rogue-DHCP / ARP-spoof detection
+  zigbee_radio.py  USB Zigbee sticks: Z-Stack and EZSP/ASH protocols, stick detection, 802.15.4 frame decoding
+  zigbee.py     Zigbee sensor thread, networks / radios / channel storage and API
   interference.py  non-Wi-Fi interference episodes from the channel survey
   dfs.py        DFS / radar detection from channel switch announcements and channel changes
   trackers.py   unknown tracker-tag ("following") detection
@@ -929,7 +982,7 @@ sniffowireless/
   metrics.py    Prometheus endpoint
   web.py        FastAPI app and device/statistics API
   demo.py       synthetic data generator
-  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, lan.js, extras.js, login.html
+  static/       single-page UI (vanilla JS + Chart.js): app.js, views.js, lan.js, zigbee.js, extras.js, login.html
 contrib/monitoring/  Prometheus + Grafana stack and dashboard
 scripts/configure.sh  interactive helper that detects adapters and writes .env
 tests/          parser, session, auth, alert, security, survey, location and report tests

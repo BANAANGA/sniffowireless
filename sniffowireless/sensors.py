@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS sensors(
   info TEXT);
 """
 MAX_INGEST = 64 * 1024 * 1024  # decompressed bytes per batch
-ALLOWED_OBS = {"wifi_ap", "wifi_client", "bt", "bt_conn", "event", "chan", "lan", "lan_traffic", "dhcp_server"}
+ALLOWED_OBS = {"wifi_ap", "wifi_client", "bt", "bt_conn", "event", "chan", "lan", "lan_traffic", "dhcp_server",
+               "zb_network", "zb_energy", "zb_frames"}
 SIGHTING_WINDOW = 120     # use sightings from the last N seconds for location
 ROOM_HYSTERESIS_DB = 4    # stay in the current room unless another sensor is this much stronger
 

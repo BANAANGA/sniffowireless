@@ -307,7 +307,7 @@ class Store:
         if t == "_cmd":
             o["fn"](self)
             return
-        if t in ("chan", "lan_traffic", "dhcp_server"):  # aggregate observations, handled by plugins
+        if t in ("chan", "lan_traffic", "dhcp_server", "zb_network", "zb_energy", "zb_frames"):  # aggregate observations, handled by plugins
             for h in self.hooks:
                 if hasattr(h, "observe"):
                     h.observe(self, o, None)
