@@ -55,6 +55,11 @@ class ImmutableStatic(StaticFiles):
         return resp
 
 
+PASSERBY_STAY = 600     # heard for this long in one go: not passing by, it's here
+PASSERBY_MIN_READINGS = 3
+PASSERBY_SWING_DB = 10  # a pass whose signal rises and falls by about this much looks like movement
+
+
 def create_app(ctx):
     cfg, store = ctx.cfg, ctx.store
     app = FastAPI(title="sniffowireless", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
@@ -256,19 +261,71 @@ def create_app(ctx):
         return {"total": total, "items": items, "now": time.time()}
 
     @app.get("/api/passersby", dependencies=[Depends(current_user)])
-    def passersby(days: float = 30, min_visits: int = 3, max_secs: int = 60, hide_known: int = 0):
-        """Devices that repeatedly come within range for a short visit (under `max_secs`) — a neighbour's
-        phone on their regular walk, a delivery route, traffic on a nearby street. Grouped by MAC, so a
-        device with a randomized (rotating) address will under-count: each rotation looks like a
-        different, less-frequent visitor rather than one repeat one."""
+    def passersby(days: float = 30, min_passes: int = 3, max_secs: int = 120, max_per_day: int = 6, gap: int = 1800,
+                  moving: int = 0, aps: int = 0, hide_known: int = 0, tz: int = 0):
+        """Devices that are heard only briefly, a few times a day, as they go by (a neighbour on their regular walk,
+        a delivery route, traffic on a nearby street). Nothing to do with connecting: it's about being heard.
+
+        What tells a passer-by from a stationary device that merely flickers in and out at the edge of range:
+        * a *pass* is a run of short visits less than `gap` seconds apart (one flickering device is one long
+          episode, not dozens of passes), and it must be shorter than `max_secs` to count;
+        * a few passes per day, at most `max_per_day`: a flickering device does it constantly;
+        * never a long stay: a device that is ever heard for 10 minutes straight lives or works nearby;
+        * optionally (`moving`) the signal rises and falls during a pass, as it does when something moves.
+        Grouped by MAC, so a device with a randomized (rotating) address under-counts: each new address looks like a
+        different, less frequent visitor."""
         since = time.time() - days * 86400
-        min_visits = max(2, min(min_visits, 10_000))
-        max_secs = max(1, min(max_secs, 3600))
-        agg = rows(
-            "SELECT mac, COUNT(*) visits, AVG(end_ts-start_ts) avg_secs, MAX(end_ts-start_ts) max_secs, "
-            "MIN(start_ts) first_seen, MAX(end_ts) last_seen FROM sessions WHERE type='presence' AND end_ts>=? "
-            "AND (end_ts-start_ts) < ? GROUP BY mac HAVING COUNT(*) >= ? ORDER BY visits DESC LIMIT 300",
-            (since, max_secs, min_visits))
+        min_passes, max_secs = max(2, min(min_passes, 10_000)), max(1, min(max_secs, 3600))
+        max_per_day, gap = max(1, min(max_per_day, 1000)), max(60, min(gap, 86400))
+        kinds = "" if aps else " AND mac NOT IN (SELECT mac FROM devices WHERE kind='ap')"
+        # Cheap pre-filter in SQL: enough short visits, and no long stay at all.
+        cand = [r["mac"] for r in rows(
+            f"SELECT mac FROM sessions WHERE type='presence' AND end_ts>=?{kinds} GROUP BY mac "
+            f"HAVING SUM(end_ts-start_ts >= ?) = 0 AND SUM(end_ts-start_ts < ?) >= ? LIMIT 5000",
+            (since, PASSERBY_STAY, max_secs, min_passes))]
+        if not cand:
+            return {"items": []}
+        by_mac = {}
+        for i in range(0, len(cand), 500):  # stay clear of SQLite's variable limit
+            part = cand[i:i + 500]
+            for r in rows(f"SELECT mac, start_ts, end_ts, rssi_min, rssi_max, rssi_count FROM sessions WHERE type='presence' "
+                          f"AND end_ts>=? AND mac IN ({','.join('?' * len(part))}) ORDER BY mac, start_ts", [since] + part):
+                by_mac.setdefault(r["mac"], []).append(r)
+        agg = []
+        for mac, vs in by_mac.items():
+            passes, cur = [], None  # a pass: [start, end, rssi_min, rssi_max, visits, signal readings]
+            for v in vs:
+                lo, hi = v["rssi_min"], v["rssi_max"]
+                if cur and v["start_ts"] - cur[1] < gap:
+                    cur[1] = max(cur[1], v["end_ts"])
+                    cur[2] = min((x for x in (cur[2], lo) if x is not None), default=None)
+                    cur[3] = max((x for x in (cur[3], hi) if x is not None), default=None)
+                    cur[4] += 1
+                    cur[5] += v["rssi_count"] or 0
+                else:
+                    cur = [v["start_ts"], v["end_ts"], lo, hi, 1, v["rssi_count"] or 0]
+                    passes.append(cur)
+            short = [p for p in passes if p[1] - p[0] <= max_secs]
+            if len(short) < min_passes or len(short) < 0.8 * len(passes):  # mostly passes, not long episodes
+                continue
+            day_of = lambda t: int((t - tz * 60) // 86400)
+            per_day = {}
+            for p in short:
+                per_day[day_of(p[0])] = per_day.get(day_of(p[0]), 0) + 1
+            rate = len(short) / len(per_day)
+            if rate > max_per_day:
+                continue
+            # Signal swing only from passes with enough readings to tell: one frame has no spread whether it moves or not.
+            swings = [p[3] - p[2] for p in short if p[2] is not None and p[3] is not None and p[5] >= PASSERBY_MIN_READINGS]
+            swing = sum(swings) / len(swings) if swings else None
+            if moving and (swing is None or swing < PASSERBY_SWING_DB):
+                continue
+            lens = [p[1] - p[0] for p in short]
+            agg.append({"mac": mac, "visits": len(short), "days_seen": len(per_day), "per_day": round(rate, 1),
+                        "avg_secs": sum(lens) / len(lens), "max_secs": max(lens), "swing_db": round(swing) if swing is not None else None,
+                        "first_seen": short[0][0], "last_seen": short[-1][1]})
+        agg.sort(key=lambda r: (-r["visits"], r["mac"]))
+        agg = agg[:300]
         if not agg:
             return {"items": []}
         macs = [r["mac"] for r in agg]

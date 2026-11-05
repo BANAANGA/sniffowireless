@@ -381,37 +381,83 @@ def test_mynet_weak_ap_choice(env):
 def test_passersby(env):
     ctx, c = env
     login(c)
-    REPEAT = "a4:83:e7:00:00:01"   # 5 short visits -> a passerby
-    ONCE = "a4:83:e7:00:00:02"     # 2 short visits -> below the default 3-visit threshold
-    LONG = "a4:83:e7:00:00:03"     # visits long enough that they don't count as short
-    now = time.time()
+    PASSER = "a4:83:e7:00:00:01"      # 2 short passes a day for 3 days, signal swings as it moves by
+    STATIC = "a4:83:e7:00:00:02"      # 4 short passes on 4 days, but the signal never changes: something standing still
+    FLICKER = "a4:83:e7:00:00:03"     # flickers in and out all day, 8 minutes apart: one long episode, not passes
+    BUSY = "a4:83:e7:00:00:04"        # 12 short, well separated visits in one day: too frequent for passing by
+    RESIDENT = "a4:83:e7:00:00:05"    # short passes, but heard for 15 minutes straight once: it's around
+    ONCE = "a4:83:e7:00:00:06"        # only 2 passes
+    AP = "0a:00:00:00:00:07"          # access point passing by
+    day0 = int(time.time() // 86400) * 86400  # today 00:00 UTC; every visit below is on an earlier day, at a fixed hour
+
+    def at(day, hour, minute=0):
+        return day0 - day * 86400 + hour * 3600 + minute * 60
+
+    def visit(mac, start, secs=20, swing=(-80, -50), readings=6):
+        db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, rssi_min, rssi_max, rssi_count, open) VALUES(?, 'presence', ?, ?, ?, ?, ?, 0)",
+                   (mac, start, start + secs, *swing, readings))
+
     with ctx.wdb() as db:
-        for mac in (REPEAT, ONCE, LONG):
-            db.execute("INSERT INTO devices(mac, kind, first_seen, last_seen) VALUES(?, 'wifi_client', ?, ?)",
-                      (mac, now - 3600 * 5, now))
-        for i in range(5):
-            db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, open) VALUES(?, 'presence', ?, ?, 0)",
-                      (REPEAT, now - 3600 * i, now - 3600 * i + 20))  # 20s visits
-        for i in (100, 200):
-            db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, open) VALUES(?, 'presence', ?, ?, 0)",
-                      (ONCE, now - i, now - i + 10))
-        db.execute("INSERT INTO sessions(mac, type, start_ts, end_ts, open) VALUES(?, 'presence', ?, ?, 0)",
-                  (LONG, now - 1000, now - 200))  # 800s, well over a minute
+        for mac in (PASSER, STATIC, FLICKER, BUSY, RESIDENT, ONCE, AP):
+            db.execute("INSERT INTO devices(mac, kind, first_seen, last_seen) VALUES(?, ?, ?, ?)",
+                       (mac, "ap" if mac == AP else "wifi_client", day0 - 5 * 86400, day0))
+        for d in (1, 2, 3):
+            visit(PASSER, at(d, 9)); visit(PASSER, at(d, 17, 30))
+        for d in (1, 2, 3, 4):
+            visit(STATIC, at(d, 10), swing=(-71, -69))
+        for i in range(40):
+            visit(FLICKER, at(1, 8) + i * 480, secs=10)
+        for i in range(12):
+            visit(BUSY, at(1, 6) + i * 3600)
+        for d in (1, 2, 3):
+            visit(RESIDENT, at(d, 12))
+        visit(RESIDENT, at(4, 12), secs=900)
+        for d in (1, 2):
+            visit(ONCE, at(d, 11))
+        for d in (1, 2, 3, 4):
+            visit(AP, at(d, 13))
 
-    r = c.get("/api/passersby?days=7&min_visits=3&max_secs=60").json()
-    macs = {x["mac"] for x in r["items"]}
-    assert macs == {REPEAT}
-    row = next(x for x in r["items"] if x["mac"] == REPEAT)
-    assert row["visits"] == 5 and 19 <= row["avg_secs"] <= 21
+    def listed(q=""):
+        return {x["mac"]: x for x in c.get(f"/api/passersby?days=7&{q}").json()["items"]}
 
-    # A lower threshold (the minimum allowed, 2) picks up the twice-seen device too.
-    r2 = c.get("/api/passersby?days=7&min_visits=2&max_secs=60").json()
-    assert {ONCE, REPEAT} <= {x["mac"] for x in r2["items"]} and LONG not in {x["mac"] for x in r2["items"]}
+    got = listed()
+    assert set(got) == {PASSER, STATIC}
+    p = got[PASSER]
+    assert (p["visits"], p["days_seen"], p["per_day"]) == (6, 3, 2.0) and 19 <= p["avg_secs"] <= 21 and p["swing_db"] == 30
+    assert got[STATIC]["visits"] == 4 and got[STATIC]["swing_db"] == 2
+
+    # Fewer passes needed: the device seen twice shows up. More passes needed: only the ones with that many.
+    assert set(listed("min_passes=2")) == {PASSER, STATIC, ONCE}
+    assert set(listed("min_passes=5")) == {PASSER}
+    # A flickering device is rejected because its visits merge into one long episode. Only with merging switched
+    # (almost) off, and any frequency allowed, do its 40 visits count as 40 separate passes in a day.
+    assert FLICKER not in listed("max_per_day=1000")
+    assert listed("gap=60&max_per_day=1000")[FLICKER]["per_day"] == 40 and FLICKER not in listed("gap=60")
+    # Frequency: BUSY appears only once many passes a day are allowed.
+    assert BUSY not in listed() and BUSY in listed("max_per_day=12")
+    # Only moving devices: the signal has to rise and fall.
+    assert set(listed("moving=1")) == {PASSER}
+    # A device heard once per pass has no measurable swing, so "moving only" can't claim it moves (and shows no swing).
+    with ctx.wdb() as db:
+        db.execute("INSERT INTO devices(mac, kind, first_seen, last_seen) VALUES('a4:83:e7:00:00:09', 'wifi_client', ?, ?)", (day0, day0))
+        for d in (1, 2, 3):
+            visit("a4:83:e7:00:00:09", at(d, 14), secs=0, swing=(-60, -60), readings=1)
+    one = listed()["a4:83:e7:00:00:09"]
+    assert one["swing_db"] is None and "a4:83:e7:00:00:09" not in listed("moving=1")
+    # Access points only when asked for.
+    assert AP not in listed("min_passes=3") and AP in listed("min_passes=3&aps=1")
+    # A long stay rules the device out entirely.
+    assert RESIDENT not in listed("max_per_day=1000&min_passes=2")
+    # The pass length limit: a 90 s pass is too long for a 60 s limit.
+    with ctx.wdb() as db:
+        for d in (1, 2, 3):
+            visit("a4:83:e7:00:00:08", at(d, 15), secs=90)
+        db.execute("INSERT INTO devices(mac, kind, first_seen, last_seen) VALUES('a4:83:e7:00:00:08', 'wifi_client', ?, ?)", (day0, day0))
+    assert "a4:83:e7:00:00:08" in listed("max_secs=120") and "a4:83:e7:00:00:08" not in listed("max_secs=60")
 
     # hide_known drops it once it's marked known.
-    assert c.put(f"/api/devices/{REPEAT}/meta", json={"known": True}, headers=H).status_code == 200
-    r3 = c.get("/api/passersby?days=7&min_visits=3&max_secs=60&hide_known=1").json()
-    assert REPEAT not in {x["mac"] for x in r3["items"]}
+    assert c.put(f"/api/devices/{PASSER}/meta", json={"known": True}, headers=H).status_code == 200
+    assert PASSER not in listed("hide_known=1") and PASSER in listed()
 
 
 def test_appearance(env):
