@@ -10,6 +10,9 @@ from .auth import current_user, require_admin
 from .sanitize import MacList, MacPrefix, Name, Notes, Ssid, clean_mac
 
 
+MAX_IGNORED_SSIDS = 500
+
+
 class IgnoreSsid(BaseModel):
     ssid: Ssid
     clients: bool = False
@@ -18,8 +21,15 @@ class IgnoreSsid(BaseModel):
 class IgnoreList(BaseModel):
     macs: MacList = []
     prefixes: List[MacPrefix] = Field([], max_length=200)
-    ssids: List[IgnoreSsid] = Field([], max_length=200)
+    ssids: List[IgnoreSsid] = Field([], max_length=MAX_IGNORED_SSIDS)
     purge: bool = False
+
+
+class IgnoreNetworks(BaseModel):
+    ssids: List[Ssid] = Field(min_length=1, max_length=MAX_IGNORED_SSIDS)
+    clients: bool = True     # also drop the devices connected to them
+    purge: bool = False      # also delete what's already stored for them
+    remove: bool = False     # stop ignoring instead
 
 
 class Networks(BaseModel):
@@ -126,6 +136,37 @@ def routes(ctx):
             if macs:
                 ctx.store.command(lambda st: st.forget(macs))
         return {"ok": True, "purged": purged}
+
+    @r.post("/api/settings/ignore/networks")
+    def ignore_networks(body: IgnoreNetworks, _=Depends(require_admin)):
+        """Add (or, with remove, drop) whole networks without rewriting the rest of the ignore list. Networks listed
+        under My networks are skipped: ignoring one would blind the monitoring of your own Wi-Fi."""
+        ig = ctx.settings.get("ignore")
+        mine = set(ctx.settings.get("networks")["ssids"])
+        by = {e["ssid"]: e for e in ig["ssids"]}
+        wanted = list(dict.fromkeys(body.ssids))
+        done, skipped = [], []
+        for s in wanted:
+            if body.remove:
+                by.pop(s, None)
+                done.append(s)
+            elif s in mine:
+                skipped.append(s)
+            else:
+                by[s] = {"ssid": s, "clients": body.clients}
+                done.append(s)
+        if len(by) > MAX_IGNORED_SSIDS:
+            raise HTTPException(400, f"The ignore list holds at most {MAX_IGNORED_SSIDS} networks")
+        ig["ssids"] = list(by.values())
+        ctx.settings.set("ignore", ig)
+        apply_ignore(ctx)
+        purged = 0
+        if body.purge and not body.remove and done:
+            macs = matching_ignored(ctx, {"macs": [], "prefixes": [], "ssids": [by[s] for s in done]})
+            purged = len(macs)
+            if macs:
+                ctx.store.command(lambda st: st.forget(macs))
+        return {"ok": True, "changed": done, "skipped": skipped, "purged": purged}
 
     @r.post("/api/settings/ignore/preview")
     def preview_ignore(body: IgnoreList, _=Depends(require_admin)):

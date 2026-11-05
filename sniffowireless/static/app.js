@@ -1153,11 +1153,16 @@ async function viewStats(params) {
   // Networks: the 20 most recently seen, expandable to the 100 the API returns.
   const renderSsids = n => {
     const list = s.ssids.slice(0, n), total = s.ssid_total ?? s.ssids.length;
-    table('ssids', '<th>SSID</th><th class="num">BSSIDs</th><th class="num">Clients</th><th class="num">Sessions</th><th>Channels</th><th>Security</th><th>Best signal</th><th class="num">Last seen</th>',
-      list.map(x => `<tr class="link" data-href="${hrefWith('/devices', { ssid: x.ssid })}"><td class="trunc">${esc(x.ssid)}</td>
+    table('ssids', `<th>SSID</th><th class="num">BSSIDs</th><th class="num">Clients</th><th class="num">Sessions</th><th>Channels</th><th>Security</th><th>Best signal</th><th class="num">Last seen</th>${isAdmin() ? '<th></th>' : ''}`,
+      list.map(x => `<tr class="link" data-href="${hrefWith('/devices', { ssid: x.ssid })}"><td class="trunc">${esc(x.ssid)}${x.mine ? ' <span class="tag on">mine</span>' : ''}${x.ignored ? ' <span class="tag">ignored</span>' : ''}</td>
         <td class="num">${x.aps}</td><td class="num">${x.clients}</td><td class="num muted">${num(x.sessions)}</td><td class="muted">${esc(x.channels || '—')}</td>
         <td>${(x.enc || '').split(',').filter((v, i, a) => v && a.indexOf(v) === i).map(e => `<span class="tag ${e === 'OPN' ? 'bad' : ''}">${esc(e)}</span>`).join(' ') || '—'}</td>
-        <td data-v="${x.rssi ?? ''}">${rssiBars(x.rssi)}</td><td class="num muted" data-v="${x.last_seen || ''}">${ago(x.last_seen)}</td></tr>`).join(''));
+        <td data-v="${x.rssi ?? ''}">${rssiBars(x.rssi)}</td><td class="num muted" data-v="${x.last_seen || ''}">${ago(x.last_seen)}</td>${isAdmin() ? `<td class="num">${x.mine ? '' : `<button class="btn small" data-ig="${esc(x.ssid)}">${x.ignored ? 'Unignore' : 'Ignore'}</button>`}</td>` : ''}</tr>`).join(''));
+    document.querySelectorAll('#ssids [data-ig]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const x = s.ssids.find(v => v.ssid === b.dataset.ig);
+      ignoreNetwork(x.ssid, x.ignored, () => { x.ignored = !x.ignored; renderSsids(n); });
+    });
     document.getElementById('ssids-count').textContent = list.length < total ? `last seen ${list.length} of ${num(total)}` : `${num(total)} seen`;
     const more = document.getElementById('ssids-more');
     more.hidden = s.ssids.length <= 20;
@@ -1269,6 +1274,27 @@ function openModal(title, body, onSubmit, { submit = 'Save', danger = false, wid
   const first = form.querySelector('input,select,textarea');
   if (first) first.focus();
   return form;
+}
+// Ignore (or stop ignoring) a whole network from wherever it's listed. `onDone` runs after the change is saved.
+function ignoreNetwork(ssid, ignored, onDone) {
+  const done = r => {
+    toast(ignored ? `No longer ignoring “${ssid}”` : r.skipped.length ? `“${ssid}” is one of your own networks, so it can't be ignored`
+      : `Ignoring “${ssid}”${r.purged ? ` · deleted ${r.purged} stored devices` : ''}`, !ignored && r.skipped.length > 0);
+    if (onDone) onDone(r);
+  };
+  if (ignored) {
+    if (!confirm(`Stop ignoring “${ssid}”? It will be recorded again from now on.`)) return;
+    send('POST', '/api/settings/ignore/networks', { ssids: [ssid], remove: true }).then(done).catch(e => toast(e.message, true));
+    return;
+  }
+  openModal(`Ignore “${ssid}”`, `<p class="muted" style="margin-top:0">Its access points are dropped before anything is stored: they won't appear anywhere or trigger alerts.
+      Change this later under Settings → Ignore list.</p>
+    <label class="check"><input type="checkbox" name="clients" checked> Also ignore the devices connected to it</label>
+    <label class="check"><input type="checkbox" name="purge"> Also delete the data already stored for it</label>`,
+  async f => {
+    const r = await send('POST', '/api/settings/ignore/networks', { ssids: [ssid], clients: fv(f, 'clients'), purge: fv(f, 'purge') });
+    done(r);
+  }, { submit: 'Ignore network', danger: true });
 }
 const fv = (form, name) => { const el = form.elements[name]; return el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : undefined; };
 

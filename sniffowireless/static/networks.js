@@ -19,15 +19,21 @@ addRoute('/ssids', async (_, params) => {
       (!needle || x.ssid.toLowerCase().includes(needle)));
     document.getElementById('ss-count').textContent = `${rows.length} network${rows.length === 1 ? '' : 's'}`;
     const el = document.getElementById('ss-list');
-    el.innerHTML = tableHtml('<th>SSID</th><th class="num">Access points</th><th class="num">Clients</th><th class="num">Looked for by</th><th>Security</th><th>Bands</th><th>Best signal</th><th class="num">Last seen</th>',
+    el.innerHTML = tableHtml('<th>SSID</th><th class="num">Access points</th><th class="num">Clients</th><th class="num">Looked for by</th><th>Security</th><th>Bands</th><th>Best signal</th><th class="num">Last seen</th>' + (isAdmin() ? '<th></th>' : ''),
       rows.map(x => `<tr class="link" data-href="#/ssid/${enc(x.ssid)}"><td class="trunc" style="max-width:320px"><b>${hl(x.ssid, q.value.trim())}</b>
         ${x.mine ? ' <span class="tag on">mine</span>' : ''}${x.investigated ? ' <span class="tag warn">investigated</span>' : ''}${x.ignored ? ' <span class="tag">ignored</span>' : ''}</td>
         <td class="num">${num(x.aps)}</td><td class="num">${num(x.clients)}</td><td class="num muted">${num(x.probers)}</td>
         <td>${(x.enc || '').split(',').filter((v, i, a) => v && a.indexOf(v) === i).map(e => `<span class="tag ${e === 'OPN' ? 'bad' : ''}">${esc(e)}</span>`).join(' ') || '<span class="faint">—</span>'}</td>
         <td class="muted">${(x.bands || '').split(',').filter(Boolean).map(b => esc(b) + 'G').join(' · ') || '—'}</td>
-        <td>${x.best_rssi != null ? rssiBars(x.best_rssi) : '<span class="faint">—</span>'}</td><td class="num muted">${ago(x.last_seen)}</td></tr>`).join(''),
+        <td>${x.best_rssi != null ? rssiBars(x.best_rssi) : '<span class="faint">—</span>'}</td><td class="num muted">${ago(x.last_seen)}</td>
+        ${isAdmin() ? `<td class="num">${x.mine ? '' : `<button class="btn small" data-ig="${esc(x.ssid)}">${x.ignored ? 'Unignore' : 'Ignore'}</button>`}</td>` : ''}</tr>`).join(''),
       needle ? 'No networks match' : 'No networks in this period');
     linkRows(el);
+    el.querySelectorAll('[data-ig]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const x = r.items.find(v => v.ssid === b.dataset.ig);
+      ignoreNetwork(x.ssid, x.ignored, () => { x.ignored = !x.ignored; draw(); });
+    });
   };
   q.oninput = draw;
   draw();

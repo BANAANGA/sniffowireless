@@ -5,7 +5,7 @@
 // ===================================================================== SSID picker
 /* Opens a searchable list of every SSID sniffowireless has seen (broadcast or probed for). Resolves with the chosen
    SSIDs, or null when cancelled. `selected` are pre-ticked; `title` names the list being edited. */
-function pickSsids({ title, selected = [], hint = '' } = {}) {
+function pickSsids({ title, selected = [], hint = '', presets = [], skip = null } = {}) {
   return new Promise(resolve => {
     const chosen = new Set(selected);
     let items = [], done = false;
@@ -13,6 +13,7 @@ function pickSsids({ title, selected = [], hint = '' } = {}) {
       ${hint ? `<p class="muted small-text" style="margin-top:0">${esc(hint)}</p>` : ''}
       <div class="row" style="margin-bottom:10px"><input type="search" id="sp-q" placeholder="Search SSIDs…" style="flex:1" autocomplete="off">
         <label class="check" style="margin:0"><input type="checkbox" id="sp-probed"> include networks only looked for by devices</label></div>
+      <div class="row sp-bulk" style="margin-bottom:10px;flex-wrap:wrap" id="sp-bulk"></div>
       <div class="sp-list" id="sp-list"><div class="empty">Loading…</div></div>
       <div class="row" style="margin-top:10px"><input id="sp-custom" placeholder="Not listed? Type an SSID" maxlength="64" style="flex:1">
         <button type="button" class="btn small" id="sp-add">Add</button></div>
@@ -39,6 +40,24 @@ function pickSsids({ title, selected = [], hint = '' } = {}) {
         const cb = tr.querySelector('input'); cb.checked = !cb.checked; cb.onchange();
       });
       count();
+      drawBulk(rows);
+    }
+    // Bulk selection: everything currently shown, or a ready-made group (e.g. every open network). `skip` keeps some
+    // networks out of bulk ticking (for the ignore list: your own networks).
+    function drawBulk(shown) {
+      const okay = x => !(skip && skip(x));
+      const groups = presets.map(p => ({ label: p.label, hit: items.filter(x => x.aps > 0 && p.test(x) && okay(x)) }));
+      const shownOk = shown.filter(okay);
+      form.querySelector('#sp-bulk').innerHTML = `<span class="faint small-text">Select:</span>
+        <button type="button" class="btn small" data-b="shown" ${shownOk.length ? '' : 'disabled'}>All shown (${shownOk.length})</button>
+        ${groups.map((g, i) => `<button type="button" class="btn small" data-b="${i}" ${g.hit.length ? '' : 'disabled'}>${esc(g.label)} (${g.hit.length})</button>`).join('')}
+        <button type="button" class="btn small ghost" data-b="none" ${chosen.size ? '' : 'disabled'}>Clear</button>`;
+      form.querySelectorAll('#sp-bulk [data-b]').forEach(b => b.onclick = () => {
+        const k = b.dataset.b;
+        if (k === 'none') chosen.clear();
+        else (k === 'shown' ? shownOk : groups[+k].hit).forEach(x => chosen.add(x.ssid));
+        draw();
+      });
     }
     q.oninput = draw;
     probed.onchange = draw;
@@ -195,9 +214,10 @@ async function renderSsid(ssid, params, base) {
   const connectedNow = d.clients.filter(c => c.connected).length;
   const bestRssi = d.aps.reduce((m, a) => a.best_rssi != null && (m == null || a.best_rssi > m) ? a.best_rssi : m, null);
   app.innerHTML = `<div class="page-head"><div><div class="crumbs">${base === 'ssid' ? '<a href="#/ssids">Networks</a>' : '<a href="#/investigations">Investigations</a>'}</div>
-      <h1>${esc(d.ssid)} ${d.investigated ? '<span class="tag warn">under investigation</span>' : ''} ${d.mine ? '<span class="tag on">my network</span>' : ''}</h1>
+      <h1>${esc(d.ssid)} ${d.investigated ? '<span class="tag warn">under investigation</span>' : ''} ${d.mine ? '<span class="tag on">my network</span>' : ''} ${d.ignored ? '<span class="tag">ignored</span>' : ''}</h1>
       <div class="sub">${d.entry && d.entry.note ? esc(d.entry.note) : `${d.aps.length} access point${d.aps.length === 1 ? '' : 's'} · ${d.clients.length} client${d.clients.length === 1 ? '' : 's'} · ${d.probers.length} device${d.probers.length === 1 ? '' : 's'} looked for it`}</div></div>
     <div class="row">${seg('days', [[1, '24h'], [7, '7d'], [30, '30d']], days)}
+      ${isAdmin() && !d.mine ? `<button class="btn" id="ig-toggle">${d.ignored ? 'Stop ignoring' : 'Ignore network'}</button>` : ''}
       ${isAdmin() ? `<button class="btn ${d.investigated ? '' : 'primary'}" id="inv-toggle">${d.investigated ? 'Stop investigating' : 'Investigate'}</button>` : ''}</div></div>
     <div class="grid cols-5" style="margin-bottom:16px">
       <div class="card"><div class="label">Access points</div><div class="value">${num(d.aps.length)}</div>
@@ -232,6 +252,8 @@ async function renderSsid(ssid, params, base) {
     </div>`;
   linkRows(app);
   onSeg(app, 'days', v => { location.hash = hrefWith(`/${base}/${enc(ssid)}`, { days: v }); });
+  const ig = document.getElementById('ig-toggle');
+  if (ig) ig.onclick = () => ignoreNetwork(d.ssid, d.ignored, () => route());
   const tg = document.getElementById('inv-toggle');
   if (tg) tg.onclick = async () => {
     const cfg = await api('/api/settings/investigate');

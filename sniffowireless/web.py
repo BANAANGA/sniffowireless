@@ -413,6 +413,9 @@ def create_app(ctx):
         for s in ssids:
             c = clients.get(s["ssid"], {})
             s["clients"], s["sessions"] = c.get("clients", 0), c.get("sessions", 0)
+        ignored, mine = ({e["ssid"] for e in ctx.settings.get("ignore")["ssids"]}, set(ctx.settings.get("networks")["ssids"]))
+        for s in ssids:
+            s["ignored"], s["mine"] = s["ssid"] in ignored, s["ssid"] in mine
         out["ssids"] = ssids
         out["probes"] = rows("SELECT ssid, COUNT(DISTINCT mac) clients, SUM(count) frames, "
                              "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "

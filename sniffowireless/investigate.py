@@ -203,6 +203,7 @@ def routes(ctx):
                           f"ORDER BY e.id DESC LIMIT 200", list(EVENTS) + [f"ssid:{ssid}"])
         return {"ssid": ssid, "entry": entry, "investigated": entry is not None, "since": since, "now": now,
                 "aps": aps, "clients": clients, "probers": probers, "sessions": sessions, "presence": presence,
-                "events": events, "mine": ssid in ctx.settings.get("networks")["ssids"]}
+                "events": events, "mine": ssid in ctx.settings.get("networks")["ssids"],
+                "ignored": ssid in {e["ssid"] for e in ctx.settings.get("ignore")["ssids"]}}
 
     return r
