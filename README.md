@@ -449,6 +449,8 @@ All settings are environment variables (put them in `.env`).
 | `WIFI_SESSION_TIMEOUT` | `300` | Seconds of silence before a Wi-Fi visit or connection is closed. |
 | `BT_SESSION_TIMEOUT` | `180` | Same for Bluetooth. |
 | `ACTIVE_WINDOW` | `300` | "Active now" window used by the overview cards. |
+| `DB_CACHE_MB` | `16` | Page cache SQLite gives each database query (statistics and timeline pages are faster with more). `0` = SQLite's default of 2 MB. |
+| `DB_MMAP_MB` | `256` | Size of the memory map over the database file. `0` disables it. Both can be switched off together at runtime in Settings → Performance (for low-memory machines). |
 | `RETENTION_DAYS` | `30` | Samples, sessions, events and devices older than this are pruned hourly. |
 | `EVENTS_FOR_RANDOMIZED` | `0` | Also log arrive/leave/new-device events for randomized addresses. |
 | `IGNORE_MACS` | – | Comma-separated addresses to ignore completely (the admin can also maintain an ignore list in the UI). |

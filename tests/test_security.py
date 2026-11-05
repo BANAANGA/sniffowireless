@@ -646,3 +646,102 @@ def test_devices_slim(env):
     assert "evidence" in full["ident"] and "extra" in full
     assert set(slim["ident"]) == {"label"} and slim["ident"]["label"] == full["ident"]["label"] and "extra" not in slim
     assert slim["mac"] == full["mac"] and slim["last_rssi"] == full["last_rssi"]
+
+
+def _hourly_data(ctx, now):
+    """Three devices heard on and off across ~3.5 days, including inside the partial hour at the start of the window."""
+    s = ctx.store
+    for n, mac in enumerate(("a4:83:e7:00:00:01", "a4:83:e7:00:00:02", "a4:83:e7:00:00:03")):
+        kind = "wifi_ap" if n == 0 else "wifi_client"
+        t = now - 3.5 * 86400 + n * 97
+        while t < now - 60:
+            s.process({"t": kind, "ts": t, "mac": mac, "rssi": -50, "frame": "data"} if kind == "wifi_client"
+                      else {"t": kind, "ts": t, "mac": mac, "ssid": "Net", "rssi": -50})
+            t += 413 + n * 777  # irregular gaps, so some hours are skipped by some devices
+    s.flush()
+
+
+def test_presence_rollup_matches_samples(env, monkeypatch):
+    ctx, c = env
+    now = 1_760_000_000 + 1234  # fixed, so the endpoint's "since" is known exactly
+    _hourly_data(ctx, now)
+    assert ctx.one("SELECT COUNT(*) n FROM presence_hours")["n"] < ctx.one("SELECT COUNT(*) n FROM samples")["n"] / 4
+    # Every (hour, device) the roll-up holds is in `samples` and the other way round.
+    assert (ctx.rows("SELECT DISTINCT minute / 3600 * 3600 hour, mac FROM samples ORDER BY hour, mac")
+            == ctx.rows("SELECT hour, mac FROM presence_hours ORDER BY hour, mac"))
+    login(c)
+    monkeypatch.setattr(time, "time", lambda: now)
+    for tz in (-120, 0, 300, -330):  # whole-hour offsets use the roll-up, +5:30 falls back to `samples`
+        off, days = tz * 60, 3
+        since = now - days * 86400
+        got = c.get(f"/api/stats?days={days}&tz={tz}").json()
+        raw_hourly = ctx.rows("SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT s.mac, d.kind, ((s.minute - ?) % 86400) / 3600 h, "
+                              "(s.minute - ?) / 86400 day FROM samples s JOIN devices d ON d.mac=s.mac WHERE s.minute>=?) "
+                              "GROUP BY h, kind", (off, off, since))
+        key = lambda r: tuple(sorted(r.items()))
+        assert sorted(got["hourly"]["rows"], key=key) == sorted(raw_hourly, key=key), tz
+        assert got["hourly"]["days"] == ctx.one("SELECT COUNT(DISTINCT (minute - ?) / 86400) n FROM samples WHERE minute>=?",
+                                                (off, since))["n"]
+        raw_heat = ctx.rows("SELECT wd, h, COUNT(*) n FROM (SELECT DISTINCT s.mac, ((s.minute - ?) % 86400) / 3600 h, "
+                            "((s.minute - ?) / 86400 + 3) % 7 wd, (s.minute - ?) / 86400 day FROM samples s WHERE s.minute >= ?) "
+                            "GROUP BY wd, h", (off, off, off, since))
+        assert sorted(got["weekly_heat"], key=key) == sorted(raw_heat, key=key), tz
+
+
+def test_timeline_long_ranges_use_whole_hours(env, monkeypatch):
+    ctx, c = env
+    now = 1_760_000_000 + 1234
+    _hourly_data(ctx, now)
+    login(c)
+    monkeypatch.setattr(time, "time", lambda: now)
+    t = c.get("/api/timeline?hours=168").json()
+    assert t["bucket"] == 3600 and c.get("/api/timeline?hours=720").json()["bucket"] % 3600 == 0
+    assert c.get("/api/timeline?hours=24").json()["bucket"] == 300  # short ranges still read the per-minute samples
+    since = t["t"][0]
+    raw = ctx.rows("SELECT (minute / 3600) * 3600 t, d.kind, COUNT(DISTINCT s.mac) n FROM samples s JOIN devices d ON d.mac=s.mac "
+                   "WHERE s.minute >= ? GROUP BY t, d.kind", (since,))
+    for kind, series in t["series"].items():
+        want = {r["t"]: r["n"] for r in raw if r["kind"] == kind}
+        assert series == [want.get(x, 0) for x in t["t"]], kind
+
+
+def test_presence_rollup_backfill_and_prune(tmp_path):
+    cfg = Config(db_path=str(tmp_path / "t.db"), data_dir=str(tmp_path), retention_days=1)
+    ctx = build(cfg)
+    now = time.time()
+    for h in (30, 3):  # one device-hour older than the retention, one recent
+        ctx.store.process({"t": "wifi_client", "ts": now - h * 3600, "mac": "a4:83:e7:00:00:09", "frame": "data"})
+    ctx.store.flush()
+    assert ctx.one("SELECT COUNT(*) n FROM presence_hours")["n"] == 2
+    ctx.store.prune(now)
+    assert ctx.one("SELECT COUNT(*) n FROM presence_hours")["n"] == 1
+    # A database from before the roll-up existed: it's rebuilt from `samples` on the next start.
+    with ctx.wdb() as w:
+        w.execute("DELETE FROM presence_hours")
+        w.execute("DELETE FROM meta WHERE key='presence_hours'")
+    assert build(cfg).store.conn.execute("SELECT COUNT(*) FROM presence_hours").fetchone()[0] == 1
+
+
+def test_performance_switch(env):
+    ctx, c = env
+    from sniffowireless import store as store_mod
+    pragma = lambda conn, p: conn.execute(f"PRAGMA {p}").fetchone()[0]
+    drain = lambda: [ctx.store.process(ctx.store.q.get_nowait()) for _ in range(ctx.store.q.qsize())]
+    try:
+        drain()  # the startup retune
+        assert pragma(ctx.db(), "cache_size") == -store_mod.CACHE_KB and pragma(ctx.db(), "mmap_size") == store_mod.MMAP_BYTES
+        assert c.put("/api/settings/performance", json={"db_cache": False}, headers=H).status_code == 401  # needs a login
+        c.post("/api/auth/login", json={"username": "viewer", "password": PW}, headers=H)
+        assert c.put("/api/settings/performance", json={"db_cache": False}, headers=H).status_code == 403
+        c.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H)
+        assert c.get("/api/settings/performance").json() == {"db_cache": True}
+        assert c.put("/api/settings/performance", json={"db_cache": "no"}, headers=H).status_code == 400
+        assert c.put("/api/settings/performance", json={"db_cache": False}, headers=H).json() == {"db_cache": False}
+        drain()
+        for conn in (ctx.db(), ctx.store.conn):  # new connections and the writer's own
+            assert pragma(conn, "cache_size") == -store_mod.SQLITE_DEFAULT_CACHE_KB and pragma(conn, "mmap_size") == 0
+        assert c.put("/api/settings/performance", json={"db_cache": True}, headers=H).status_code == 200
+        drain()
+        assert pragma(ctx.db(), "cache_size") == -store_mod.CACHE_KB and pragma(ctx.store.conn, "mmap_size") == store_mod.MMAP_BYTES
+    finally:
+        store_mod.set_db_cache(True)
