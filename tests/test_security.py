@@ -745,3 +745,52 @@ def test_performance_switch(env):
         assert pragma(ctx.db(), "cache_size") == -store_mod.CACHE_KB and pragma(ctx.store.conn, "mmap_size") == store_mod.MMAP_BYTES
     finally:
         store_mod.set_db_cache(True)
+
+
+def test_ignore_networks_quick_endpoint(env):
+    ctx, c = env
+    t = time.time()
+    ctx.store.process({"t": "wifi_ap", "ts": t, "mac": "0a:00:00:00:00:01", "ssid": "Neighbour", "enc": "OPN"})
+    ctx.store.process({"t": "wifi_ap", "ts": t, "mac": "0a:00:00:00:00:02", "ssid": "HomeNet", "enc": "WPA2/PSK"})
+    ctx.store.process({"t": "wifi_client", "ts": t, "mac": "a4:83:e7:00:00:01", "bssid": "0a:00:00:00:00:01", "frame": "assoc"})
+    ctx.store.flush()
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
+    url = "/api/settings/ignore/networks"
+    assert c.post(url, json={"ssids": ["Neighbour"]}, headers=H).status_code == 401
+    c.post("/api/auth/login", json={"username": "viewer", "password": PW}, headers=H)
+    assert c.post(url, json={"ssids": ["Neighbour"]}, headers=H).status_code == 403
+    c.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H)
+    assert c.post(url, json={"ssids": []}, headers=H).status_code == 422
+    assert c.post(url, json={"ssids": ["x" * 100]}, headers=H).status_code == 422
+
+    # Ignoring: the network joins the list (with its clients by default), but one of my own networks is refused.
+    r = c.post(url, json={"ssids": ["Neighbour", "HomeNet", "Neighbour"]}, headers=H).json()
+    assert r["changed"] == ["Neighbour"] and r["skipped"] == ["HomeNet"] and r["purged"] == 0
+    assert c.get("/api/settings/ignore").json()["ssids"] == [{"ssid": "Neighbour", "clients": True}]
+    # It takes effect at once: nothing more is stored for it, nor for its clients.
+    ctx.store.process({"t": "wifi_ap", "ts": t + 1, "mac": "0a:00:00:00:00:03", "ssid": "Neighbour"})
+    ctx.store.process({"t": "wifi_client", "ts": t + 1, "mac": "a4:83:e7:00:00:02", "bssid": "0a:00:00:00:00:03", "frame": "data"})
+    ctx.store.process({"t": "wifi_ap", "ts": t + 1, "mac": "0a:00:00:00:00:04", "ssid": "Other"})
+    ctx.store.flush()
+    stored = {r["mac"] for r in ctx.rows("SELECT mac FROM devices")}
+    assert "0a:00:00:00:00:03" not in stored and "a4:83:e7:00:00:02" not in stored and "0a:00:00:00:00:04" in stored
+    # The lists that offer the button know which networks are ignored / mine.
+    ssids = {x["ssid"]: x for x in c.get("/api/stats?days=1").json()["ssids"]}
+    assert ssids["Neighbour"]["ignored"] and not ssids["Neighbour"]["mine"] and ssids["HomeNet"]["mine"]
+    assert c.get("/api/investigations/Neighbour").json()["ignored"] is True
+    assert c.get("/api/investigations/Other").json()["ignored"] is False
+
+    # Stop ignoring, then ignore again and delete what was stored (the AP and the client that had connected to it).
+    assert c.post(url, json={"ssids": ["Neighbour"], "remove": True}, headers=H).json()["changed"] == ["Neighbour"]
+    assert c.get("/api/settings/ignore").json()["ssids"] == []
+    r = c.post(url, json={"ssids": ["Neighbour"], "clients": False, "purge": True}, headers=H).json()
+    assert r["purged"] == 1 and c.get("/api/settings/ignore").json()["ssids"][0]["clients"] is False
+    r = c.post(url, json={"ssids": ["Neighbour"], "clients": True, "purge": True}, headers=H).json()
+    assert r["purged"] >= 1  # the client was found through its session with the AP
+    # The list has a limit, and the rest of the ignore list is left alone.
+    c.put("/api/settings/ignore", json={"macs": ["aa:bb:cc:dd:ee:ff"], "ssids": [{"ssid": "Neighbour"}]}, headers=H)
+    c.post(url, json={"ssids": ["Another"]}, headers=H)
+    ig = c.get("/api/settings/ignore").json()
+    assert ig["macs"] == ["aa:bb:cc:dd:ee:ff"] and {e["ssid"] for e in ig["ssids"]} == {"Neighbour", "Another"}
+    many = [f"net-{i}" for i in range(500)]
+    assert c.post(url, json={"ssids": many}, headers=H).status_code == 400

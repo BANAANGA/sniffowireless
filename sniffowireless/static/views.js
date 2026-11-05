@@ -580,7 +580,10 @@ const SETTINGS_VIEWS = {
     el.querySelector('#add-ig').onclick = () => { rows.push({ ssid: '', clients: false }); draw(); };
     el.querySelector('#pick-ig').onclick = async () => {
       const r = await pickSsids({ title: 'Ignore networks', selected: rows.map(x => x.ssid).filter(Boolean),
-        hint: 'Ticked networks are dropped before anything is stored. Tick “also ignore its clients” afterwards to drop the devices connected to them too.' });
+        hint: 'Ticked networks are dropped before anything is stored. Tick “also ignore its clients” afterwards to drop the devices connected to them too. Your own networks are left out of the bulk buttons.',
+        skip: x => x.mine,
+        presets: [{ label: 'Open networks', test: x => /(^|,)OPN(,|$)/.test(x.enc || '') }, { label: 'No clients', test: x => x.clients === 0 },
+          { label: 'Wi-Fi Direct (DIRECT-…)', test: x => /^DIRECT-/i.test(x.ssid) }] });
       if (!r) return;
       const old = Object.fromEntries(rows.map(x => [x.ssid, x]));
       rows.splice(0, rows.length, ...r.map(s => old[s] || { ssid: s, clients: false }));
