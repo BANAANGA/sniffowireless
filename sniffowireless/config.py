@@ -48,6 +48,15 @@ def _list(name):
     return [p.strip() for p in _env(name).split(",") if p.strip()]
 
 
+def zigbee_channels(spec):
+    """'15,20-25' -> channel numbers, keeping only 802.15.4's 2.4 GHz channels 11-26. Empty means all of them."""
+    out = []
+    for tok in [t.strip() for t in (spec or "").split(",") if t.strip()]:
+        lo, _, hi = tok.partition("-")
+        out.extend(c for c in range(int(lo), int(hi or lo) + 1) if 11 <= c <= 26 and c not in out)
+    return out or list(range(11, 27))
+
+
 def band_of(freq):
     if not freq:
         return None
@@ -182,6 +191,12 @@ class Config:
 
     eth_interfaces: list = field(default_factory=list)
     eth_promisc: bool = True
+    zigbee_devices: list = field(default_factory=list)
+    zigbee_channels: list = field(default_factory=lambda: list(range(11, 27)))
+    zigbee_hop_interval: float = 2.0
+    zigbee_scan_interval: int = 600
+    zigbee_sniff: bool = True
+
     lan_session_timeout: int = 900
     wifi_session_timeout: int = 300
     bt_session_timeout: int = 180
@@ -228,6 +243,11 @@ class Config:
             bt_inquiry=_bool("BT_INQUIRY", True),
             bt_inquiry_interval=_int("BT_INQUIRY_INTERVAL", 60),
             bt_resolve_names=_bool("BT_RESOLVE_NAMES", True),
+            zigbee_devices=_list("ZIGBEE_DEVICES"),
+            zigbee_channels=zigbee_channels(_env("ZIGBEE_CHANNELS")),
+            zigbee_hop_interval=max(0.2, _float("ZIGBEE_HOP_INTERVAL", 2.0)),
+            zigbee_scan_interval=max(30, _int("ZIGBEE_SCAN_INTERVAL", 600)),
+            zigbee_sniff=_bool("ZIGBEE_SNIFF", True),
             eth_interfaces=_list("ETH_INTERFACES"),
             eth_promisc=_bool("ETH_PROMISC", True),
             lan_session_timeout=_int("LAN_SESSION_TIMEOUT", 900),

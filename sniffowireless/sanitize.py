@@ -9,6 +9,9 @@ import unicodedata
 MAC_RX = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 MAC_PREFIX_RX = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){1,4}$")
 SENSOR_ID_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+ZB_SHORT = re.compile(r"0x[0-9a-f]{4}")
+ZB_EUI64 = re.compile(r"(?:[0-9a-f]{2}:){7}[0-9a-f]{2}")
+ZB_CHANNEL_BITS = 0x07FFF800
 BANDS = {"2.4", "5", "6"}
 FRAMES = {"data", "assoc", "assoc_fail", "auth", "probe", "probe_resp", "deauth", "disassoc"}
 REMOTE_EVENTS = {"deauth_broadcast"}
@@ -95,6 +98,58 @@ def clean_csa(c):
     return r
 
 
+def _zb_channel(v):
+    return clean_num(v, 11, 26, True)
+
+
+def _zb_address(v):
+    """A short address ('0x1a2b') or an EUI-64."""
+    if isinstance(v, str) and (ZB_SHORT.fullmatch(v) or ZB_EUI64.fullmatch(v)):
+        return v
+    return None
+
+
+def _zigbee_observation(o, t, ts):
+    r = {"t": t, "ts": ts, "mac": "-"}
+    if t == "zb_network":
+        ext_pan, pan, channel = o.get("ext_pan"), clean_num(o.get("pan"), 0, 0xFFFF, True), _zb_channel(o.get("channel"))
+        if not (isinstance(ext_pan, str) and ZB_EUI64.fullmatch(ext_pan)) or pan is None or channel is None:
+            return None
+        routers = o.get("routers") if isinstance(o.get("routers"), list) else []
+        r.update(ext_pan=ext_pan, pan=pan, channel=channel, permit_join=bool(o.get("permit_join")),
+                 stack_profile=clean_num(o.get("stack_profile"), 0, 15, True), update_id=clean_num(o.get("update_id"), 0, 255, True),
+                 lqi=clean_num(o.get("lqi"), 0, 255, True), rssi=clean_num(o.get("rssi"), -127, 20, True),
+                 routers=[x for x in (clean_num(v, 0, 0xFFFF, True) for v in routers[:256]) if x is not None])
+    elif t == "zb_energy":
+        readings = []
+        for it in (o.get("readings") or [])[:16] if isinstance(o.get("readings"), list) else []:
+            if isinstance(it, (list, tuple)) and len(it) == 2:
+                ch, rssi = _zb_channel(it[0]), clean_num(it[1], -127, 20, True)
+                if ch is not None and rssi is not None:
+                    readings.append([ch, rssi])
+        r["readings"] = readings
+    else:
+        channels = {}
+        for ch, n in list(o.get("channels").items())[:16] if isinstance(o.get("channels"), dict) else []:
+            c, frames = clean_num(ch, 11, 26, True) if str(ch).isdigit() else None, clean_num(n, 0, 10 ** 9, True)
+            if c is not None and frames is not None:
+                channels[str(c)] = frames
+        radios = []
+        for it in (o.get("radios") or [])[:5000] if isinstance(o.get("radios"), list) else []:
+            if not isinstance(it, (list, tuple)) or len(it) != 10:
+                continue
+            pan, addr = clean_num(it[0], -1, 0xFFFF, True), _zb_address(it[1])
+            mask = clean_num(it[2], 0, ZB_CHANNEL_BITS, True)
+            sent, received, encrypted = (clean_num(x, 0, 10 ** 9, True) for x in it[3:6])
+            hint, types = clean_num(it[6], 0, 3, True), clean_num(it[7], 0, 31, True)
+            if None in (pan, addr, mask, sent, received, encrypted, hint, types):
+                continue
+            radios.append([pan, addr, mask, sent, received, encrypted, hint, types,
+                           clean_num(it[8], -127, 20, True), clean_num(it[9], 0, 255, True)])
+        r.update(channels=channels, radios=radios)
+    return {k: v for k, v in r.items() if v is not None}
+
+
 def remote_observation(o, now):
     """Validate one observation pushed by a remote sensor. Returns a cleaned dict or None."""
     if not isinstance(o, dict):
@@ -129,6 +184,8 @@ def remote_observation(o, now):
             if m and ip:
                 hosts[m] = ip
         return {"t": t, "ts": ts, "mac": "-", "items": items, "hosts": hosts}
+    if t in ("zb_network", "zb_energy", "zb_frames"):
+        return _zigbee_observation(o, t, ts)
     mac = clean_mac(o.get("mac"))
     if mac is None:
         return None
@@ -169,7 +226,7 @@ def remote_observation(o, now):
 
 
 SENSOR_STATUS = {"name": 64, "state": 32, "error": 200, "type": 32, "iface": 32, "mon": 32, "channel": 16,
-                 "band": 8, "scan": 16}
+                 "band": 8, "scan": 16, "firmware": 64, "warning": 300}
 
 
 def remote_status(s):

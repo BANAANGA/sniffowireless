@@ -66,6 +66,12 @@ def start_sensors(cfg, sink, stop, handshake=None):
             BluetoothSensor(dev, cfg, sink).start(stop)
             log.info("Bluetooth sensor on %s", dev)
             n += 1
+    if cfg.zigbee_devices:
+        from .zigbee import ZigbeeSensor
+        for dev in cfg.zigbee_devices:
+            ZigbeeSensor(dev, cfg, sink).start(stop)
+            log.info("Zigbee sensor on %s, channels %s", dev, ",".join(str(c) for c in cfg.zigbee_channels))
+            n += 1
     return n
 
 
@@ -75,7 +81,7 @@ def run_sensor(cfg):
     stop = threading.Event()
     fwd = Forwarder(cfg)
     if not start_sensors(cfg, fwd, stop):
-        raise SystemExit("Sensor mode needs WIFI_INTERFACES, ETH_INTERFACES and/or BT_DEVICES")
+        raise SystemExit("Sensor mode needs WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES and/or ZIGBEE_DEVICES")
     log.info("Remote sensor forwarding to %s", cfg.server_url)
     try:
         fwd.run(stop)
@@ -103,6 +109,7 @@ def build(cfg):
     from .settings import Settings
     from .store import Store, connect
     from .survey import SurveyCollector
+    from .zigbee import ZigbeeMonitor
 
     os.makedirs(cfg.data_dir, exist_ok=True)
     apply_staged_restore(cfg)  # a full restore staged from the UI is applied before the database is opened
@@ -124,7 +131,9 @@ def build(cfg):
     from .matching import SCHEMA as MATCHING_SCHEMA
     store.conn.executescript(MATCHING_SCHEMA)
     ctx.dfs = DfsMonitor(ctx)
-    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs]
+    ctx.zigbee = ZigbeeMonitor(ctx)
+    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
+                    ctx.zigbee]
     store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
     apply_ignore(ctx)
     apply_meta(ctx)
@@ -157,7 +166,7 @@ def main():
         threading.Thread(target=demo.run, args=(stop,), daemon=True, name="demo").start()
         log.info("Demo mode enabled: generating synthetic devices")
     if not start_sensors(cfg, store, stop, handshake=ctx.handshake) and not cfg.demo:
-        log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES and/or BT_DEVICES, add remote sensors in "
+        log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES and/or ZIGBEE_DEVICES, add remote sensors in "
                     "Settings → Sensors, or use DEMO_MODE=1")
 
     writer = threading.Thread(target=store.run, args=(stop,), name="store")

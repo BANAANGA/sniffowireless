@@ -182,6 +182,15 @@ CLASSIC = [
 ]
 
 
+# pan, address, channel, frames per minute (up to), protocol hint index, frame type bits, rssi
+ZIGBEE_RADIOS = [
+    (0x1a62, "0x0000", 15, 40, 3, 0b0011, -51), (0x1a62, "0x3f21", 15, 30, 3, 0b0010, -60),
+    (0x1a62, "0x8a10", 15, 12, 3, 0b0010, -68), (0x1a62, "00:12:4b:00:25:7c:11:9e", 15, 2, 3, 0b1000, -74),
+    (0xc3d4, "04:cd:15:ff:fe:6b:20:7a", 20, 3, 1, 0b0010, -77), (0xc3d4, "0x0001", 20, 6, 1, 0b0010, -70),
+    (0x4e20, "0x7c00", 25, 14, 2, 0b0010, -82),
+]
+
+
 def _h(*parts):
     return int(hashlib.md5("|".join(map(str, parts)).encode()).hexdigest()[:8], 16)
 
@@ -485,7 +494,31 @@ class DemoGenerator:
                 extra.append({"t": "wifi_client", "ts": t + i * 0.2, "mac": "a4:83:e7:01:00:01",
                               "bssid": "24:a4:3c:10:00:01", "frame": "deauth", "reason": 7, "rssi": None})
         extra += self.lan(t, out)
+        extra += self.zigbee(t)
         return extra
+
+    def zigbee(self, t):
+        """A home Zigbee network, a Thread network, and an encrypted system of unknown protocol."""
+        res = []
+        if int(t // 60) % 10 == 0:
+            res += [{"t": "zb_network", "ts": t, "mac": "-", "ext_pan": ext, "pan": pan, "channel": ch, "permit_join": False,
+                     "stack_profile": 2, "update_id": 3, "lqi": lqi, "rssi": rssi, "routers": []}
+                    for ext, pan, ch, lqi, rssi in (("00:12:4b:00:1e:a0:44:01", 0x1a62, 15, 214, -51),
+                                                    ("dd:a1:7c:33:90:5e:12:08", 0x4e20, 25, 96, -82))]
+            res.append({"t": "zb_energy", "ts": t, "mac": "-",
+                        "readings": [[c, -92 + (c % 5) * 3 + self.rng.randint(-2, 2)] for c in range(11, 27)]})
+        mask = lambda c: 1 << c  # noqa: E731
+        radios, channels = [], {}
+        for pan, addr, ch, rate, hint, typ, rssi in ZIGBEE_RADIOS:
+            sent = self.rng.randint(0, rate)
+            if not sent:
+                continue
+            channels[str(ch)] = channels.get(str(ch), 0) + sent
+            radios.append([pan, addr, mask(ch), sent, 0, sent if hint == 1 else 0, hint, typ,
+                           rssi + self.rng.randint(-3, 3), max(20, min(255, (rssi + 100) * 4))])
+        if radios:
+            res.append({"t": "zb_frames", "ts": t, "mac": "-", "undecoded": 0, "channels": channels, "radios": radios})
+        return res
 
     def lan(self, t, out):
         """Ethernet-side observations: discovery, DHCP, DNS, traffic summaries and staged LAN attacks."""
