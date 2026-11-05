@@ -84,33 +84,41 @@ async function bindTrackPanel(d) {
 
 // ===================================================================== passers-by
 addRoute('/passersby', async (_, params) => {
-  const st = { days: params.get('days') || '30', min_visits: params.get('min_visits') || '3',
-    max_secs: params.get('max_secs') || '60', hide_known: params.get('hide_known') || '0' };
+  const st = { days: params.get('days') || '30', min_passes: params.get('min_passes') || '3', max_per_day: params.get('max_per_day') || '6',
+    max_secs: params.get('max_secs') || '120', moving: params.get('moving') || '0', aps: params.get('aps') || '0', hide_known: params.get('hide_known') || '0' };
   const go = ch => { location.hash = hrefWith('/passersby', { ...st, ...ch }); };
+  const sel = (id, cur, opts) => `<select id="${id}">${opts.map(([v, l]) => `<option value="${v}" ${cur === String(v) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   app.innerHTML = `<div class="page-head"><div><h1>Passers-by</h1>
-      <div class="sub">Devices that keep coming within range for a short visit — a neighbour's regular walk, a delivery route, traffic on a nearby street.
-        A device with a randomized (rotating) address will under-count here: each new address looks like a new, less frequent visitor.</div></div></div>
+      <div class="sub">Devices that are only <b>seen</b> briefly, a few times a day, as they go by: a neighbour's regular walk, a delivery route, traffic on a nearby street.
+        A device that is heard for a long stretch, or flickers in and out all day at the edge of range, doesn't count. A randomized (rotating) address under-counts: each new address looks like a new, less frequent visitor.</div></div></div>
     <div class="filters">
-      <select id="pb-days"><option value="7" ${st.days === '7' ? 'selected' : ''}>Last 7 days</option><option value="30" ${st.days === '30' ? 'selected' : ''}>Last 30 days</option><option value="90" ${st.days === '90' ? 'selected' : ''}>Last 90 days</option></select>
-      <select id="pb-min"><option value="2" ${st.min_visits === '2' ? 'selected' : ''}>2+ visits</option><option value="3" ${st.min_visits === '3' ? 'selected' : ''}>3+ visits</option><option value="5" ${st.min_visits === '5' ? 'selected' : ''}>5+ visits</option><option value="10" ${st.min_visits === '10' ? 'selected' : ''}>10+ visits</option></select>
-      <select id="pb-max"><option value="30" ${st.max_secs === '30' ? 'selected' : ''}>Under 30 sec</option><option value="60" ${st.max_secs === '60' ? 'selected' : ''}>Under 1 min</option><option value="120" ${st.max_secs === '120' ? 'selected' : ''}>Under 2 min</option></select>
+      ${sel('pb-days', st.days, [[7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days']])}
+      ${sel('pb-min', st.min_passes, [[2, 'Seen on 2+ passes'], [3, 'Seen on 3+ passes'], [5, 'Seen on 5+ passes'], [10, 'Seen on 10+ passes']])}
+      ${sel('pb-perday', st.max_per_day, [[2, 'At most 2 a day'], [3, 'At most 3 a day'], [6, 'At most 6 a day'], [12, 'At most 12 a day'], [1000, 'Any number a day']])}
+      ${sel('pb-max', st.max_secs, [[30, 'Pass under 30 sec'], [60, 'Pass under 1 min'], [120, 'Pass under 2 min'], [300, 'Pass under 5 min']])}
+      <label class="check" title="Only devices whose signal rises and falls during a pass, as it does when something is moving"><input type="checkbox" id="pb-moving" ${st.moving === '1' ? 'checked' : ''}>Moving only</label>
+      <label class="check"><input type="checkbox" id="pb-aps" ${st.aps === '1' ? 'checked' : ''}>Include access points</label>
       <label class="check"><input type="checkbox" id="pb-hide" ${st.hide_known === '1' ? 'checked' : ''}>Hide known devices</label>
     </div>
     <section class="panel"><div class="body flush table-wrap" id="pb-list"></div></section>`;
   document.getElementById('pb-days').onchange = e => go({ days: e.target.value });
-  document.getElementById('pb-min').onchange = e => go({ min_visits: e.target.value });
+  document.getElementById('pb-min').onchange = e => go({ min_passes: e.target.value });
+  document.getElementById('pb-perday').onchange = e => go({ max_per_day: e.target.value });
   document.getElementById('pb-max').onchange = e => go({ max_secs: e.target.value });
+  document.getElementById('pb-moving').onchange = e => go({ moving: e.target.checked ? '1' : '0' });
+  document.getElementById('pb-aps').onchange = e => go({ aps: e.target.checked ? '1' : '0' });
   document.getElementById('pb-hide').onchange = e => go({ hide_known: e.target.checked ? '1' : '0' });
-  const d = await api(`/api/passersby?${new URLSearchParams(st)}`);
+  const d = await api(`/api/passersby?${new URLSearchParams({ ...st, tz: TZ })}`);
   const el = document.getElementById('pb-list');
   el.innerHTML = tableHtml(
-    '<th>Device</th><th class="num">Visits</th><th class="num">Avg. visit</th><th class="num">Longest</th><th class="num">First seen</th><th class="num">Last seen</th><th>Signal</th>',
+    '<th>Device</th><th class="num">Passes</th><th class="num" title="Average over the days it was seen">Per day</th><th class="num">Days seen</th><th class="num">Avg. pass</th><th class="num">Longest</th><th class="num" title="How much the signal rose and fell during a pass: movement shows as a big swing">Signal swing</th><th class="num">First seen</th><th class="num">Last seen</th><th>Signal</th>',
     d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
       <td>${kindBadge(x.kind)} <span style="margin-left:8px">${x.label ? `<b>${esc(x.label)}</b>` : esc(x.ident || x.vendor || x.name || x.mac)}</span>
         ${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}${x.watch ? ' <span class="star" title="Watched">★</span>' : ''}</td>
-      <td class="num">${num(x.visits)}</td><td class="num muted">${dur(x.avg_secs)}</td><td class="num muted">${dur(x.max_secs)}</td>
+      <td class="num">${num(x.visits)}</td><td class="num muted">${x.per_day}</td><td class="num muted">${num(x.days_seen)}</td>
+      <td class="num muted">${dur(x.avg_secs)}</td><td class="num muted">${dur(x.max_secs)}</td><td class="num muted">${x.swing_db != null ? x.swing_db + ' dB' : '—'}</td>
       <td class="num muted">${dt(x.first_seen)}</td><td class="num muted">${ago(x.last_seen)}</td><td>${rssiBars(x.last_rssi)}</td></tr>`).join(''),
-    'No repeat short visits in this period — try a longer period, a lower visit count, or a longer visit length');
+    'No device matches: try a longer period, fewer passes, or allow more passes a day');
   linkRows(el);
 });
 
