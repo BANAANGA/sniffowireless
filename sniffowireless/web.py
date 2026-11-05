@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import (alerts, appearance, auth, backup, dfs, handshake, health, interference, investigate, lan, logs, manage,
                matching, metrics, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, zigbee)
@@ -25,13 +26,43 @@ SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac
             "name", "ssid", "kind", "channel", "band", "brand", "model", "dev_type", "os", "wifi_gen", "era"}
 
 
+# Not worth compressing, or must not be: live streams (gzip would buffer events), downloads that are already
+# compressed archives or captures, and images.
+NO_GZIP = ("/api/logs/stream", "/api/backup", "/api/handshakes", "/api/floorplan/image", "/api/appearance/icon")
+
+
+class JsonAndStaticGZip(GZipMiddleware):
+    """gzip for GET/HEAD responses of the page, scripts, styles and the JSON API (the tables and charts fetch
+    hundreds of kB of it). Skips range requests and the paths above; and never compresses POST responses,
+    which keeps anything secret-bearing (a new API token) out of reach of BREACH-style length attacks."""
+
+    async def __call__(self, scope, receive, send):
+        if (scope["type"] == "http" and scope["method"] in ("GET", "HEAD") and not scope["path"].startswith(NO_GZIP)
+                and not any(k == b"range" for k, _ in scope["headers"])):
+            await super().__call__(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
+class ImmutableStatic(StaticFiles):
+    """Static files are requested with ?v=<content hash> (see versioned() below), so a version never changes and
+    the browser can keep it without re-asking."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if resp.status_code == 200 and b"v=" in scope.get("query_string", b""):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
 def create_app(ctx):
     cfg, store = ctx.cfg, ctx.store
     app = FastAPI(title="sniffowireless", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     static = Path(__file__).parent / "static"
     vendor_dir = Path("/app/vendor")
     ctx.auth.install(app)
-    app.add_middleware(SecurityMiddleware, allowed_hosts=cfg.allowed_hosts)  # outermost: runs before auth
+    app.add_middleware(SecurityMiddleware, allowed_hosts=cfg.allowed_hosts)  # runs before auth
+    app.add_middleware(JsonAndStaticGZip, minimum_size=1024, compresslevel=5)  # outermost
     rows, one = ctx.rows, ctx.one
 
     def _dev(d):
@@ -195,7 +226,8 @@ def create_app(ctx):
                               dev_type, brand, os, wifi_gen, era, fp, known, watch, group, addr_type, company)
 
     @app.get("/api/devices", dependencies=[Depends(current_user)])
-    def devices(flt=Depends(filter_args), sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0):
+    def devices(flt=Depends(filter_args), sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0,
+                slim: int = 0):
         where, params = flt
         sort = "m.label" if sort == "label" else f"d.{sort if sort in SORTABLE else 'last_seen'}"
         order = "ASC" if order.lower() == "asc" else "DESC"
@@ -208,7 +240,12 @@ def create_app(ctx):
             f"(SELECT COUNT(*) FROM sessions s WHERE s.peer=d.mac AND s.type='assoc' AND s.open=1) AS clients_now "
             f"FROM devices d LEFT JOIN devices a ON a.mac = d.bssid{meta_join} LEFT JOIN groups g ON g.id = m.group_id"
             f"{where} ORDER BY {sort} {order} NULLS LAST LIMIT ? OFFSET ?", params + [limit, offset])
-        return {"total": total, "items": [_dev(i) for i in items], "now": time.time()}
+        items = [_dev(i) for i in items]
+        if slim:  # tables only show the identification label; the evidence and raw fingerprints are ~70% of each row
+            for i in items:
+                i["ident"] = {"label": (i.get("ident") or {}).get("label")}
+                i.pop("extra", None)
+        return {"total": total, "items": items, "now": time.time()}
 
     @app.get("/api/passersby", dependencies=[Depends(current_user)])
     def passersby(days: float = 30, min_visits: int = 3, max_secs: int = 60, hide_known: int = 0):
@@ -556,9 +593,11 @@ def create_app(ctx):
     def chart_js():
         # bundled at build time; fall back to the pinned CDN copy (allowed by the CSP) if it's missing
         f = vendor_dir / "chart.umd.min.js"
-        return FileResponse(f, media_type="text/javascript") if f.exists() else RedirectResponse(CHART_JS_CDN)
+        # pinned version, so a week is safe; the browser keeps its copy instead of re-fetching 200 kB per visit
+        return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
+                if f.exists() else RedirectResponse(CHART_JS_CDN))
 
-    app.mount("/static", StaticFiles(directory=static), name="static")
+    app.mount("/static", ImmutableStatic(directory=static), name="static")
 
     @app.get("/")
     def index():

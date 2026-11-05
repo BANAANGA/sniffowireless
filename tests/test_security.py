@@ -608,3 +608,41 @@ def test_play_sound_api(env, monkeypatch):
 
     monkeypatch.setattr(web_mod.tracker_sound, "play_sound", lambda iface, mac, addr_type: None)
     assert c.post(f"/api/devices/{TAG}/sound", headers=H).json() == {"ok": True}
+
+
+def test_compression_and_caching(env):
+    ctx, c = env
+    now = time.time()
+    for i in range(40):
+        ctx.store.process({"t": "wifi_client", "ts": now, "mac": f"a4:83:e7:00:00:{i:02x}", "rssi": -50, "frame": "data"})
+    ctx.store.flush()
+    login(c)
+    # TestClient decompresses transparently, so look at the raw headers it saw.
+    r = c.get("/api/devices?limit=100", headers={"Accept-Encoding": "gzip"})
+    assert r.headers["content-encoding"] == "gzip" and r.headers["vary"] == "Accept-Encoding"
+    assert len(r.json()["items"]) == 40
+    assert "content-encoding" not in c.get("/api/devices?limit=100", headers={"Accept-Encoding": "identity"}).headers
+    # Range requests are never compressed (the byte range would no longer match the body).
+    r = c.get("/static/app.js", headers={"Accept-Encoding": "gzip", "Range": "bytes=0-99"})
+    assert r.status_code == 206 and "content-encoding" not in r.headers and len(r.content) == 100
+    # Only POST-free reads compress (a created API token must never sit in a compressed body).
+    r = c.post("/api/tokens", json={"name": "t", "scope": "metrics"}, headers={**H, "Accept-Encoding": "gzip"})
+    assert "content-encoding" not in r.headers
+    # Versioned static files are kept forever; unversioned ones are still revalidated.
+    r = c.get("/static/app.js?v=abc123", headers={"Accept-Encoding": "gzip"})
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable" and r.headers["content-encoding"] == "gzip"
+    assert "immutable" not in c.get("/static/app.js").headers.get("cache-control", "")
+    assert c.get("/").headers["cache-control"] == "no-store"
+
+
+def test_devices_slim(env):
+    ctx, c = env
+    ctx.store.process({"t": "bt", "ts": time.time(), "mac": "a4:83:e7:00:00:01", "kind": "ble", "name": "Pods",
+                       "vendor": "Apple", "rssi": -50, "extra": {"company": "Apple"}})
+    ctx.store.flush()
+    login(c)
+    full = c.get("/api/devices").json()["items"][0]
+    slim = c.get("/api/devices?slim=1").json()["items"][0]
+    assert "evidence" in full["ident"] and "extra" in full
+    assert set(slim["ident"]) == {"label"} and slim["ident"]["label"] == full["ident"]["label"] and "extra" not in slim
+    assert slim["mac"] == full["mac"] and slim["last_rssi"] == full["last_rssi"]

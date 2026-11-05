@@ -197,7 +197,7 @@ function cleanup() {
   charts.forEach(c => c.destroy()); charts = [];
   leaveFns.forEach(fn => { try { fn(); } catch { /* ignore */ } }); leaveFns = [];
 }
-function every(ms, fn) { timers.push(setInterval(fn, ms)); }
+function every(ms, fn) { timers.push(setInterval(() => { if (!document.hidden) fn(); }, ms)); }  // background tabs don't poll
 function onLeave(fn) { leaveFns.push(fn); }  // run when navigating away (close streams etc.)
 function chart(canvas, cfg) {
   if (!window.Chart) { canvas.parentElement.innerHTML = '<div class="empty">Chart library unavailable</div>'; return null; }
@@ -251,10 +251,20 @@ async function route() {
 }
 window.addEventListener('hashchange', route);
 
+// The header pill and the Overview both ask for /api/status when a page opens; share that one request.
+let statusMemo = { t: 0, p: null };
+function apiStatus() {
+  if (!statusMemo.p || Date.now() - statusMemo.t > 1000) {
+    const p = api('/api/status');
+    statusMemo = { t: Date.now(), p };
+    p.catch(() => { if (statusMemo.p === p) statusMemo.p = null; });
+  }
+  return statusMemo.p;
+}
 async function pollStatus() {
   const el = document.getElementById('live');
   try {
-    const s = await api('/api/status');
+    const s = await apiStatus();
     const errs = s.sensors.filter(x => x.state === 'error');
     const total = s.sensors.reduce((a, x) => a + (Number(x.pps) || 0), 0);
     el.className = 'live ' + (errs.length ? 'err' : (s.sensors.length || s.demo ? 'ok' : ''));
@@ -262,7 +272,7 @@ async function pollStatus() {
       : s.sensors.length ? `${s.sensors.length} sensor${s.sensors.length > 1 ? 's' : ''} · ${total.toFixed(0)} pkt/s` : 'no sensors';
   } catch { el.className = 'live err'; el.textContent = 'offline'; }
 }
-setInterval(pollStatus, 10000);
+setInterval(() => { if (!document.hidden) pollStatus(); }, 10000);
 
 // ------------------------------------------------------------------ sessions
 // Drill-down of the Statistics "Session durations" chart: the sessions in one duration bucket.
@@ -407,7 +417,7 @@ async function viewOverview(params) {
     document.getElementById('events').innerHTML = ev.length ? `<ul class="events">${ev.slice(0, 14).map(e => eventRow(e)).join('')}</ul>` : '<div class="empty">No events yet</div>';
   }
   async function loadConnected() {
-    const d = await api('/api/devices?connected=1&limit=12&sort=last_seen');
+    const d = await api('/api/devices?connected=1&limit=12&sort=last_seen&slim=1');
     document.getElementById('connected').innerHTML = d.items.length ? `<table><thead><tr>
       <th>Device</th><th>Vendor</th><th>Connected to</th><th>Signal</th><th class="num">Last seen</th></tr></thead><tbody>
       ${d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
@@ -419,7 +429,7 @@ async function viewOverview(params) {
     linkRows(document.getElementById('connected'));
   }
   async function loadWatched() {
-    const d = await api('/api/devices?watch=1&limit=50&sort=last_seen');
+    const d = await api('/api/devices?watch=1&limit=50&sort=last_seen&slim=1');
     document.getElementById('watched').innerHTML = d.items.length ? `<table><thead><tr>
       <th>Device</th><th>Group</th><th>Status</th><th>Last seen</th><th>Signal</th></tr></thead><tbody>
       ${d.items.map(x => {
@@ -435,7 +445,7 @@ async function viewOverview(params) {
     linkRows(document.getElementById('watched'));
   }
   async function loadDiscovered() {
-    const d = await api('/api/devices?limit=20&sort=first_seen&order=desc');
+    const d = await api('/api/devices?limit=20&sort=first_seen&order=desc&slim=1');
     document.getElementById('discovered').innerHTML = d.items.length ? `<table><thead><tr>
       <th>Device</th><th>Identified as</th><th>Vendor</th><th>Signal</th><th class="num">Discovered</th></tr></thead><tbody>
       ${d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
@@ -447,7 +457,7 @@ async function viewOverview(params) {
     linkRows(document.getElementById('discovered'));
   }
   async function loadSensors() {
-    const s = await api('/api/status');
+    const s = await apiStatus();
     renderSystem(s.system);
     const list = s.sensors;
     document.getElementById('sensors').innerHTML = (list.length ? list.map(x => `<div class="sensor">
@@ -621,7 +631,7 @@ async function viewDevices(params) {
     ['channel', 'Ch'], ['last_rssi', 'Signal'], ['packets', 'Frames', 'num'], ['first_seen', 'First seen', 'num'], ['last_seen', 'Last seen', 'num'],
   ];
   async function load() {
-    const qs = new URLSearchParams({ ...st, limit, offset });
+    const qs = new URLSearchParams({ ...st, limit, offset, slim: 1 });
     const d = await api('/api/devices?' + qs);
     document.getElementById('count').textContent = `${num(d.total)} device${d.total === 1 ? '' : 's'}`;
     const head = cols.map(([k, l, cls]) => {
