@@ -502,7 +502,7 @@ addRoute('/reports', async (_, params) => {
 
 // ===================================================================== settings
 const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'],
-  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance']];
+  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['performance', 'Performance'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance']];
 
 addRoute('/settings', async (_, params) => {
   const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore'].includes(k));
@@ -727,6 +727,18 @@ const SETTINGS_VIEWS = {
       <button class="btn primary">Save</button></form></div></section>`;
     const f = el.querySelector('#sf');
     f.onsubmit = async e => { e.preventDefault(); const b = {}; ['deauth_threshold', 'deauth_window', 'karma_ssids', 'karma_window', 'hs_cycles', 'hs_window', 'probe_ssids', 'probe_window'].forEach(k => { b[k] = +fv(f, k); }); await send('PUT', '/api/settings/security', b); toast('Saved'); };
+  },
+  async performance(el) {
+    const cfg = await api('/api/settings/performance');
+    el.innerHTML = `<section class="panel"><header><h2>Performance</h2></header><div class="body"><div class="form-narrow">
+      <label class="check"><span class="switch"><input type="checkbox" id="dbcache" ${cfg.db_cache ? 'checked' : ''}><span></span></span> Database memory cache</label>
+      <p class="muted">Gives each database query a larger page cache and a memory map of the database file, which makes the statistics and timeline pages noticeably faster, at the cost of memory
+        (by default up to 16 MB per running query plus the operating system's copy of the file). Switch it off on low-memory machines, such as a Raspberry Pi: pages get slower to load but use less RAM.</p>
+      <p class="faint small-text">Applies immediately, no restart. The sizes can be changed with <code>DB_CACHE_MB</code> and <code>DB_MMAP_MB</code> (0 uses SQLite's own defaults).</p></div></div></section>`;
+    el.querySelector('#dbcache').onchange = async e => {
+      try { await send('PUT', '/api/settings/performance', { db_cache: e.target.checked }); toast(e.target.checked ? 'Database cache on' : 'Database cache off'); }
+      catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
+    };
   },
   async tokens(el) {
     const ts = await api('/api/tokens');

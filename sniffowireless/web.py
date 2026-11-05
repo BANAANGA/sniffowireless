@@ -107,16 +107,24 @@ def create_app(ctx):
     def timeline(hours: float = 24, bucket: int = 0):
         now = time.time()
         auto = max(60, int(hours * 3600 / 288) // 60 * 60)
+        custom = bucket
         bucket = max(bucket, int(hours * 3600 / 2000), 60) if bucket else auto  # never more than ~2000 buckets
+        # From an hour up (and by default for ranges of 3 days and more), buckets are whole hours so the distinct-device
+        # counts can come from the hourly roll-up (~60x fewer rows than the per-minute samples) with identical results.
+        if bucket >= 3600 or (hours >= 72 and not custom):
+            bucket = -(-max(bucket, 3600) // 3600) * 3600
         since = int((now - hours * 3600) // bucket * bucket)
+        source = "presence_hours h" if bucket >= 3600 else "samples s"
+        tcol = "h.hour" if bucket >= 3600 else "s.minute"
+        mcol = "h.mac" if bucket >= 3600 else "s.mac"
         # One pass over `samples` (grouped by bucket, kind AND band) instead of two: the per-kind series is
         # exactly the per-band figures summed back up (each device has one band at a time), and the GROUP BY
         # + COUNT(DISTINCT) here is the expensive part of this endpoint at a 30-day range — halving how many
         # times it scans `samples` is worth more than the SQL staying simple.
         series = {k: {} for k in KINDS}
         bands = {b: {"ap": {}, "wifi_client": {}} for b in ("2.4", "5", "6")}
-        for r in rows("SELECT (s.minute / ?) * ? AS t, d.kind, d.band, COUNT(DISTINCT s.mac) n FROM samples s "
-                      "JOIN devices d ON d.mac = s.mac WHERE s.minute >= ? GROUP BY t, d.kind, d.band",
+        for r in rows(f"SELECT ({tcol} / ?) * ? AS t, d.kind, d.band, COUNT(DISTINCT {mcol}) n FROM {source} "
+                      f"JOIN devices d ON d.mac = {mcol} WHERE {tcol} >= ? GROUP BY t, d.kind, d.band",
                       (bucket, bucket, since)):
             k, t, n = r["kind"], r["t"], r["n"]
             s = series.setdefault(k, {})
@@ -414,11 +422,19 @@ def create_app(ctx):
                                "GROUP BY b, channel ORDER BY b = '6', b = '5', channel", (since,))
         out["bands"] = rows("SELECT band, kind, COUNT(*) n FROM devices WHERE band IS NOT NULL AND last_seen>=? "
                             "GROUP BY band, kind", (since,))
-        hourly = rows("SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT s.mac, d.kind, "
-                      "((s.minute - ?) % 86400) / 3600 h, (s.minute - ?) / 86400 day FROM samples s "
-                      "JOIN devices d ON d.mac=s.mac WHERE s.minute>=?) GROUP BY h, kind", (off, off, since))
-        ndays = one("SELECT COUNT(DISTINCT (minute - ?) / 86400) n FROM samples WHERE minute>=?",
-                    (off, since))["n"] or 1
+        # Distinct devices per (local hour, day) from the hourly roll-up where the timezone is a whole number of
+        # hours (then every hour belongs to exactly one local hour, so the result is the same as from `samples`);
+        # the partial hour at the start of the period, and odd offsets such as +5:30, are read from `samples`.
+        if off % 3600 == 0:
+            first = -(-int(since) // 3600) * 3600
+            heard = ("(SELECT mac, hour FROM presence_hours WHERE hour >= ? UNION "
+                     "SELECT mac, minute / 3600 * 3600 FROM samples WHERE minute >= ? AND minute < ?)", [first, since, first])
+        else:
+            heard = ("(SELECT mac, minute AS hour FROM samples WHERE minute >= ?)", [since])
+        hourly = rows(f"SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT p.mac, d.kind, ((p.hour - ?) % 86400) / 3600 h, "
+                      f"(p.hour - ?) / 86400 day FROM {heard[0]} p JOIN devices d ON d.mac=p.mac) GROUP BY h, kind",
+                      [off, off] + heard[1])
+        ndays = one(f"SELECT COUNT(DISTINCT (p.hour - ?) / 86400) n FROM {heard[0]} p", [off] + heard[1])["n"] or 1
         out["hourly"] = {"days": ndays, "rows": hourly}
         # Weekly activity pattern: distinct devices per (weekday, hour), same convention as a device's own
         # "weekly pattern" heatmap (/api/devices/{mac}/heatmap) — epoch day 0 (1970-01-01) was a Thursday,
@@ -426,9 +442,9 @@ def create_app(ctx):
         # period (same simplification the per-device heatmap already makes), so it reads as relative
         # busyness, not a literal daily average.
         out["weekly_heat"] = rows(
-            "SELECT wd, h, COUNT(*) n FROM (SELECT DISTINCT s.mac, ((s.minute - ?) % 86400) / 3600 h, "
-            "((s.minute - ?) / 86400 + 3) % 7 wd, (s.minute - ?) / 86400 day FROM samples s WHERE s.minute >= ?) "
-            "GROUP BY wd, h", (off, off, off, since))
+            f"SELECT wd, h, COUNT(*) n FROM (SELECT DISTINCT p.mac, ((p.hour - ?) % 86400) / 3600 h, "
+            f"((p.hour - ?) / 86400 + 3) % 7 wd, (p.hour - ?) / 86400 day FROM {heard[0]} p) GROUP BY wd, h",
+            [off, off, off] + heard[1])
         out["new_per_day"] = rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
                                   "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day",
                                   (off, off, since))

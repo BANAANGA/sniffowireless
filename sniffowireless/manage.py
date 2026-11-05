@@ -53,6 +53,7 @@ SETTING_SCHEMAS = {  # key -> {field: (type, min, max)}
                  "probe_ssids": (int, 5, 1000), "probe_window": (int, 10, 3600)},
     "report": {"email": (bool, None, None), "notifier_id": (int, 0, 10 ** 9), "weekday": (int, 0, 6),
                "hour": (int, 0, 23)},
+    "performance": {"db_cache": (bool, None, None)},
 }
 
 
@@ -151,13 +152,13 @@ def routes(ctx):
 
     @r.get("/api/settings/{key}")
     def get_setting(key: str, _=Depends(current_user)):
-        if key not in ("security", "report", "floorplan"):
+        if key not in ("security", "report", "floorplan", "performance"):
             raise HTTPException(404)
         return ctx.settings.get(key)
 
     @r.put("/api/settings/{key}")
     def put_setting(key: str, body: dict, _=Depends(require_admin)):
-        if key not in ("security", "report"):
+        if key not in ("security", "report", "performance"):
             raise HTTPException(404)
         cur = ctx.settings.get(key)
         cur.update(validate_setting(key, body))

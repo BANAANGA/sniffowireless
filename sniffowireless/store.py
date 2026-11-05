@@ -12,9 +12,31 @@ import sqlite3
 import time
 
 from . import identify
+from .config import _int
 from .sanitize import clean_str
 
 log = logging.getLogger("sniffowireless.store")
+
+# Every API request opens its own connection, so SQLite's default 2 MB page cache starts cold each time and is too
+# small to hold what one aggregate over `samples` touches. A larger per-connection cache (only filled as far as a query
+# needs) and a memory map (shared with the OS page cache) make those scans noticeably cheaper.
+# Settings → Performance switches this off at runtime for low-memory machines (SQLite's own defaults are used instead).
+# DB_CACHE_MB / DB_MMAP_MB set the sizes; 0 means "SQLite's default" / "no memory map".
+CACHE_KB = max(0, _int("DB_CACHE_MB", 16)) * 1024
+MMAP_BYTES = max(0, _int("DB_MMAP_MB", 256)) * 1024 * 1024
+SQLITE_DEFAULT_CACHE_KB = 2000
+_tuned = {"on": True}
+
+
+def set_db_cache(on):
+    _tuned["on"] = bool(on)
+
+
+def tune(conn):
+    """Apply the page cache / memory map settings to a connection (new ones get them in connect())."""
+    on = _tuned["on"]
+    conn.execute(f"PRAGMA cache_size=-{(CACHE_KB if on else 0) or SQLITE_DEFAULT_CACHE_KB}")
+    conn.execute(f"PRAGMA mmap_size={MMAP_BYTES if on else 0}")
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -42,6 +64,10 @@ CREATE TABLE IF NOT EXISTS samples(
   rssi_sum INTEGER DEFAULT 0, rssi_count INTEGER DEFAULT 0, rssi_min INTEGER, rssi_max INTEGER,
   PRIMARY KEY(mac, minute)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_samples_minute ON samples(minute);
+-- Which devices were heard in which hour: a roll-up of `samples` (one row per device-hour instead of per device-minute,
+-- ~60x fewer) that the long-range charts count distinct devices from. Kept in step with `samples` as they are written.
+CREATE TABLE IF NOT EXISTS presence_hours(
+  hour INTEGER NOT NULL, mac TEXT NOT NULL, PRIMARY KEY(hour, mac)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, mac TEXT, type TEXT NOT NULL,
   peer TEXT, detail TEXT);
@@ -122,6 +148,7 @@ def is_randomized_mac(mac):
 def connect(path, readonly=False):
     conn = sqlite3.connect(path, timeout=10, check_same_thread=False, isolation_level=None)
     conn.row_factory = sqlite3.Row
+    tune(conn)
     if readonly:
         conn.execute("PRAGMA query_only=1")
     return conn
@@ -203,6 +230,12 @@ class Store:
                               "WHERE kind IN ('ap', 'wifi_client')")
         for idx in ("dev_type", "brand", "fp_hash"):
             self.conn.execute(f"CREATE INDEX IF NOT EXISTS idx_devices_{idx} ON devices({idx})")
+        if not self.conn.execute("SELECT 1 FROM meta WHERE key='presence_hours'").fetchone():
+            n = self.conn.execute("INSERT OR IGNORE INTO presence_hours(hour, mac) "
+                                  "SELECT DISTINCT minute / 3600 * 3600, mac FROM samples").rowcount
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('presence_hours', '1')")
+            if n:
+                log.info("Migrated database: built the hourly presence roll-up (%d device-hours)", n)
         row = self.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()
         if not row or int(row[0]) != identify.IDENT_VERSION:
             self.reidentify_all()
@@ -259,11 +292,16 @@ class Store:
         c.execute("BEGIN")
         for m in macs:
             for sql in ("DELETE FROM devices WHERE mac=?", "DELETE FROM sessions WHERE mac=? OR peer=?",
-                        "DELETE FROM samples WHERE mac=?", "DELETE FROM events WHERE mac=? OR peer=?",
+                        "DELETE FROM samples WHERE mac=?", "DELETE FROM presence_hours WHERE mac=?",
+                        "DELETE FROM events WHERE mac=? OR peer=?",
                         "DELETE FROM probes WHERE mac=?", "DELETE FROM sightings WHERE mac=?"):
                 c.execute(sql, (m, m) if sql.count("?") == 2 else (m,))
         c.execute("COMMIT")
         log.info("Purged %d ignored devices", len(macs))
+
+    def retune(self):
+        """Re-apply the cache settings to the writer's own connection (on the writer thread, which owns it)."""
+        self.command(lambda s: tune(s.conn))
 
     def put(self, obs):
         try:
@@ -614,6 +652,8 @@ class Store:
                 "rssi_min=MIN(COALESCE(rssi_min,excluded.rssi_min),COALESCE(excluded.rssi_min,rssi_min)), "
                 "rssi_max=MAX(COALESCE(rssi_max,excluded.rssi_max),COALESCE(excluded.rssi_max,rssi_max))",
                 [(m, mi, *b) for (m, mi), b in self.buckets.items()])
+            c.executemany("INSERT OR IGNORE INTO presence_hours(hour, mac) VALUES(?,?)",
+                          {(mi // 3600 * 3600, m) for (m, mi) in self.buckets})
             c.executemany("INSERT INTO events(ts,mac,type,peer,detail) VALUES(?,?,?,?,?)", self.events)
             c.executemany(
                 "INSERT INTO probes(mac,ssid,first_seen,last_seen,count) VALUES(?,?,?,?,?) "
@@ -651,6 +691,7 @@ class Store:
         c = self.conn
         c.execute("BEGIN")
         c.execute("DELETE FROM samples WHERE minute < ?", (cutoff,))
+        c.execute("DELETE FROM presence_hours WHERE hour < ?", (cutoff,))
         c.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM sessions WHERE open=0 AND end_ts < ?", (cutoff,))
         c.execute("DELETE FROM probes WHERE last_seen < ?", (cutoff,))

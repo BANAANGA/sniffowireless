@@ -107,7 +107,7 @@ def build(cfg):
     from .security import SecurityMonitor
     from .sensors import LocationTracker
     from .settings import Settings
-    from .store import Store, connect
+    from .store import Store, connect, set_db_cache
     from .survey import SurveyCollector
     from .zigbee import ZigbeeMonitor
 
@@ -115,6 +115,10 @@ def build(cfg):
     apply_staged_restore(cfg)  # a full restore staged from the UI is applied before the database is opened
     store = Store(cfg, VendorLookup(cfg.manuf_path))
     ctx = Ctx(cfg, store, Settings(lambda: connect(cfg.db_path)))
+    set_db_cache(ctx.settings.get("performance")["db_cache"])
+    store.retune()
+    ctx.settings.on_change(lambda k: (set_db_cache(ctx.settings.get("performance")["db_cache"]), store.retune())
+                           if k == "performance" else None)
     ctx.auth = Auth(cfg, ctx.wdb)
     ctx.alerts = AlertEngine(ctx)
     ctx.security = SecurityMonitor(ctx)
