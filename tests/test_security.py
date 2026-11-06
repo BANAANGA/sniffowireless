@@ -970,3 +970,47 @@ def test_channels_api_and_the_sensor_round_trip(env):
     assert c.get(url).json()["targets"][0]["config"]["channels"] == "all"
     assert c.delete(f"/api/sensors/{sid}", headers=H).status_code == 200
     assert sid not in ctx.settings.get("channels")["sensors"] and [x["id"] for x in c.get(url).json()["targets"]] == ["local"]
+
+
+def test_remote_sensor_status_clears_and_goes_offline(env, monkeypatch):
+    from sniffowireless import status as status_mod
+    ctx, c = env
+    login(c)
+    s = c.post("/api/sensors", json={"name": "Pi"}, headers=H).json()
+    sid, tok = s["id"], {"Authorization": f"Bearer {s['token']}"}
+    plain = TestClient(c.app, base_url="http://sniffowireless.test")
+    report = lambda entries: plain.post("/api/ingest", json={"sent_at": time.time(), "obs": [], "status": entries}, headers=tok)
+    entry = lambda n, **kw: {"name": n, "type": "wifi", "iface": n.split(":")[1], **kw}
+    mine = lambda: {x["name"]: x for x in c.get("/api/status").json()["sensors"] if x.get("remote") == sid}
+
+    # An interface in trouble, and a warning on another.
+    assert report([entry("wifi:wlan1", state="error", error="capture stopped"), entry("wifi:wlan2", state="capturing", warning="6 GHz is off"),
+                   entry("bt:hci0", state="scanning")]).status_code == 200
+    got = mine()
+    assert got[f"{sid}/wifi:wlan1"]["error"] == "capture stopped" and got[f"{sid}/wifi:wlan2"]["warning"] == "6 GHz is off"
+
+    # The next report no longer carries them: they are cleared here too (they used to stay for ever), and an interface
+    # that is no longer reported is gone.
+    assert report([entry("wifi:wlan1", state="capturing"), entry("wifi:wlan2", state="capturing")]).status_code == 200
+    got = mine()
+    assert set(got) == {f"{sid}/wifi:wlan1", f"{sid}/wifi:wlan2"}
+    assert got[f"{sid}/wifi:wlan1"]["state"] == "capturing" and "error" not in got[f"{sid}/wifi:wlan1"]
+    assert "warning" not in got[f"{sid}/wifi:wlan2"]
+    # A batch without any status leaves the last report alone.
+    assert plain.post("/api/ingest", json={"sent_at": time.time(), "obs": []}, headers=tok).status_code == 200
+    assert set(mine()) == {f"{sid}/wifi:wlan1", f"{sid}/wifi:wlan2"}
+
+    # A sensor that stops reporting is offline, whatever it last said; its entries say how long it has been quiet.
+    report([entry("wifi:wlan1", state="error", error="old news", pps=99)])
+    real = time.time
+    monkeypatch.setattr(status_mod.time, "time", lambda: real() + status_mod.STALE_AFTER + 30)
+    off = mine()[f"{sid}/wifi:wlan1"]
+    assert off["state"] == "offline" and off["stale"] and off["error"] is None and off["pps"] == 0 and 90 < off["quiet_for"] < 150
+    from sniffowireless.metrics import render
+    assert f'sniffowireless_sensor_up{{sensor="{sid}/wifi:wlan1"}} 0' in render(ctx)  # Prometheus sees it as down
+    monkeypatch.setattr(status_mod.time, "time", real)
+    assert mine()[f"{sid}/wifi:wlan1"]["state"] == "error"  # ...until it reports again
+
+    # Removing the sensor removes its entries.
+    assert c.delete(f"/api/sensors/{sid}", headers=H).status_code == 200
+    assert not mine()
