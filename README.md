@@ -358,7 +358,7 @@ docker run -d --name sniffowireless --restart unless-stopped \
 
 ### Deploying with Arcane
 
-[Arcane](https://getarcane.app) is a web UI for managing Docker and Compose projects. sniffowireless can run as an Arcane project. The compose file in this repository builds the image from source (`build: .`), so the most reliable way is to build the image once on the Docker host and let Arcane run it.
+[Arcane](https://getarcane.app) is a web UI for managing Docker and Compose projects. sniffowireless can run as an Arcane project. Arcane can pull the [published image](#prebuilt-image) straight from the registry, or run an image you built from source on the Docker host.
 
 > Arcane's documentation doesn't mention `network_mode: host` or `privileged: true` containers, and these steps haven't been verified on a real Arcane install yet. If your Arcane behaves differently, the plain [`docker compose`](#3-start-it) route above always works.
 
@@ -370,7 +370,7 @@ Arcane uses port 3552, so it doesn't clash with sniffowireless on 8080.
 
 **2. Prepare the adapters on the host** as described in [Connecting USB Wi-Fi / Bluetooth adapters](#connecting-usb-wi-fi--bluetooth-adapters). Arcane doesn't change anything on the host's network side.
 
-**3. Build the image on the Docker host** (the machine Arcane manages):
+**3. Get the image.** Nothing to do for the published image: Arcane pulls it when you deploy in step 5. To build from source instead, on the Docker host (the machine Arcane manages):
 
 ```bash
 git clone https://github.com/BANAANGA/sniffowireless.git
@@ -380,12 +380,14 @@ git clone https://github.com/BANAANGA/sniffowireless.git
 cd sniffowireless && docker build -t sniffowireless:latest .
 ```
 
+and use `image: sniffowireless:latest` in the compose file below.
+
 **4. Create the project in Arcane.** Open **Projects → Create Project**, name it `sniffowireless`, paste this compose file, and fill in the **Environment Configuration (.env)** editor with your adapters:
 
 ```yaml
 services:
   sniffowireless:
-    image: sniffowireless:latest
+    image: ghcr.io/banaanga/sniffowireless:latest
     container_name: sniffowireless
     restart: unless-stopped
     network_mode: host
@@ -426,15 +428,31 @@ The data folder is an absolute host path on purpose, so you know exactly what to
 docker logs sniffowireless
 ```
 
-**Updating.** Pull the new code and rebuild the image on the host:
+**Updating.** With the published image, click **Redeploy** on the project: Arcane pulls the latest image and restarts it. If you built the image yourself, rebuild it on the host:
 
 ```bash
 cd sniffowireless && git pull && docker build -t sniffowireless:latest .
 ```
 
-then recreate the container from Arcane's **Deploy** options, with *force recreate* ticked and a pull policy that doesn't pull. The image only exists on the host, so *Redeploy*, which pulls the latest images first, isn't what you want here.
+then recreate the container from Arcane's **Deploy** options, with *force recreate* ticked and a pull policy that doesn't pull. That image only exists on the host, so *Redeploy*, which pulls the latest images first, isn't what you want there.
 
 **Alternative: build inside Arcane from Git.** Arcane can also create a project straight from this repository. Add the repository under **Customization → Git Repositories**, then **Projects → From Git Repo → Pull** with branch `main`, **Compose File Path** `docker-compose.yml`, and **Sync Files** on, so the `Dockerfile` is next to the compose file. Set your adapters in the project's `.env` editor (the compose file of a Pull project is read-only), then use **Build & Deploy**, which Arcane offers for services that have a `build:` section. Use **Auto Sync** to pick up new versions. This is the less proven route; if the build doesn't start, use the steps above.
+
+### Prebuilt image
+
+Released versions are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` (so also a Raspberry Pi), which saves building on the host:
+
+```bash
+docker pull ghcr.io/banaanga/sniffowireless:latest
+```
+
+The tags are `latest` (the newest release that isn't a pre-release), the release's own tag (for example `11`), `sha-<commit>`, and `edge` (a manual build of a branch). To use it with compose, replace the `build: .` and `image:` lines of `docker-compose.yml` with `image: ghcr.io/banaanga/sniffowireless:latest`, then:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+With plain `docker run` (see above), use the same image name instead of `sniffowireless`.
 
 ### Less privilege
 
