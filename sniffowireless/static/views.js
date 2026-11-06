@@ -634,12 +634,15 @@ const SETTINGS_VIEWS = {
     el.querySelector('#add-sensor').onclick = () => openModal('Add remote sensor', `<label class="field">Name<input name="name" required placeholder="e.g. Garage Pi"></label><label class="field">Room<input name="room" placeholder="e.g. Garage"></label>`,
       async f => {
         const r = await send('POST', '/api/sensors', { name: fv(f, 'name'), room: fv(f, 'room') || null });
-        setTimeout(() => openModal(`Sensor “${r.id}” created`, `<p>Run this on the sensor machine (after connecting its adapters as in the README). <b>The token is shown only once.</b></p>
+        // The published image, from the GitHub Container Registry (the repository is lower-cased there): nothing to build.
+        const image = `ghcr.io/${about.repo.replace('https://github.com/', '').toLowerCase()}:latest`;
+        setTimeout(() => openModal(`Sensor “${r.id}” created`, `<p>Run this on the sensor machine (after connecting its adapters as in the README). It pulls the published image, so there is nothing to build. <b>The token is shown only once.</b></p>
           <pre class="code" id="cmd">docker run -d --name sniffowireless-sensor --restart unless-stopped --network host --privileged \\
   -e SNIFFOWIRELESS_MODE=sensor -e SERVER_URL=${esc(r.server_url)} \\
   -e SENSOR_TOKEN=${esc(r.token)} \\
   -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 \\
-  sniffowireless:latest</pre><button type="button" class="btn small" id="copy">Copy</button>`, null), 50);
+  ${esc(image)}</pre><button type="button" class="btn small" id="copy">Copy</button>
+          <p class="faint small-text">Adjust <code>WIFI_INTERFACES</code> and <code>BT_DEVICES</code> to the sensor's adapters. To update it later, pull the image and run the command again (see <i>Updating</i> in the README).</p>`, null), 50);
         setTimeout(() => { const c = document.getElementById('copy'); if (c) c.onclick = () => navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(() => toast('Copied')); }, 100);
         SETTINGS_VIEWS.sensors(el);
       });
