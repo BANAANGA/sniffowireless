@@ -370,9 +370,29 @@ class WifiSensor:
         self.eapol_errors = 0  # frames that raised while checking for a handshake (see _handle)
         self.acc = {}  # freq -> [frames, bytes, airtime_us, retries, noise_sum, noise_cnt] for the channel survey
         self.stop = None
+        self.hop_interval = cfg.wifi_hop_interval
+        self._changed = threading.Event()  # set when the channel list / hop interval changes, to wake the hopper
         status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
                         channels=[chan_label(f) for f in self.channels],
                         bands=sorted({band_of(f) for f in self.channels}))
+
+    def set_channels(self, channels, hop_interval=None):
+        """Change what this adapter listens on, while it runs: the hopper picks it up at once."""
+        self.channels = list(channels)
+        if hop_interval:
+            self.hop_interval = hop_interval
+        status.update(self.name, channels=[chan_label(f) for f in self.channels],
+                      bands=sorted({band_of(f) for f in self.channels}), skipped=[])
+        self._changed.set()
+
+    def _pause(self, seconds):
+        """Wait, but wake early on shutdown or when the channel settings change."""
+        end = time.monotonic() + seconds
+        while not self.stop.is_set() and not self._changed.is_set():
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            self._changed.wait(min(left, 1.0))
 
     def start(self, stop):
         self.stop = stop
@@ -489,13 +509,16 @@ class WifiSensor:
     def _hop_loop(self):
         bad = {}
         while not self.stop.is_set():
+            if self._changed.is_set():  # new channel settings: start over with the new list
+                self._changed.clear()
+                bad.clear()
             if not self.mon:
                 self.stop.wait(1)
                 continue
             freqs = [f for f in self.channels if bad.get(f, 0) < 3]
             if not freqs:
                 status.update(self.name, error="no usable channels for this adapter")
-                self.stop.wait(10)
+                self._pause(10)
                 bad.clear()
                 continue
             if len(freqs) == 1:
@@ -504,12 +527,12 @@ class WifiSensor:
                               band=band_of(freqs[0]) if ok else None)
                 self.cur_freq = freqs[0] if ok else None
                 t0 = time.time()
-                self.stop.wait(30)
+                self._pause(30)
                 if ok:
                     self._emit_survey(freqs[0], time.time() - t0)
                 continue
             for f in freqs:
-                if self.stop.is_set() or not self.mon:
+                if self.stop.is_set() or not self.mon or self._changed.is_set():
                     break
                 ok, out = set_freq(self.mon, f)
                 if ok:
@@ -518,7 +541,7 @@ class WifiSensor:
                     self.acc.pop(f, None)  # discard frames counted before the radio settled
                     self.cur_freq = f
                     t0 = time.time()
-                    self.stop.wait(self.cfg.wifi_hop_interval)
+                    self._pause(self.hop_interval)
                     self.cur_freq = None
                     self._emit_survey(f, time.time() - t0)
                 else:

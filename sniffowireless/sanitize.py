@@ -226,7 +226,7 @@ def remote_observation(o, now):
 
 
 SENSOR_STATUS = {"name": 64, "state": 32, "error": 200, "type": 32, "iface": 32, "mon": 32, "channel": 16,
-                 "band": 8, "scan": 16, "firmware": 64, "warning": 300}
+                 "band": 8, "scan": 16, "firmware": 64, "warning": 300, "regdomain": 8}
 
 
 def remote_status(s):
@@ -239,6 +239,12 @@ def remote_status(s):
             out[k] = clean_num(s.get(k), 0, 10 ** 15, True)
     if s.get("pps") is not None:
         out["pps"] = clean_num(s.get("pps"), 0, 10 ** 9)
+    if s.get("chan_rev") is not None:
+        out["chan_rev"] = clean_num(s.get("chan_rev"), 0, 10 ** 9, True)
+    for k, valid in (("channels", None), ("skipped", None), ("bands", BANDS), ("supported_bands", BANDS)):
+        if isinstance(s.get(k), list):  # Wi-Fi channel labels / bands, for the Channels page
+            items = [clean_str(x, 16) for x in s[k][:100] if isinstance(x, str)]
+            out[k] = [x for x in items if x and (valid is None or x in valid)]
     return {k: v for k, v in out.items() if v is not None}
 
 

@@ -908,3 +908,65 @@ def test_restore_chooser_api(env, tmp_path, monkeypatch):
     assert r["restored"] == {"groups": 1} and ctx.settings.get("networks")["ssids"] == ["Changed"]
     assert c.post("/api/backup/config?sections=settings", content=cfg, headers=H).json()["restored"] == {}
     assert ctx.settings.get("networks")["ssids"] == ["HomeNet"]
+
+
+def test_channels_api_and_the_sensor_round_trip(env):
+    ctx, c = env
+    url = "/api/channel-settings"
+    assert c.get(url).status_code == 401
+    c.post("/api/auth/login", json={"username": "viewer", "password": PW}, headers=H)
+    assert c.get(url).status_code == 403 and c.put(url + "/local", json={"channels": "6ghz"}, headers=H).status_code == 403
+    c.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H)
+
+    s = c.post("/api/sensors", json={"name": "Garage Pi"}, headers=H).json()
+    sid, tok = s["id"], {"Authorization": f"Bearer {s['token']}"}
+    plain = TestClient(c.app, base_url="http://sniffowireless.test")
+    now = time.time()
+
+    def report(status_entries):
+        return plain.post("/api/ingest", json={"sent_at": now, "obs": [], "status": status_entries}, headers=tok).json()
+
+    # A sensor with nothing configured gets no settings back and shows its adapters (reported through ingest).
+    reply = report([{"name": "wifi:wlan1", "type": "wifi", "iface": "wlan1", "state": "capturing", "channels": ["1", "6", "11"],
+                     "bands": ["2.4"], "supported_bands": ["2.4", "5"], "pps": 12.5}])
+    assert "channel_config" not in reply
+    t = {x["id"]: x for x in c.get(url).json()["targets"]}
+    assert list(t) == ["local", sid] and t[sid]["name"] == "Garage Pi" and t[sid]["config"] is None
+    ad = t[sid]["adapters"][0]
+    assert ad["iface"] == "wlan1" and ad["channels"] == ["1", "6", "11"] and ad["supported_bands"] == ["2.4", "5"]
+    assert t[sid]["too_old"] is True  # it doesn't report which settings revision it runs: an older version
+
+    # Validation.
+    put = lambda target, body: c.put(f"{url}/{target}", json=body, headers=H)
+    assert put("nosuch", {"channels": "6ghz"}).status_code == 404
+    for bad in ({"channels": "banana"}, {"channels": "999"}, {"regdomain": "NLD"}, {"hop_interval": 0.01},
+                {"per_iface": {"wlan 1": "1"}}, {"per_iface": {"wlan1": "x"}}, {"hop_interval": "fast"}):
+        assert put(sid, bad).status_code in (400, 422), bad
+    assert t[sid]["config"] is None and c.get(url).json()["targets"][1]["config"] is None
+
+    # Saving: the revision goes up, and a warning says this sensor has no adapter for 6 GHz.
+    r = put(sid, {"channels": "default,6ghz", "per_iface": {"wlan1": "1,6,11"}, "regdomain": "nl", "hop_interval": 1})
+    assert r.status_code == 200 and r.json()["config"]["rev"] == 1 and r.json()["config"]["regdomain"] == "NL"
+    assert r.json()["warnings"] == ["No adapter on this sensor can tune 6 GHz"]
+    assert put(sid, {"channels": "default"}).json()["config"] == {"rev": 2, "channels": "default", "per_iface": {}, "regdomain": None, "hop_interval": None}
+    assert put(sid, {"channels": "5ghz"}).json()["warnings"] == []
+
+    # The sensor's next batch brings the settings back; until it reports that revision the UI says "not applied yet".
+    reply = report([{"name": "wifi:wlan1", "type": "wifi", "iface": "wlan1", "chan_rev": 2, "channels": ["36"], "supported_bands": ["2.4", "5"]}])
+    assert reply["channel_config"] == {"rev": 3, "channels": "5ghz", "per_iface": {}, "regdomain": None, "hop_interval": None}
+    got = {x["id"]: x for x in c.get(url).json()["targets"]}[sid]
+    assert got["applied"] is False and got["too_old"] is False and got["config"]["rev"] == 3
+    report([{"name": "wifi:wlan1", "type": "wifi", "iface": "wlan1", "chan_rev": 3, "channels": ["36", "40"], "supported_bands": ["2.4", "5"]}])
+    assert {x["id"]: x for x in c.get(url).json()["targets"]}[sid]["applied"] is True
+
+    # Back to the sensor's own settings is itself a revision: the sensor must be told to let go of the old ones.
+    r = c.delete(f"{url}/{sid}", headers=H).json()
+    assert r["config"] == {"rev": 4, "channels": None, "per_iface": {}, "regdomain": None, "hop_interval": None}
+    assert report([])["channel_config"]["rev"] == 4
+    assert c.delete(f"{url}/nosuch", headers=H).status_code == 404
+
+    # This server: stored the same way; and removing a sensor removes its settings.
+    assert put("local", {"channels": "all"}).json()["config"]["rev"] == 1
+    assert c.get(url).json()["targets"][0]["config"]["channels"] == "all"
+    assert c.delete(f"/api/sensors/{sid}", headers=H).status_code == 200
+    assert sid not in ctx.settings.get("channels")["sensors"] and [x["id"] for x in c.get(url).json()["targets"]] == ["local"]
