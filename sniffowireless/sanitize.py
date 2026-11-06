@@ -229,6 +229,17 @@ SENSOR_STATUS = {"name": 64, "state": 32, "error": 200, "type": 32, "iface": 32,
                  "band": 8, "scan": 16, "firmware": 64, "warning": 300, "regdomain": 8}
 
 
+def remote_version(v):
+    """The version a remote sensor reports about itself: short plain strings only (it is shown on the Sensors page)."""
+    if not isinstance(v, dict):
+        return None
+    out = {k: clean_str(v[k], 40) for k in ("version", "commit", "built", "arch") if isinstance(v.get(k), str)}
+    out = {k: x for k, x in out.items() if x}
+    if out.get("version"):
+        out["release"] = bool(re.match(r"^v?\d+(\.\d+)*$", out["version"]))
+    return out or None
+
+
 def remote_status(s):
     """Validate a sensor status entry pushed by a remote sensor."""
     if not isinstance(s, dict) or not clean_str(s.get("name"), 64):

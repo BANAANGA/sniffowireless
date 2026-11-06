@@ -17,6 +17,14 @@ RUN mkdir -p /app/data /app/vendor \
 
 COPY sniffowireless /app/sniffowireless
 
+# Which build this is (shown on Settings -> About and in a sensor's report). Last, so a new commit doesn't redo the layers above.
+ARG VERSION=dev
+ARG COMMIT=
+ARG BUILD_DATE=
+ENV SNIFFOWIRELESS_VERSION=$VERSION \
+    SNIFFOWIRELESS_COMMIT=$COMMIT \
+    SNIFFOWIRELESS_BUILD_DATE=$BUILD_DATE
+
 ENV DB_PATH=/data/sniffowireless.db \
     WEB_PORT=8080 \
     PYTHONUNBUFFERED=1

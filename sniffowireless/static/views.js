@@ -510,10 +510,10 @@ addRoute('/reports', async (_, params) => {
 
 // ===================================================================== settings
 const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'], ['wifichannels', 'Wi-Fi channels'],
-  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['performance', 'Performance'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance']];
+  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['performance', 'Performance'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance'], ['about', 'About']];
 
 addRoute('/settings', async (_, params) => {
-  const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore'].includes(k));
+  const tabs = isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore', 'about'].includes(k));
   let tab = params.get('tab') || 'account';
   app.innerHTML = `<div class="page-head"><div><h1>Settings</h1></div></div><div class="settings"><nav class="subnav">${tabs.map(([k, l]) => `<a href="${hrefWith('/settings', { tab: k })}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</nav><div id="set-body" class="set-body"></div></div>`;
   const el = document.getElementById('set-body');
@@ -613,11 +613,21 @@ const SETTINGS_VIEWS = {
     };
   },
   async sensors(el) {
-    const ss = await api('/api/sensors');
+    const [ss, about] = await Promise.all([api('/api/sensors'), api('/api/about')]);
+    // The version a sensor runs, and whether it is the server's: a different one is worth a look (features that need both
+    // ends, like channel settings from the web UI, only work once both are updated).
+    const verCell = s => {
+      const v = s.id === 'local' ? about : s.info && s.info.version;
+      if (!v) return s.id === 'local' ? '—' : '<span class="faint" title="No version reported yet: the sensor is offline, or runs software older than this display (then update it)">not reported</span>';
+      const same = s.id === 'local' || (v.version === about.version && (!v.commit || !about.commit || v.commit === about.commit));
+      return `<b>${esc(v.version)}</b>${v.commit ? ` <span class="mono faint">${esc(v.commit.slice(0, 7))}</span>` : ''}${v.arch ? ` <span class="faint small-text">${esc(v.arch)}</span>` : ''}
+        ${same ? '' : `<span class="tag warn" title="The server runs ${esc(about.version)}${about.commit ? ' ' + esc(about.commit.slice(0, 7)) : ''}">differs from the server</span>`}
+        ${v.built ? `<div class="faint small-text">built ${esc(v.built.slice(0, 10))}</div>` : ''}`;
+    };
     el.innerHTML = `<section class="panel"><header><h2>Sensors</h2><button class="btn primary" id="add-sensor">Add remote sensor</button></header><div class="body flush">${tableHtml(
-      '<th>Sensor</th><th>Room</th><th>Status</th><th class="num">Last report</th><th>On map</th><th></th>',
-      ss.map(s => { const st = (s.info && s.info.status) || []; return `<tr><td><b>${esc(s.name)}</b> <span class="mono faint">${esc(s.id)}</span></td><td>${esc(s.room || '—')}</td>
-        <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'} <span class="faint">${st.map(x => `${esc(x.name)} ${num(x.pps)} pkt/s`).join(', ')}</span></td>
+      '<th>Sensor</th><th>Version</th><th>Room</th><th>Status</th><th class="num">Last report</th><th>On map</th><th></th>',
+      ss.map(s => { const st = (s.info && s.info.status) || []; return `<tr><td><b>${esc(s.name)}</b> <span class="mono faint">${esc(s.id)}</span></td><td>${verCell(s)}</td><td>${esc(s.room || '—')}</td>
+        <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'}<div class="faint small-text" style="white-space:normal;max-width:260px">${st.map(x => `${esc(x.name)} ${num(x.pps)} pkt/s`).join(', ')}</div></td>
         <td class="num muted">${s.id === 'local' ? '—' : ago(s.last_seen)}</td><td>${s.x != null ? 'placed' : '<span class="faint">not placed</span>'}</td>
         <td class="num"><button class="btn small" data-edit="${esc(s.id)}">Edit</button>${s.id !== 'local' ? ` <button class="btn small danger" data-del="${esc(s.id)}">Remove</button>` : ''}</td></tr>`; }).join(''))}</div></section>
       <p class="faint small-text">A remote sensor is this same container started with <code>SNIFFOWIRELESS_MODE=sensor</code> on another machine (e.g. a Raspberry Pi in another room). It forwards everything it captures here. Give each sensor a room name, then place it on the <a href="#/map">map</a>.</p>`;
@@ -750,6 +760,23 @@ const SETTINGS_VIEWS = {
       try { await send('PUT', '/api/settings/performance', { db_cache: e.target.checked }); toast(e.target.checked ? 'Database cache on' : 'Database cache off'); }
       catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
     };
+  },
+  async about(el) {
+    const a = await api('/api/about');
+    const row = (k, v) => `<tr><td class="muted">${k}</td><td>${v}</td></tr>`;
+    const short = a.commit ? a.commit.slice(0, 7) : '';
+    const up = Math.max(0, a.now - a.started);
+    el.innerHTML = `<section class="panel"><header><h2>About</h2></header><div class="body flush"><table><tbody>
+      ${row('Version', `<b>${esc(a.version)}</b>${a.release ? ` · <a href="${esc(a.repo)}/releases/tag/${enc(a.version)}" target="_blank" rel="noopener">release notes</a>` : a.version === 'dev' ? ' <span class="faint">(not a release build)</span>' : a.version === 'source' ? ' <span class="faint">(built from source)</span>' : ''}`)}
+      ${row('Commit', short ? `<span class="mono">${esc(short)}</span> · <a href="${esc(a.repo)}/commit/${enc(a.commit)}" target="_blank" rel="noopener">view</a>` : '<span class="faint">not recorded (see the README for how to record it in a source build)</span>')}
+      ${row('Built', !a.built ? '<span class="faint">not recorded</span>' : isNaN(Date.parse(a.built)) ? esc(a.built) : esc(dt(Date.parse(a.built) / 1000)) + ` <span class="faint">${esc(a.built)}</span>`)}
+      ${row('Running since', `${esc(dt(a.started))} <span class="faint">· ${dur(up)}</span>`)}
+      ${row('Mode', esc(a.mode) + (a.demo ? ' <span class="tag warn">demo data</span>' : ''))}
+      ${row('Python', esc(a.python))}
+      ${row('Platform', `${esc(a.platform)} <span class="faint">${esc(a.arch)}</span>`)}
+      ${row('Project', `<a href="${esc(a.repo)}" target="_blank" rel="noopener">${esc(a.repo.replace('https://', ''))}</a> · <a href="${esc(a.repo)}/releases" target="_blank" rel="noopener">all releases</a>`)}
+    </tbody></table></div></section>
+    <p class="faint small-text">Remote sensors report their own version on <a href="#/settings?tab=sensors">Settings → Sensors</a>.</p>`;
   },
   async tokens(el) {
     const ts = await api('/api/tokens');

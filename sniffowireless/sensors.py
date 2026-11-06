@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import sanitize, status
+from . import sanitize, status, version
 from .sanitize import Name
 from .auth import current_user, require_admin
 
@@ -46,6 +46,7 @@ class Forwarder:
         self.dropped = 0
         self.sent = 0
         self.on_channel_config = None  # called with the channel settings the server sends back, when it has any
+        self.version = {**version.info(), "arch": version.runtime()["arch"]}  # reported with every batch, for the Sensors page
         if not cfg.server_url or not cfg.sensor_token:
             raise SystemExit("SNIFFOWIRELESS_MODE=sensor needs SERVER_URL and SENSOR_TOKEN")
 
@@ -75,7 +76,7 @@ class Forwarder:
             while self.buf and len(batch) < 20_000:
                 batch.append(self.buf.popleft())
             body = gzip.compress(json.dumps({"sent_at": time.time(), "obs": batch, "status": status.snapshot(),
-                                             "dropped": self.dropped}, default=str).encode())
+                                             "dropped": self.dropped, "version": self.version}, default=str).encode())
             req = urllib.request.Request(f"{self.cfg.server_url}/api/ingest", data=body, method="POST", headers={
                 "Authorization": f"Bearer {self.cfg.sensor_token}", "Content-Type": "application/json",
                 "Content-Encoding": "gzip", "User-Agent": "sniffowireless-sensor"})
@@ -240,7 +241,8 @@ def routes(ctx):
             status.update(f"{sid}/{s['name']}", **{k: v for k, v in s.items() if k != "name"}, remote=sid)
         dropped = sanitize.clean_num(body.get("dropped"), 0, 10 ** 15, True)
         ctx.execute("UPDATE sensors SET last_seen=?, info=? WHERE id=?",
-                    (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts}), sid))
+                    (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts,
+                                      "version": sanitize.remote_version(body.get("version"))}), sid))
         reply = {"accepted": n, "rejected": rejected}
         chan = (ctx.settings.get("channels")["sensors"] or {}).get(sid)
         if chan and chan.get("rev"):  # settings made in the web UI for this sensor: it applies them when the revision is new
