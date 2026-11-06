@@ -985,6 +985,8 @@ Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in anothe
    The sensor buffers and retries if the server is unreachable, and corrects small clock differences.
 3. **Map → Edit layout:** upload a floor plan (PNG, JPEG, WebP or SVG) and drag each sensor to where it really is.
 
+The **Sensors** panel on the Overview lists every interface of this server and of each remote sensor with a status dot: green *working*, amber *needs attention* (a warning, such as 6 GHz being blocked by the regulatory domain, or an error the sensor is already retrying), red *error*, and grey *offline*. A badge in the panel header sums it up, and the pill at the bottom of the menu follows it. What you see is what the sensor reported in its latest upload, so an error disappears as soon as the sensor reports that it is gone. A sensor that has sent nothing for 90 seconds shows as *offline* with how long it has been quiet, and counts as down in the Prometheus `sniffowireless_sensor_up` metric.
+
 Every device gets a **room** (the sensor that hears it strongest, with 4 dB hysteresis so it doesn't flicker) and a "moved" event when that changes. It also gets an approximate **position**: the signal-weighted average of the three strongest sensors. With one sensor, devices are drawn in a ring around it by signal strength. Room-level accuracy is realistic with a sensor per room. Exact positions are not; walls, bodies and phone orientation easily change the signal by 10 dB.
 
 ### Wi-Fi channels from the web UI
@@ -1124,7 +1126,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | Many short-lived "devices" | These are randomized MACs. Tick **Hide randomized MACs**. |
 | Locked out of the UI | Set `WEB_USER`/`WEB_PASSWORD` and restart: that account is reset to admin with the given password. |
 | "Too many failed logins" | Wait 5 minutes (per-IP limit after 8 failures). |
-| Remote sensor shows offline | Check `docker logs sniffowireless-sensor` on the sensor; `SERVER_URL` must be reachable from it and the token must match the sensor. |
+| Remote sensor shows offline | It is shown as offline after 90 seconds without an upload. Check `docker logs sniffowireless-sensor` on the sensor; `SERVER_URL` must be reachable from it and the token must match the sensor. |
 | Everyone is in the same room on the map | You need at least two sensors with room names; one sensor can only tell distance. |
 | LAN page shows devices but no internet traffic | The interface only sees broadcasts and its own traffic. Connect it to a mirror/SPAN port or TAP (see [Ethernet monitoring](#ethernet-monitoring)). |
 | `ETH_INTERFACES` error "not found" | Use the host's interface name (`ip -br link`), and run with `network_mode: host`. |

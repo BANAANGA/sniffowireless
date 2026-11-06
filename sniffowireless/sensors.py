@@ -237,8 +237,8 @@ def routes(ctx):
             n += 1
         sts = [x for x in (sanitize.remote_status(s) for s in (body.get("status") or [])[:16]
                            if isinstance(body.get("status"), list)) if x]
-        for s in sts:
-            status.update(f"{sid}/{s['name']}", **{k: v for k, v in s.items() if k != "name"}, remote=sid)
+        if isinstance(body.get("status"), list):  # a batch without one leaves the last report as it was
+            status.replace_remote(sid, sts, now)
         dropped = sanitize.clean_num(body.get("dropped"), 0, 10 ** 15, True)
         ctx.execute("UPDATE sensors SET last_seen=?, info=? WHERE id=?",
                     (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts,
@@ -294,6 +294,7 @@ def routes(ctx):
         if s and s["token_id"]:
             ctx.execute("DELETE FROM api_tokens WHERE id=?", (s["token_id"],))
         ctx.execute("DELETE FROM sensors WHERE id=?", (sid,))
+        status.remove_remote(sid)
         chan = ctx.settings.get("channels")
         if chan["sensors"].pop(sid, None) is not None:  # its channel settings go with it
             ctx.settings.set("channels", chan)

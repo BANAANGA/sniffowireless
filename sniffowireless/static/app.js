@@ -261,14 +261,29 @@ function apiStatus() {
   }
   return statusMemo.p;
 }
+// How one interface / sensor entry is doing right now. The server reports a remote sensor that stopped sending as
+// state "offline", and an error it has cleared is simply no longer there.
+const HEALTH_TEXT = { ok: 'working', warn: 'needs attention', bad: 'error', off: 'offline' };
+function sensorHealth(x) {
+  if (x.state === 'offline') return 'off';
+  if (x.state === 'error') return 'bad';
+  if (x.error || x.warning || x.state === 'starting') return 'warn';
+  return 'ok';
+}
+function healthCounts(list) {
+  const c = { ok: 0, warn: 0, bad: 0, off: 0 };
+  list.forEach(x => { c[sensorHealth(x)]++; });
+  return c;
+}
 async function pollStatus() {
   const el = document.getElementById('live');
   try {
     const s = await apiStatus();
-    const errs = s.sensors.filter(x => x.state === 'error');
+    const c = healthCounts(s.sensors);
     const total = s.sensors.reduce((a, x) => a + (Number(x.pps) || 0), 0);
-    el.className = 'live ' + (errs.length ? 'err' : (s.sensors.length || s.demo ? 'ok' : ''));
-    el.textContent = s.demo ? 'demo mode' : errs.length ? `${errs.length} sensor error${errs.length > 1 ? 's' : ''}`
+    const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+    el.className = 'live ' + (c.bad ? 'err' : c.off || c.warn ? 'warn' : (s.sensors.length || s.demo ? 'ok' : ''));
+    el.textContent = s.demo ? 'demo mode' : c.bad ? plural(c.bad, 'sensor error') : c.off ? `${c.off} offline` : c.warn ? plural(c.warn, 'warning')
       : s.sensors.length ? `${s.sensors.length} sensor${s.sensors.length > 1 ? 's' : ''} · ${total.toFixed(0)} pkt/s` : 'no sensors';
   } catch { el.className = 'live err'; el.textContent = 'offline'; }
 }
@@ -360,7 +375,7 @@ async function viewOverview(params) {
       </section>
       <div class="stack">
         <section class="panel"><header><h2>System</h2><span class="faint small-text" id="sys-note"></span></header><div class="body" id="system"></div></section>
-        <section class="panel"><header><h2>Sensors</h2></header><div class="body flush" id="sensors"></div></section>
+        <section class="panel"><header><h2>Sensors</h2><span id="sensors-health"></span></header><div class="body flush" id="sensors"></div></section>
       </div>
       <section class="panel span-3">
         <header><h2>Interface activity</h2><span class="faint small-text">Packets/sec per capturing interface, live over the last ${Math.round(IFACE_HIST_MAX * 10 / 60)} minutes</span></header>
@@ -460,10 +475,14 @@ async function viewOverview(params) {
     const s = await apiStatus();
     renderSystem(s.system);
     const list = s.sensors;
+    const hc = healthCounts(list);
+    document.getElementById('sensors-health').innerHTML = !list.length ? '' : [
+      hc.bad ? `<span class="tag bad">${hc.bad} error${hc.bad > 1 ? 's' : ''}</span>` : '', hc.warn ? `<span class="tag warn">${hc.warn} warning${hc.warn > 1 ? 's' : ''}</span>` : '',
+      hc.off ? `<span class="tag">${hc.off} offline</span>` : '', !hc.bad && !hc.warn && !hc.off ? '<span class="tag on">all working</span>' : ''].filter(Boolean).join(' ');
     document.getElementById('sensors').innerHTML = (list.length ? list.map(x => `<div class="sensor">
-      <div><div><span class="state-dot ${x.state === 'error' ? '' : 'on'}"></span><b>${esc(x.name)}</b>
+      <div><div><span class="state-dot ${sensorHealth(x)}" title="${HEALTH_TEXT[sensorHealth(x)]}"></span><b>${esc(x.name)}</b>
       ${x.mon && x.mon !== x.iface ? `<span class="faint mono"> → ${esc(x.mon)}</span>` : ''}</div>
-      ${x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${Array.isArray(x.bands) ? ' · ' + x.bands.map(b => esc(b) + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>
+      ${x.state === 'offline' ? `<div class="muted">offline · no report for ${dur(x.quiet_for || 0)}</div>` : x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${Array.isArray(x.bands) ? ' · ' + x.bands.map(b => esc(b) + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>
       ${x.band_frames && Array.isArray(x.bands) ? `<div class="faint small-text">frames ${x.bands.map(b => `${esc(b)}G ${num((x.band_frames || {})[b] || 0)}`).join(' · ')}</div>` : ''}
       ${x.relabelled ? `<div class="faint small-text">${num(x.relabelled)} frames had a wrong band from the driver (corrected)</div>` : ''}`}
       ${x.warning ? `<div class="warn-text small-text">${esc(x.warning)}</div>` : ''}</div>
