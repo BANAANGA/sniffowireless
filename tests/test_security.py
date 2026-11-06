@@ -840,3 +840,71 @@ def test_ignore_networks_quick_endpoint(env):
     assert ig["macs"] == ["aa:bb:cc:dd:ee:ff"] and {e["ssid"] for e in ig["ssids"]} == {"Neighbour", "Another"}
     many = [f"net-{i}" for i in range(500)]
     assert c.post(url, json={"ssids": many}, headers=H).status_code == 400
+
+
+def test_restore_chooser_api(env, tmp_path, monkeypatch):
+    import os as _os
+    from sniffowireless import backup as backup_mod
+    ctx, c = env
+    monkeypatch.setattr(backup_mod, "RESTART_DELAY", 0)
+    kills = []
+    monkeypatch.setattr(_os, "kill", lambda pid, sig: kills.append(sig))
+    ctx.store.process({"t": "wifi_client", "ts": time.time(), "mac": "a4:83:e7:00:00:01", "frame": "data"})
+    ctx.store.flush()
+    with ctx.wdb() as w:
+        w.execute("INSERT INTO groups(name, kind) VALUES('Sam', 'person')")
+    ctx.settings.set("networks", {"ssids": ["HomeNet"], "trusted_bssids": []})
+    name = _os.path.basename(backup_mod.create_full_backup(ctx))
+    data = open(_os.path.join(ctx.cfg.data_dir, "backups", name), "rb").read()
+    staged = _os.path.join(ctx.cfg.data_dir, "restore-pending.tar.gz")
+    sidecar = _os.path.join(ctx.cfg.data_dir, "restore-pending.json")
+    upload = _os.path.join(ctx.cfg.data_dir, "restore-upload.tar.gz")
+    pick = "/api/backup/restore-selected"
+
+    # Admin only.
+    for method, url, kw in (("get", f"/api/backup/files/{name}/sections", {}), ("post", "/api/backup/inspect", {"content": data}),
+                            ("post", pick, {"json": {"source": name, "sections": ["groups"]}}),
+                            ("post", "/api/backup/config/inspect", {"content": b"{}"})):
+        assert getattr(c, method)(url, headers=H, **kw).status_code == 401
+    c.post("/api/auth/login", json={"username": "viewer", "password": PW}, headers=H)
+    assert c.get(f"/api/backup/files/{name}/sections").status_code == 403
+    assert c.post(pick, json={"source": name, "sections": ["groups"]}, headers=H).status_code == 403
+    c.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H)
+
+    # What a stored backup, and an uploaded one, holds.
+    info = c.get(f"/api/backup/files/{name}/sections").json()
+    assert {s["id"]: s["count"] for s in info["sections"]}["groups"] == 1
+    assert c.get("/api/backup/files/nope.tar.gz/sections").status_code == 400
+    assert c.post("/api/backup/inspect", content=b"not a backup", headers=H).status_code == 400 and not _os.path.exists(upload)
+    up = c.post("/api/backup/inspect", content=data, headers=H).json()
+    assert up["sections"] == info["sections"] and _os.path.exists(upload)
+
+    # Choosing: nothing / unknown / missing source are refused; a real choice is staged with its sidecar.
+    assert c.post(pick, json={"source": name, "sections": []}, headers=H).status_code == 400
+    assert c.post(pick, json={"source": name, "sections": ["bogus"]}, headers=H).status_code == 400
+    assert c.post(pick, json={"source": name, "sections": "everything"}, headers=H).status_code == 422
+    assert c.post(pick, json={"source": "missing.tar.gz", "sections": ["groups"]}, headers=H).status_code == 400  # not a backup name
+    assert c.post(pick, json={"source": "sniffowireless-20200101-000000.tar.gz", "sections": ["groups"]}, headers=H).status_code == 404
+    assert not _os.path.exists(staged)
+    r = c.post(pick, json={"source": name, "sections": ["groups", "labels", "groups"]}, headers=H)
+    assert r.status_code == 200 and r.json()["restarting"]
+    backup_mod._restart_thread.join()
+    assert kills and json.load(open(sidecar))["sections"] == ["groups", "labels"] and _os.path.exists(staged)
+    assert _os.path.exists(_os.path.join(ctx.cfg.data_dir, "backups", name))  # a stored backup is copied, not used up
+
+    # An uploaded backup is moved into place; "all" is a whole-database restore, so it leaves no sidecar.
+    assert c.post(pick, json={"source": "upload", "sections": "all"}, headers=H).status_code == 200
+    backup_mod._restart_thread.join()
+    assert _os.path.exists(staged) and not _os.path.exists(sidecar) and not _os.path.exists(upload)
+    assert c.post(pick, json={"source": "upload", "sections": ["groups"]}, headers=H).status_code == 404
+
+    # The configuration backup has the same chooser, applied at once.
+    cfg = c.get("/api/backup/config").content
+    secs = {s["id"]: s["count"] for s in c.post("/api/backup/config/inspect", content=cfg, headers=H).json()["sections"]}
+    assert secs["groups"] == 1 and secs["settings"] >= 1 and "history" not in secs
+    ctx.settings.set("networks", {"ssids": ["Changed"], "trusted_bssids": []})
+    assert c.post("/api/backup/config?sections=bogus", content=cfg, headers=H).status_code == 400
+    r = c.post("/api/backup/config?sections=groups", content=cfg, headers=H).json()
+    assert r["restored"] == {"groups": 1} and ctx.settings.get("networks")["ssids"] == ["Changed"]
+    assert c.post("/api/backup/config?sections=settings", content=cfg, headers=H).json()["restored"] == {}
+    assert ctx.settings.get("networks")["ssids"] == ["HomeNet"]

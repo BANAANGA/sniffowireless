@@ -68,16 +68,40 @@ async function loadTrackers(el) {
 }
 
 // ===================================================================== settings → backup
+/* Asks what to restore. `sections` are [{id, label, hint, count, unit}] from the server; `everything` (optional) adds the
+   choice of replacing the whole database. Calls onSubmit('all') or onSubmit([ids]); a throw is shown in the dialog. */
+function restoreChooser({ title, intro, sections, everything, submit, onSubmit }) {
+  const form = openModal(title, `${intro ? `<p class="muted" style="margin-top:0">${intro}</p>` : ''}
+    ${everything ? `<label class="check"><input type="radio" name="mode" value="all"> <b>Everything</b> <span class="faint">${esc(everything)}</span></label>
+      <label class="check"><input type="radio" name="mode" value="pick" checked> <b>Only what I choose</b> <span class="faint">leaves everything else as it is</span></label>` : ''}
+    <div id="rc-list" style="margin:10px 0">${sections.map(s => `<label class="check" style="align-items:flex-start"><input type="checkbox" name="sec" value="${esc(s.id)}" ${s.count ? '' : 'disabled'}>
+      <span><b>${esc(s.label)}</b> <span class="faint">${s.count ? `${num(s.count)} ${s.count === 1 ? (s.unit === 'files' ? 'file' : 'entry') : esc(s.unit)}` : 'none in this backup'}</span>
+        <span class="faint small-text" style="display:block">${esc(s.hint)}</span></span></label>`).join('')}</div>
+    <div class="row"><button type="button" class="btn small ghost" id="rc-all">Select all</button><button type="button" class="btn small ghost" id="rc-none">Select none</button></div>`,
+  async f => {
+    const all = everything && f.querySelector('[name=mode]:checked').value === 'all';
+    const picked = [...f.querySelectorAll('[name=sec]:checked')].map(x => x.value);
+    if (!all && !picked.length) throw new Error('Choose at least one thing to restore');
+    await onSubmit(all ? 'all' : picked);
+  }, { submit, danger: true });
+  const boxes = () => [...form.querySelectorAll('[name=sec]:not(:disabled)')];
+  const mode = () => { const all = everything && form.querySelector('[name=mode]:checked').value === 'all'; form.querySelector('#rc-list').style.opacity = all ? .4 : 1; boxes().forEach(b => { b.disabled = all; }); };
+  form.querySelector('#rc-all').onclick = () => boxes().forEach(b => { b.checked = true; });
+  form.querySelector('#rc-none').onclick = () => boxes().forEach(b => { b.checked = false; });
+  form.querySelectorAll('[name=mode]').forEach(r => r.onchange = mode);
+  return form;
+}
+
 SETTINGS_VIEWS.backup = async function (el) {
   const b = await api('/api/backup/list');
   const s = b.settings;
   el.innerHTML = `<section class="panel"><header><h2>Configuration backup</h2></header><div class="body">
-      <p class="muted">Settings, my networks, ignore list, labels, groups, alert rules, notification channels, sensors and users (password hashes) — no measurement history. Small; restoring it applies immediately.</p>
+      <p class="muted">Settings, my networks, ignore list, labels, groups, alert rules, notification channels, sensors and users (password hashes) — no measurement history. Small; you choose what to restore, and it applies immediately.</p>
       <div class="row"><label class="check"><input type="checkbox" id="cfg-secrets"> Include notification secrets (tokens, passwords)</label></div>
       <div class="row" style="margin-top:8px"><button class="btn" id="cfg-dl">Download configuration</button>
         <label class="btn">Restore configuration…<input type="file" id="cfg-up" accept=".json,application/json" hidden></label></div></div></section>
     <section class="panel" style="margin-top:16px"><header><h2>Full backups</h2><button class="btn primary" id="full-now">Back up now</button></header><div class="body">
-      <p class="muted">Everything: the whole database (history, sessions, traffic, settings) plus the floor plan, as a <code>.tar.gz</code>. Taken safely while sniffowireless runs. Restoring replaces the current database (a copy is kept in <code>data/backups</code>) and restarts sniffowireless.</p>
+      <p class="muted">All data: the whole database (history, sessions, traffic, settings, users), the floor plan and icon, and handshake captures, as a <code>.tar.gz</code>. Taken safely while sniffowireless runs. Restoring replaces the current database (a copy is kept in <code>data/backups</code>) and restarts sniffowireless.</p>
       ${b.staged ? '<div class="callout">A restore is staged and will be applied when sniffowireless restarts.</div>' : ''}
       <form id="sched" class="row" style="margin-bottom:12px"><label class="check"><input type="checkbox" name="enabled" ${s.enabled ? 'checked' : ''}> Daily at</label>
         <input type="number" name="hour" min="0" max="23" value="${s.hour}" style="width:70px"><span class="muted">:00, keep</span>
@@ -92,10 +116,19 @@ SETTINGS_VIEWS.backup = async function (el) {
   el.querySelector('#cfg-dl').onclick = () => { location.href = `/api/backup/config?secrets=${el.querySelector('#cfg-secrets').checked ? 1 : 0}`; };
   el.querySelector('#cfg-up').onchange = async e => {
     const f = e.target.files[0];
-    if (!f || !confirm('Replace settings, labels, groups, alert rules, notification channels, sensors and users with this backup?')) return;
-    const r = await fetch('/api/backup/config', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sniffowireless': '1' }, body: f });
-    const d = await r.json().catch(() => ({}));
-    if (r.ok) toast('Configuration restored: ' + Object.entries(d.restored).map(([k, v]) => `${v} ${k}`).join(', ')); else toast(d.detail || 'Restore failed', true);
+    e.target.value = '';
+    if (!f) return;
+    const hdr = { 'Content-Type': 'application/json', 'X-Sniffowireless': '1' };
+    const ins = await fetch('/api/backup/config/inspect', { method: 'POST', headers: hdr, body: f });
+    const info = await ins.json().catch(() => ({}));
+    if (!ins.ok) { toast(info.detail || 'Not a configuration backup', true); return; }
+    restoreChooser({ title: 'Restore configuration', intro: 'Each part you choose replaces what is set now; the rest stays as it is. It applies immediately.',
+      sections: info.sections, submit: 'Restore', onSubmit: async sel => {
+        const r = await fetch(`/api/backup/config?sections=${encodeURIComponent(sel.join(','))}`, { method: 'POST', headers: hdr, body: f });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || 'Restore failed');
+        toast('Restored: ' + (Object.entries(d.restored).map(([k, v]) => `${v} ${k}`).join(', ') || 'settings'));
+      } });
   };
   el.querySelector('#full-now').onclick = async e => {
     e.target.disabled = true;
@@ -110,15 +143,22 @@ SETTINGS_VIEWS.backup = async function (el) {
     openModal('Restoring…', '<p>The backup was verified and sniffowireless is restarting to apply it. This page reloads in a few seconds.</p>', null);
     const wait = setInterval(async () => { try { if ((await fetch('/api/health')).ok) { clearInterval(wait); location.href = '/login'; } } catch { /* still down */ } }, 2000);
   };
+  const chooseRestore = (name, source, info) => restoreChooser({ title: `Restore from ${name}`,
+    intro: `Backup made ${dt(info.created)}. sniffowireless restarts to apply it, and keeps a copy of the current database first.`,
+    sections: info.sections, everything: 'replaces ALL current data with the backup', submit: 'Restore and restart',
+    onSubmit: async sel => { await send('POST', '/api/backup/restore-selected', { source, sections: sel }); restarting(); } });
   el.querySelectorAll('[data-restore]').forEach(x => x.onclick = async () => {
-    if (!confirm(`Replace ALL current data with ${x.dataset.restore}? sniffowireless will restart.`)) return;
-    try { await send('POST', `/api/backup/files/${enc(x.dataset.restore)}/restore`); restarting(); } catch (err) { toast(err.message, true); }
+    try { chooseRestore(x.dataset.restore, x.dataset.restore, await api(`/api/backup/files/${enc(x.dataset.restore)}/sections`)); } catch (err) { toast(err.message, true); }
   });
   el.querySelectorAll('[data-del]').forEach(x => x.onclick = async () => { if (confirm('Delete this backup?')) { await send('DELETE', `/api/backup/files/${enc(x.dataset.del)}`); reload(); } });
   el.querySelector('#full-up').onchange = async e => {
     const f = e.target.files[0];
-    if (!f || !confirm(`Replace ALL current data with ${f.name}? sniffowireless will restart.`)) return;
-    const r = await fetch('/api/backup/restore', { method: 'POST', headers: { 'Content-Type': 'application/gzip', 'X-Sniffowireless': '1' }, body: f });
-    if (r.ok) restarting(); else toast((await r.json().catch(() => ({}))).detail || 'Restore failed', true);
+    e.target.value = '';
+    if (!f) return;
+    toast('Reading the backup…');
+    const r = await fetch('/api/backup/inspect', { method: 'POST', headers: { 'Content-Type': 'application/gzip', 'X-Sniffowireless': '1' }, body: f });
+    const info = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(info.detail || 'Not a valid backup', true); return; }
+    chooseRestore(f.name, 'upload', info);
   };
 };
