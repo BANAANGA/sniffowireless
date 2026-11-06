@@ -14,7 +14,7 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 - **Interference detection:** non-Wi-Fi interference episodes (microwave ovens, video senders, baby monitors, radar) found from noise-floor and retry anomalies against each channel's baseline
 - **DFS / radar detection:** passively spots access points that announce a channel switch or leave a 5 GHz DFS channel (52–144) because of radar, per channel, with alerts for your own networks
 - **Unknown tracker detection:** AirTags/Find My, Tiles and SmartTags that move with a person ("possibly following") raise a high-severity alert
-- **Backup & restore:** configuration export/import, full database backups (manual or scheduled), one-click restore
+- **Backup & restore:** configuration export/import, full backups of all data (manual or scheduled), and restore of everything or only the parts you choose
 - **Wi-Fi health:** per-channel airtime, retries and noise with channel recommendations; client health for your own networks (band use, roaming and ping-pong, sticky clients, disconnect reasons)
 - **Multiple sensors and a map:** remote Raspberry Pi sensors forward to one server; each device gets a room and an approximate position on your floor plan
 - **Occupancy reports:** estimated people per hour, visitors, dwell time, a printable/PDF report and a weekly email
@@ -826,9 +826,13 @@ Every device gets a **room** (the sensor that hears it strongest, with 4 dB hyst
   - sensors, without their tokens: re-create those
   - users, as password hashes
 
-  It contains no measurement history and is small. Restoring it replaces those items and applies immediately, which makes it handy for moving to a new server or putting a configuration under version control.
-- **Full backup (`.tar.gz`):** the whole database plus the floor plan. It's taken with SQLite's online backup, so it's consistent while sniffowireless keeps capturing. *Back up now* writes one to `data/backups/`, and **daily scheduled backups** with retention can be switched on.
-- **Restore a full backup:** pick one from the list or upload a file. sniffowireless checks the archive (format, safe paths, database integrity), stages it, and restarts. On startup it swaps the database in and keeps the previous one as `data/backups/pre-restore-….db`. The restart relies on Docker's restart policy, which the compose file and the `docker run` example set (`restart: unless-stopped`).
+  It contains no measurement history and is small. When you restore it you **choose which parts** to bring back (a list with how much of each the file holds); those replace what is set now and apply immediately, which makes it handy for moving to a new server or putting a configuration under version control.
+- **Full backup (`.tar.gz`):** all data: the whole database (history, sessions, traffic, settings, users, API tokens), the floor plan and icon, and the handshake captures. It's taken with SQLite's online backup, so it's consistent while sniffowireless keeps capturing. *Back up now* writes one to `data/backups/`, and **daily scheduled backups** with retention can be switched on.
+- **Restore a full backup:** pick one from the list or upload a file. sniffowireless checks the archive (format, safe paths, database integrity), shows what it holds, and asks what to restore:
+  - **Everything** replaces the whole database with the backup's.
+  - **Only what I choose** restores just the parts you tick and leaves the rest as it is: settings, device labels & links, groups, alert rules, notification channels, remote sensors, users, API tokens, device history, security findings & alert log, LAN / Zigbee / channel data, floor plan & icon, and handshake captures. Labels and groups, and alert rules and notification channels, refer to each other, so restore them together (links to anything left out are cleared rather than left dangling), and restoring *Users* never leaves you without an account.
+
+  Either way it stages the restore and restarts; on startup it applies it, keeping the previous database as `data/backups/pre-restore-….db`. The restart relies on Docker's restart policy, which the compose file and the `docker run` example set (`restart: unless-stopped`).
 
 Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since a backup on the same disk doesn't survive a dead disk.
 
@@ -898,9 +902,11 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/interference?days=7` | Interference episodes |
 | `GET /api/dfs?days=7` | Radar hits per DFS channel, channel switch history and access points on DFS channels |
 | `GET /api/trackers` | Tracker tags and who they move with |
-| `GET /api/backup/config` · `POST /api/backup/config` | Download / restore the configuration (admin) |
+| `GET /api/backup/config` · `POST /api/backup/config` | Download / restore the configuration (admin); `POST /api/backup/config/inspect` lists what a file holds, and `?sections=a,b` restores only those parts |
 | `POST /api/backup/full` · `GET /api/backup/list` · `GET /api/backup/files/{name}` | Create, list and download full backups (admin) |
-| `POST /api/backup/files/{name}/restore` · `POST /api/backup/restore` | Restore a stored / uploaded full backup, then restart (admin) |
+| `GET /api/backup/files/{name}/sections` · `POST /api/backup/inspect` | List what a stored / uploaded full backup holds, per section (admin) |
+| `POST /api/backup/restore-selected` | Restore a stored (`source`: its name) or just-inspected (`"upload"`) backup, all (`"sections": "all"`) or only the listed sections, then restart (admin) |
+| `POST /api/backup/files/{name}/restore` · `POST /api/backup/restore` | Restore a whole stored / uploaded full backup, then restart (admin) |
 | `GET /api/logs?after=` · `GET /api/logs/stream` · `PUT /api/logs/level` | Recent log lines, live log stream (Server-Sent Events) and runtime log level (admin) |
 | `GET /metrics` | Prometheus metrics |
 | `POST /api/ingest` | Remote sensors push observations here (sensor token) |

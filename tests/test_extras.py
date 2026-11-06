@@ -4,7 +4,8 @@ import time
 
 import pytest
 
-from sniffowireless.backup import apply_staged_restore, create_full_backup, export_config, import_config, validate_full_backup
+from sniffowireless.backup import (apply_staged_restore, config_sections, create_full_backup, export_config, import_config,
+                                   inspect_full_backup, restore_sections, validate_full_backup)
 from sniffowireless.config import Config
 from sniffowireless.main import build
 from sniffowireless.trackers import score
@@ -134,6 +135,130 @@ def test_full_backup_and_staged_restore(ctx, tmp_path):
     assert restored.one("SELECT mac FROM devices")["mac"] == PHONE
     assert os.path.exists(os.path.join(target.data_dir, "floorplan.svg"))
     assert not os.path.exists(os.path.join(target.data_dir, "restore-pending.tar.gz"))
+
+
+def _two_servers(tmp_path):
+    """A source with data worth restoring (and its full backup), and a different target that already has its own."""
+    src = build(Config(db_path=str(tmp_path / "s.db"), data_dir=str(tmp_path / "s")))
+    seed(src)
+    src.store.process({"t": "wifi_client", "ts": time.time(), "mac": PHONE, "frame": "probe", "rssi": -50})
+    src.store.flush()
+    src.store.conn.execute("ANALYZE")  # creates SQLite's own sqlite_stat1, which must not show up as "other data"
+    os.makedirs(os.path.join(src.cfg.data_dir, "handshakes"), exist_ok=True)
+    with open(os.path.join(src.cfg.data_dir, "handshakes", "abc.pcap"), "wb") as fh:
+        fh.write(b"pcap")
+    with open(os.path.join(src.cfg.data_dir, "floorplan.svg"), "w") as fh:
+        fh.write("<svg/>")
+    path = create_full_backup(src)
+    tcfg = Config(db_path=str(tmp_path / "t.db"), data_dir=str(tmp_path / "t"))
+    tgt = build(tcfg)
+    with tgt.wdb() as c:
+        c.execute("INSERT INTO groups(name, kind) VALUES('Mine', 'thing')")
+        c.execute("INSERT INTO device_meta(mac, label, known) VALUES('aa:aa:aa:00:00:01', 'Mine', 0)")
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('target', 'x$1$aa$bb', 'admin', 0)")
+    tgt.settings.set("networks", {"ssids": ["TargetNet"], "trusted_bssids": []})
+    tgt.store.process({"t": "wifi_client", "ts": time.time(), "mac": "a4:83:e7:aa:00:01", "frame": "probe"})
+    tgt.store.flush()
+    return src, path, tgt, tcfg
+
+
+def test_backup_lists_what_it_holds(tmp_path):
+    src, path, _, _ = _two_servers(tmp_path)
+    info = {s["id"]: s for s in inspect_full_backup(path)["sections"]}
+    assert info["labels"]["count"] == 1 and info["groups"]["count"] == 1 and info["users"]["count"] == 1
+    assert info["history"]["count"] >= 2 and info["files"]["count"] == 1 and info["handshakes"]["count"] == 1
+    assert info["tokens"]["count"] == 0 and "other" not in info
+    # A backup from before the counts were recorded is counted by looking inside it.
+    import json as _json, tarfile, io
+    old = str(tmp_path / "old.tar.gz")
+    with tarfile.open(path) as tin, tarfile.open(old, "w:gz") as tout:
+        for m in tin.getmembers():
+            if m.name == "manifest.json":
+                man = _json.load(tin.extractfile(m))
+                man.pop("sections")
+                data = _json.dumps(man).encode()
+                m.size = len(data)
+                tout.addfile(m, io.BytesIO(data))
+            else:
+                tout.addfile(m, tin.extractfile(m) if m.isfile() else None)
+    assert {s["id"]: s["count"] for s in inspect_full_backup(old)["sections"]} == {k: v["count"] for k, v in info.items()}
+
+
+def test_restore_only_chosen_sections(tmp_path):
+    src, path, tgt, tcfg = _two_servers(tmp_path)
+    q = lambda sql: tgt.rows(sql)
+    # Labels and groups only: replaced by the backup's; everything else of the target's own is left alone.
+    done = restore_sections(tcfg, path, ["labels", "groups"])
+    assert done == {"labels": 1, "groups": 1}
+    assert [r["label"] for r in q("SELECT label FROM device_meta")] == ["Sam phone"]
+    assert [r["name"] for r in q("SELECT name FROM groups")] == ["Sam"]
+    assert q("SELECT group_id FROM device_meta")[0]["group_id"] == q("SELECT id FROM groups")[0]["id"]
+    assert [r["username"] for r in q("SELECT username FROM users")] == ["target"]
+    assert json.loads(q("SELECT value FROM settings WHERE key='networks'")[0]["value"])["ssids"] == ["TargetNet"]
+    assert [r["mac"] for r in q("SELECT mac FROM devices")] == ["a4:83:e7:aa:00:01"]
+    assert not os.path.exists(os.path.join(tcfg.data_dir, "floorplan.svg"))
+    assert any(f.startswith("pre-restore-") for f in os.listdir(os.path.join(tcfg.data_dir, "backups")))
+
+    # Labels without their groups: the group links are cleared rather than left pointing at nothing.
+    with tgt.wdb() as c:
+        c.execute("DELETE FROM groups")
+    restore_sections(tcfg, path, ["labels"])
+    assert q("SELECT group_id FROM device_meta")[0]["group_id"] is None
+
+    # Users: replaced, and sessions of accounts that no longer exist are dropped. Settings and files come across too.
+    restore_sections(tcfg, path, ["users", "settings", "files", "handshakes"])
+    assert [r["username"] for r in q("SELECT username FROM users")] == ["admin"]
+    assert json.loads(q("SELECT value FROM settings WHERE key='networks'")[0]["value"])["ssids"] == ["HomeNet"]
+    assert os.path.exists(os.path.join(tcfg.data_dir, "floorplan.svg"))
+    assert open(os.path.join(tcfg.data_dir, "handshakes", "abc.pcap"), "rb").read() == b"pcap"
+
+    # History: the devices are the backup's, the hourly roll-up is rebuilt for them, and identification is redone.
+    restore_sections(tcfg, path, ["history"])
+    assert [r["mac"] for r in q("SELECT mac FROM devices")] == [PHONE]
+    assert q("SELECT COUNT(*) n FROM presence_hours")[0]["n"] == 1
+    assert not q("SELECT 1 FROM meta WHERE key='ident_version'")
+
+
+def test_restore_users_never_empties_the_accounts(tmp_path):
+    src, _, tgt, tcfg = _two_servers(tmp_path)
+    with src.wdb() as c:
+        c.execute("DELETE FROM users")
+    path = create_full_backup(src)
+    restore_sections(tcfg, path, ["users"])
+    assert [r["username"] for r in tgt.rows("SELECT username FROM users")] == ["target"]
+
+
+def test_staged_partial_restore_at_startup(tmp_path):
+    import shutil
+    _, path, tgt, tcfg = _two_servers(tmp_path)
+    staged = os.path.join(tcfg.data_dir, "restore-pending.tar.gz")
+    shutil.copyfile(path, staged)
+    with open(os.path.join(tcfg.data_dir, "restore-pending.json"), "w") as fh:
+        json.dump({"sections": ["groups", "bogus"]}, fh)
+    assert apply_staged_restore(tcfg)
+    assert [r["name"] for r in tgt.rows("SELECT name FROM groups")] == ["Sam"]
+    assert tgt.rows("SELECT label FROM device_meta")[0]["label"] == "Mine"  # not chosen: untouched
+    assert not os.path.exists(staged) and not os.path.exists(os.path.join(tcfg.data_dir, "restore-pending.json"))
+    # An uploaded backup nobody chose from is cleaned up at startup, and a stray sidecar doesn't linger.
+    open(os.path.join(tcfg.data_dir, "restore-upload.tar.gz"), "wb").write(b"x")
+    open(os.path.join(tcfg.data_dir, "restore-pending.json"), "w").write("{}")
+    assert not apply_staged_restore(tcfg)
+    assert not os.path.exists(os.path.join(tcfg.data_dir, "restore-upload.tar.gz"))
+    assert not os.path.exists(os.path.join(tcfg.data_dir, "restore-pending.json"))
+
+
+def test_config_restore_only_chosen_sections(ctx, tmp_path):
+    seed(ctx)
+    data = json.loads(json.dumps(export_config(ctx)))
+    counts = {s["id"]: s["count"] for s in config_sections(data)}
+    assert counts["labels"] == 1 and counts["groups"] == 1 and counts["settings"] >= 1 and counts["notifiers"] == 1
+    other = build(Config(db_path=str(tmp_path / "o.db"), data_dir=str(tmp_path / "o")))
+    assert import_config(other, data, {"labels"}) == {"device_meta": 1}
+    assert other.one("SELECT label, group_id FROM device_meta") == {"label": "Sam phone", "group_id": None}  # its group wasn't restored
+    assert not other.rows("SELECT 1 FROM groups") and not other.rows("SELECT 1 FROM notifiers")
+    assert other.settings.get("networks")["ssids"] == []
+    assert import_config(other, data, {"settings", "groups"}) == {"groups": 1}
+    assert other.settings.get("networks")["ssids"] == ["HomeNet"]
 
 
 def test_bad_backup_rejected(tmp_path):

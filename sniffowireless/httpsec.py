@@ -12,7 +12,7 @@ UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sand
 DOCS_PATHS = ("/api/docs", "/api/openapi.json")  # Swagger UI needs inline script + its CDN
 
 MB = 1024 * 1024
-BODY_LIMITS = [("/api/backup/restore", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB), ("/api/appearance/icon", 1 * MB),
+BODY_LIMITS = [("/api/backup/restore", 4096 * MB), ("/api/backup/inspect", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB), ("/api/appearance/icon", 1 * MB),
                ("/api/backup/config", 16 * MB)]
 DEFAULT_BODY_LIMIT = 1 * MB
 # Query parameters that size work on the server: (min, max)
