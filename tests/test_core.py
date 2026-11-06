@@ -468,3 +468,56 @@ def test_tracker_sound_requires_real_hardware(monkeypatch):
 
     with pt.raises((SoundError, OSError, PermissionError)):
         play_sound("hci99", "aa:bb:cc:dd:ee:ff")
+
+
+def _sensor(iface="wlanT"):
+    from sniffowireless import wifi
+    return wifi.WifiSensor(iface, [2412], Config(), store=None)
+
+
+def test_capture_loop_reports_a_sniff_that_ends_early(monkeypatch):
+    """scapy swallows 'Network is down' and returns from sniff(); that used to look like a normal end of the window, so
+    the loop spun at full speed while the status said 'capturing'."""
+    import threading
+    from sniffowireless import status, wifi
+    s = _sensor("wlanDown")
+    s.stop = threading.Event()
+    calls = []
+    monkeypatch.setattr(wifi, "ensure_monitor", lambda iface, allow: iface)
+    monkeypatch.setattr(wifi, "sniff", lambda **kw: calls.append(1))  # returns at once, like a dead socket
+    s.stop.wait = lambda timeout=None: s.stop.set() or True            # the retry pause: let the loop end after one
+    s._capture_loop()
+    assert len(calls) == 1
+    st = status.SENSORS["wifi:wlanDown"]
+    assert st["state"] == "error" and "stopped after" in st["error"] and "wlanDown" in st["error"]
+    assert s.mon is None  # the channel hopper pauses until the next attempt
+
+
+def test_capture_loop_full_window_is_not_an_error(monkeypatch):
+    import threading
+    from sniffowireless import status, wifi
+    s = _sensor("wlanOk")
+    s.stop = threading.Event()
+    clock = [100.0]
+    monkeypatch.setattr(wifi.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(wifi, "ensure_monitor", lambda iface, allow: iface)
+
+    def listen(**kw):
+        clock[0] += wifi.CAPTURE_WINDOW  # listened for the whole window
+        s.stop.set()
+    monkeypatch.setattr(wifi, "sniff", listen)
+    s._capture_loop()
+    st = status.SENSORS["wifi:wlanOk"]
+    assert st["state"] == "capturing" and not st["error"]
+
+
+def test_ensure_monitor_says_why_the_link_wont_come_up(monkeypatch):
+    import pytest
+    from sniffowireless import wifi
+    monkeypatch.setattr(wifi.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(wifi, "iface_type", lambda iface: "monitor")
+    monkeypatch.setattr(wifi, "run_cmd", lambda *a: (2, "RTNETLINK answers: Operation not possible due to RF-kill"))
+    with pytest.raises(RuntimeError, match="could not bring wlanX up.*RF-kill"):
+        wifi.ensure_monitor("wlanX")
+    monkeypatch.setattr(wifi, "run_cmd", lambda *a: (0, ""))
+    assert wifi.ensure_monitor("wlanX") == "wlanX"
