@@ -249,20 +249,27 @@ def iface_type(iface):
     return None
 
 
+def bring_up(iface):
+    """Set the link up, and say why when it can't be (rfkill-blocked, adapter gone) instead of capturing nothing."""
+    rc, out = run_cmd("ip", "link", "set", iface, "up")
+    if rc != 0:
+        raise RuntimeError(f"could not bring {iface} up: {out or 'ip link failed'}")
+
+
 def ensure_monitor(iface, allow_change=True):
     """Return the name of a monitor-mode interface for `iface`."""
     if not os.path.exists(f"/sys/class/net/{iface}"):
         raise RuntimeError(f"interface {iface} not found (is the adapter plugged in and the "
                            f"container running with network_mode: host?)")
     if iface_type(iface) == "monitor":
-        run_cmd("ip", "link", "set", iface, "up")
+        bring_up(iface)
         return iface
     if not allow_change:
         raise RuntimeError(f"{iface} is not in monitor mode and WIFI_SET_MONITOR=0")
     log.info("Switching %s to monitor mode", iface)
     run_cmd("ip", "link", "set", iface, "down")
     rc, out = run_cmd("iw", "dev", iface, "set", "type", "monitor")
-    run_cmd("ip", "link", "set", iface, "up")
+    run_cmd("ip", "link", "set", iface, "up")  # a failure here shows up below as "could not set monitor mode"
     if rc == 0 and iface_type(iface) == "monitor":
         return iface
     log.warning("Could not set %s to monitor mode directly (%s); trying a virtual interface", iface, out)
@@ -275,7 +282,7 @@ def ensure_monitor(iface, allow_change=True):
         rc, out = run_cmd("iw", "phy", phy, "interface", "add", mon, "type", "monitor")
         if rc != 0:
             raise RuntimeError(f"driver refused monitor mode on {iface}: {out}")
-    run_cmd("ip", "link", "set", mon, "up")
+    bring_up(mon)
     return mon
 
 
@@ -344,6 +351,9 @@ def regulatory_warning(country, wanted, want_6ghz):
         return (f"WIFI_REGDOMAIN={wanted} was not applied: the kernel reports country {country}. Check "
                 "'iw reg get' on the host (another tool may be setting the country).")
     return None
+
+
+CAPTURE_WINDOW = 30  # seconds one sniff() call listens before the loop re-checks the interface
 
 
 class WifiSensor:
@@ -460,8 +470,16 @@ class WifiSensor:
             try:
                 self.mon = ensure_monitor(self.iface, self.cfg.wifi_set_monitor)
                 status.update(self.name, state="capturing", mon=self.mon, error=None)
-                sniff(iface=self.mon, prn=self._handle, store=False, timeout=30,
+                t0 = time.monotonic()
+                sniff(iface=self.mon, prn=self._handle, store=False, timeout=CAPTURE_WINDOW,
                       stop_filter=lambda _p: self.stop.is_set())
+                # When the interface goes down (adapter reset, USB hiccup, NetworkManager) scapy only logs
+                # "Socket ... failed with 'Network is down'" and sniff() returns early. That isn't a normal end of the
+                # window: report it and wait, instead of looping at full speed while showing "capturing".
+                took = time.monotonic() - t0
+                if not self.stop.is_set() and took < CAPTURE_WINDOW - 3:
+                    raise RuntimeError(f"capture on {self.mon} stopped after {took:.0f}s: the interface went down or "
+                                       f"the adapter was reset. Retrying")
             except Exception as e:
                 self.mon = None
                 log.error("%s: %s", self.name, e)
