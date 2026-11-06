@@ -1,7 +1,7 @@
 name: Docker Image CI
 
 # Pull requests only test that the image builds. A published release (or a manual run on a tag) pushes it to
-# ghcr.io/<owner>/sniffowireless for linux/amd64 and linux/arm64 (Raspberry Pi). A manual run on a branch pushes `edge`.
+# ghcr.io/<owner>/sniffowireless for linux/amd64, linux/arm64 and linux/arm/v7 (Raspberry Pi, 64- and 32-bit). A manual run on a branch pushes `edge`.
 on:
   pull_request:
     branches: ["main"]
@@ -51,7 +51,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64,linux/arm/v7' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -62,3 +62,25 @@ jobs:
           provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Pull requests build only amd64 above; this also builds the 32-bit ARM image (Raspberry Pi OS 32-bit) under emulation
+      # and imports the app in it, so a dependency without a 32-bit build is caught before a release, not by a user.
+      - name: Build the 32-bit ARM image for a smoke test
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm/v7
+          load: true
+          push: false
+          tags: sniffowireless:armv7
+          provenance: false
+          cache-from: type=gha,scope=armv7
+          cache-to: type=gha,scope=armv7,mode=max
+
+      - name: Import the app in the 32-bit ARM image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker run --rm --platform linux/arm/v7 sniffowireless:armv7 python -c \
+            "import platform, sniffowireless.web, sniffowireless.wifi, sniffowireless.bluetooth, sniffowireless.channels, sniffowireless.zigbee, sniffowireless.sensors; print('imports ok on', platform.machine())"

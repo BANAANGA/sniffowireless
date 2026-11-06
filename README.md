@@ -440,7 +440,7 @@ then recreate the container from Arcane's **Deploy** options, with *force recrea
 
 ### Prebuilt image
 
-Released versions are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` (so also a Raspberry Pi), which saves building on the host:
+Released versions are published to the GitHub Container Registry for `linux/amd64`, `linux/arm64` and `linux/arm/v7` (so also a Raspberry Pi, with a 64-bit or a 32-bit OS; `uname -m` says `aarch64` or `armv7l`), which saves building on the host:
 
 ```bash
 docker pull ghcr.io/banaanga/sniffowireless:latest
@@ -1113,6 +1113,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `cp .env.example .env` seems to do nothing | It worked: `cp` is silent and `.env` is hidden. Check with `ls -a` or `cat .env`. |
 | Settings in `.env` are ignored | `.env` must be in the `sniffowireless` folder next to `docker-compose.yml`, and you have to run `docker compose up -d` again after editing it. `docker compose config` shows the values compose actually uses. |
 | `interface wlan1 not found` | Check `iw dev` on the host, make sure the container uses `network_mode: host`, and pin the name with udev. |
+| `no matching manifest for linux/arm/v7` when pulling | The image you pulled was published before 32-bit ARM (Raspberry Pi OS 32-bit) was added: pull a newer release or `edge`, or build it on the Pi itself (`docker build -t sniffowireless:latest .`, see [Without compose](#without-compose)). A very old Pi (Zero / 1, `armv6l`) is not supported by the image; use a 64-bit OS on a Pi 3 or newer if you can. |
 | `driver refused monitor mode` | The chipset/driver doesn't support it (common for onboard Broadcom and many Realtek chips with in-kernel drivers). Use an adapter from the table above. |
 | `Socket … failed with '[Errno 100] Network is down'`, then the adapter shows `capture … stopped` | The interface went down while sniffowireless was listening: the adapter was reset or briefly lost its USB connection, something else took it down, or it is blocked by rfkill. The sensor reports it and retries every 10 seconds, and says why if the link can't come back up (for example `RF-kill`). Check `ip -br link`, `rfkill list` and `dmesg \| tail` on the host, and see [step 2](#2-keep-networkmanager--wpa_supplicant-away-from-it) if NetworkManager keeps touching it. |
 | Adapter keeps leaving monitor mode | NetworkManager / wpa_supplicant is managing it. See [step 2](#2-keep-networkmanager--wpa_supplicant-away-from-it). |
