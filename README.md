@@ -467,6 +467,12 @@ With plain `docker run` (see above), use the same image name instead of `sniffow
 
 **First take a backup** (*Settings → Backup → Back up now*). The database schema is created and upgraded automatically on start, and that only goes forward: to go back to an older version you restore the backup as well. Your data lives in `./data`, so recreating the container loses nothing.
 
+**What am I running?** *Settings → About* shows the version (the release tag, with a link to its notes), the commit, when the image was built and how long it has been running. *Settings → Sensors* shows each remote sensor's version next to the server's, and marks one that **differs from the server**. A sensor that shows *not reported* is offline, or runs a version from before this was added. Images from the published registry carry this information; for a build from source, record the commit by building with it:
+
+```bash
+GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+```
+
 #### The main server
 
 Pick the way you run it:
@@ -1031,6 +1037,7 @@ Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since 
 - events per type, open findings by severity
 - channel airtime and retry ratios, radar hits per DFS channel (`sniffowireless_dfs_radar_24h`) and DFS events (`sniffowireless_dfs_events_total`)
 - sensor frames/s, and store queue/drops
+- the version and commit of the server (`sniffowireless_build_info`)
 
 Create a token with scope `metrics` and scrape with it:
 
@@ -1090,6 +1097,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `POST /api/backup/full` · `GET /api/backup/list` · `GET /api/backup/files/{name}` | Create, list and download full backups (admin) |
 | `GET /api/backup/files/{name}/sections` · `POST /api/backup/inspect` | List what a stored / uploaded full backup holds, per section (admin) |
 | `POST /api/backup/restore-selected` | Restore a stored (`source`: its name) or just-inspected (`"upload"`) backup, all (`"sections": "all"`) or only the listed sections, then restart (admin) |
+| `GET /api/about` | Version, commit, build time, runtime and start time of this server |
 | `GET /api/channel-settings` · `PUT` / `DELETE /api/channel-settings/{target}` | Wi-Fi channel settings of this server (`local`) or a remote sensor (its id), with the adapters each reports (admin) |
 | `POST /api/backup/files/{name}/restore` · `POST /api/backup/restore` | Restore a whole stored / uploaded full backup, then restart (admin) |
 | `GET /api/logs?after=` · `GET /api/logs/stream` · `PUT /api/logs/level` | Recent log lines, live log stream (Server-Sent Events) and runtime log level (admin) |

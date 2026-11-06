@@ -972,6 +972,53 @@ def test_channels_api_and_the_sensor_round_trip(env):
     assert sid not in ctx.settings.get("channels")["sensors"] and [x["id"] for x in c.get(url).json()["targets"]] == ["local"]
 
 
+def test_version_info_and_sensor_versions(env, monkeypatch):
+    from sniffowireless import version
+    from sniffowireless.sanitize import remote_version
+    from sniffowireless.sensors import Forwarder
+    ctx, c = env
+    # What was baked into the build (the Dockerfile turns the build args into these variables).
+    for var in ("SNIFFOWIRELESS_VERSION", "SNIFFOWIRELESS_COMMIT", "SNIFFOWIRELESS_BUILD_DATE"):
+        monkeypatch.delenv(var, raising=False)
+    assert version.info() == {"version": "dev", "commit": "", "built": "", "release": False}
+    monkeypatch.setenv("SNIFFOWIRELESS_VERSION", "12")
+    monkeypatch.setenv("SNIFFOWIRELESS_COMMIT", "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678")
+    monkeypatch.setenv("SNIFFOWIRELESS_BUILD_DATE", "2026-11-06T12:00:00Z")
+    assert version.info() == {"version": "12", "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", "built": "2026-11-06T12:00:00Z", "release": True}
+    monkeypatch.setenv("SNIFFOWIRELESS_VERSION", "edge")
+    assert version.info()["release"] is False
+    monkeypatch.setenv("SNIFFOWIRELESS_VERSION", "12")
+
+    # The About page's data: login required, and it says what this server is.
+    assert c.get("/api/about").status_code == 401
+    login(c, "viewer")  # not only for admins
+    a = c.get("/api/about").json()
+    assert a["version"] == "12" and a["release"] and a["commit"].startswith("a1b2c3d") and a["built"] == "2026-11-06T12:00:00Z"
+    assert a["python"] and a["platform"] and a["started"] <= a["now"] and a["mode"] == "server" and a["repo"].startswith("https://github.com/")
+    # Prometheus gets it as an info metric.
+    from sniffowireless.metrics import render
+    assert 'sniffowireless_build_info{version="12",commit="a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"} 1' in render(ctx)
+
+    # A sensor sends its own with every batch (the real Forwarder builds it), and the server keeps what is sane.
+    assert Forwarder(Config(server_url="http://x", sensor_token="t")).version["version"] == "12"
+    assert Forwarder(Config(server_url="http://x", sensor_token="t")).version["arch"]
+    assert remote_version({"version": "11", "commit": "abc1234", "built": "2026-11-01T00:00:00Z", "arch": "aarch64", "junk": 1}) == \
+        {"version": "11", "commit": "abc1234", "built": "2026-11-01T00:00:00Z", "arch": "aarch64", "release": True}
+    assert remote_version({"version": "x" * 500})["version"] == "x" * 40 and remote_version({"version": "<b>edge</b>"})["release"] is False
+    assert remote_version("nope") is None and remote_version({}) is None and remote_version({"version": 5}) is None
+
+    c.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H)
+    s = c.post("/api/sensors", json={"name": "Pi"}, headers=H).json()
+    tok = {"Authorization": f"Bearer {s['token']}"}
+    plain = TestClient(c.app, base_url="http://sniffowireless.test")
+    send = lambda **extra: plain.post("/api/ingest", json={"sent_at": time.time(), "obs": [], "status": [], **extra}, headers=tok)
+    info = lambda: {x["id"]: x for x in c.get("/api/sensors").json()}[s["id"]]["info"]
+    assert send().status_code == 200 and info()["version"] is None  # an older sensor says nothing
+    assert send(version={"version": "11", "commit": "abc1234def", "arch": "aarch64"}).status_code == 200
+    assert info()["version"] == {"version": "11", "commit": "abc1234def", "arch": "aarch64", "release": True}
+    assert send(version="not a dict").status_code == 200 and info()["version"] is None  # junk is dropped, not stored
+
+
 def test_remote_sensor_status_clears_and_goes_offline(env, monkeypatch):
     from sniffowireless import status as status_mod
     ctx, c = env

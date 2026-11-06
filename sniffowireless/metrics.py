@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from . import status
+from . import status, version
 
 
 def _esc(v):
@@ -30,6 +30,8 @@ class Out:
 def render(ctx):
     now = time.time()
     o = Out()
+    v = version.info()
+    o.add("sniffowireless_build_info", 1, "Version and build of this server", version=v["version"], commit=v["commit"] or "unknown")
     active = now - ctx.cfg.active_window
     for r in ctx.rows("SELECT kind, COUNT(*) total, SUM(last_seen >= ?) active FROM devices GROUP BY kind", (active,)):
         o.add("sniffowireless_devices_total", r["total"], "Devices ever seen (within retention)", kind=r["kind"])

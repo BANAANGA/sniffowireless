@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import (alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, manage,
-               matching, metrics, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, zigbee)
+               matching, metrics, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -82,6 +82,11 @@ def create_app(ctx):
     @app.get("/api/health")
     def healthcheck():
         return {"ok": True}
+
+    @app.get("/api/about", dependencies=[Depends(current_user)])
+    def about():
+        """Which version and build this server is, for Settings -> About (and to compare with the sensors')."""
+        return {**version.info(), **version.runtime(), "mode": cfg.mode, "demo": cfg.demo, "repo": version.REPO_URL, "now": time.time()}
 
     @app.get("/api/status", dependencies=[Depends(current_user)])
     def get_status():

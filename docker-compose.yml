@@ -1,6 +1,11 @@
 services:
   sniffowireless:
-    build: .
+    build:
+      context: .
+      args:  # optional, for the About page: GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+        VERSION: ${SNIFFOWIRELESS_VERSION:-source}
+        COMMIT: ${GIT_COMMIT:-}
+        BUILD_DATE: ${BUILD_DATE:-}
     image: sniffowireless:latest
     container_name: sniffowireless
     restart: unless-stopped
