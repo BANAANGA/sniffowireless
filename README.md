@@ -976,11 +976,11 @@ Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
 Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
 
 1. On the server: **Settings → Sensors → Add remote sensor**, then give it a name and room. You get a token and a ready-made `docker run` command.
-2. On the sensor machine: connect the adapters as described above, then run that command (pull the [published image](#prebuilt-image) first, or build it). It's the same image with `SNIFFOWIRELESS_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
+2. On the sensor machine: connect the adapters as described above, then run that command (it pulls the [published image](#prebuilt-image); to build it yourself instead, use `sniffowireless:latest` as the image). It's the same image with `SNIFFOWIRELESS_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
    ```bash
    docker run -d --name sniffowireless-sensor --restart unless-stopped --network host --privileged \
      -e SNIFFOWIRELESS_MODE=sensor -e SERVER_URL=http://192.168.1.10:8080 -e SENSOR_TOKEN=sniffowireless_... \
-     -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 sniffowireless:latest
+     -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 ghcr.io/banaanga/sniffowireless:latest
    ```
    The sensor buffers and retries if the server is unreachable, and corrects small clock differences.
 3. **Map → Edit layout:** upload a floor plan (PNG, JPEG, WebP or SVG) and drag each sensor to where it really is.
