@@ -51,6 +51,7 @@ body { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 1
 .live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
 .live.ok::before { background: var(--good); }
 .live.err::before { background: var(--bad); }
+.live.warn::before { background: var(--warn); }
 @media (max-width: 900px) {
   body { display: block; }
   .side { position: sticky; z-index: 10; height: auto; flex-direction: row; align-items: center; padding: 10px 16px; border-right: 0;
@@ -143,7 +144,10 @@ td.trunc { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .tag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .tag.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
 .state-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); margin-right: 6px; vertical-align: middle; }
-.state-dot.on { background: var(--good); }
+.state-dot.on, .state-dot.ok { background: var(--good); }
+.state-dot.warn { background: var(--warn); }
+.state-dot.bad { background: var(--bad); }
+.state-dot.off { background: var(--faint); }
 .rssi { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; margin-right: 6px; vertical-align: -1px; }
 .rssi i { width: 3px; background: var(--border-2); border-radius: 1px; }
 .rssi i.on { background: var(--text); }
