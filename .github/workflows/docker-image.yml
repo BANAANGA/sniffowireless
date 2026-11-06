@@ -39,6 +39,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=ref,event=tag
+            type=ref,event=pr
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' && github.event.release.prerelease != true }}
             type=raw,value=edge,enable=${{ github.ref_type == 'branch' && github.event_name == 'workflow_dispatch' }}
             type=sha,enable=${{ github.event_name != 'pull_request' }}
