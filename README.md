@@ -465,11 +465,81 @@ With plain `docker run` (see above), use the same image name instead of `sniffow
 
 ### Updating
 
-```bash
-git pull && docker compose up -d --build
+**First take a backup** (*Settings → Backup → Back up now*). The database schema is created and upgraded automatically on start, and that only goes forward: to go back to an older version you restore the backup as well. Your data lives in `./data`, so recreating the container loses nothing.
+
+#### The main server
+
+Pick the way you run it:
+
+- **Built from source** (the default `docker-compose.yml`):
+
+  ```bash
+  cd sniffowireless && git pull && docker compose up -d --build
+  ```
+
+- **Prebuilt image** (compose with `image: ghcr.io/banaanga/sniffowireless:latest`, see [Prebuilt image](#prebuilt-image)):
+
+  ```bash
+  docker compose pull && docker compose up -d
+  ```
+
+  Compose only recreates the container when the image changed.
+
+- **Plain `docker run`:** pull the new image, remove the container, and start it again with the same options you used before (keep that command in a script):
+
+  ```bash
+  docker pull ghcr.io/banaanga/sniffowireless:latest
+  ```
+
+  ```bash
+  docker rm -f sniffowireless
+  ```
+
+- **Arcane:** click **Redeploy** on the project, see [Deploying with Arcane](#deploying-with-arcane).
+
+Capture stops for a few seconds while the container restarts. After a big update the first start can take longer on a large database (it re-identifies devices when the identification rules changed); follow it with `docker compose logs -f`. To pin a version instead of `latest`, use a release tag such as `ghcr.io/banaanga/sniffowireless:11`, which also makes going back easy.
+
+#### Remote sensors
+
+A sensor keeps no data, so updating it means getting the new image and recreating its container with the same settings. Update the **server first**: a newer server works with older sensors, while a newer sensor can send things an older server doesn't know yet. Features that need both ends, such as [changing channels from the web UI](#wi-fi-channels-from-the-web-ui), work once both are updated.
+
+The token in the `docker run` command is shown only once, so keep your sensor's command. The simplest way to make later updates a one-liner is to run the sensor from a small compose file on the sensor machine instead (for example `~/sniffowireless-sensor/docker-compose.yml`):
+
+```yaml
+services:
+  sniffowireless-sensor:
+    image: ghcr.io/banaanga/sniffowireless:latest
+    container_name: sniffowireless-sensor
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    environment:
+      SNIFFOWIRELESS_MODE: sensor
+      SERVER_URL: http://192.168.1.10:8080
+      SENSOR_TOKEN: sniffowireless_...
+      WIFI_INTERFACES: wlan1
+      BT_DEVICES: hci0
 ```
 
-The database schema is created and upgraded automatically.
+Start it once (`docker rm -f sniffowireless-sensor` first if you ran it with `docker run` before), and from then on:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+If you run the sensor with plain `docker run`, update it like this:
+
+```bash
+docker pull ghcr.io/banaanga/sniffowireless:latest
+```
+
+```bash
+docker rm -f sniffowireless-sensor
+```
+
+and then run the same `docker run` command as when you set it up (the one in [Multiple sensors & the map](#multiple-sensors--the-map)). If you built the image from source on the sensor, run `git pull` and `docker build -t sniffowireless:latest .` instead of the pull.
+
+The sensor is down for a few seconds, and whatever it had not yet sent (at most a couple of seconds of captures) is lost. Afterwards check **Settings → Sensors**, where it should show as online with a recent *last report*, or `docker logs sniffowireless-sensor` on the sensor machine. Old images pile up over time: `docker image prune` removes the ones no container uses.
 
 ---
 
@@ -900,7 +970,7 @@ Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
 Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
 
 1. On the server: **Settings → Sensors → Add remote sensor**, then give it a name and room. You get a token and a ready-made `docker run` command.
-2. On the sensor machine: connect the adapters as described above, then run that command (build or copy the image first). It's the same image with `SNIFFOWIRELESS_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
+2. On the sensor machine: connect the adapters as described above, then run that command (pull the [published image](#prebuilt-image) first, or build it). It's the same image with `SNIFFOWIRELESS_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
    ```bash
    docker run -d --name sniffowireless-sensor --restart unless-stopped --network host --privileged \
      -e SNIFFOWIRELESS_MODE=sensor -e SERVER_URL=http://192.168.1.10:8080 -e SENSOR_TOKEN=sniffowireless_... \
