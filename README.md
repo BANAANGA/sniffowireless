@@ -135,7 +135,7 @@ To see 6 GHz networks you need a **6E-capable adapter** whose driver allows moni
    ```bash
    iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -E "\* (59[5-9][0-9]|6[0-9]{3}|7[01][0-9]{2})"
    ```
-3. **Add 6 GHz channels.** Use `WIFI_CHANNELS=default,6ghz`, or `all`, which covers 2.4 + 5 GHz + the 6 GHz Preferred Scanning Channels. 6 GHz access points always beacon on one of the 15 PSCs (5, 21, 37 … 229), so `6ghz` finds them with far fewer hops than all 59 channels (`6all`).
+3. **Add 6 GHz channels.** Use `WIFI_CHANNELS=default,6ghz` (or set it under [Settings → Wi-Fi channels](#wi-fi-channels-from-the-web-ui), also for remote sensors), or `all`, which covers 2.4 + 5 GHz + the 6 GHz Preferred Scanning Channels. 6 GHz access points always beacon on one of the 15 PSCs (5, 21, 37 … 229), so `6ghz` finds them with far fewer hops than all 59 channels (`6all`).
 
 sniffowireless reads each adapter's supported frequencies at startup and gives 6 GHz channels only to adapters that can tune them. A 2.4/5 GHz adapter and a 6E adapter can therefore share one channel list. 6 GHz clients nearly always use randomized MACs (WPA3 + MAC privacy are mandatory there), but connection sessions are still tracked per network.
 
@@ -911,6 +911,20 @@ Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in anothe
 
 Every device gets a **room** (the sensor that hears it strongest, with 4 dB hysteresis so it doesn't flicker) and a "moved" event when that changes. It also gets an approximate **position**: the signal-weighted average of the three strongest sensors. With one sensor, devices are drawn in a ring around it by signal strength. Room-level accuracy is realistic with a sensor per room. Exact positions are not; walls, bodies and phone orientation easily change the signal by 10 dB.
 
+### Wi-Fi channels from the web UI
+
+**Settings → Wi-Fi channels** (admin) lists this server and every remote sensor with its Wi-Fi adapters, which bands each can tune, and the channels it listens on right now. Per sensor you can set:
+
+- **Channels:** the same syntax as `WIFI_CHANNELS`, with buttons for the presets (default, 2.4 GHz, 5 GHz common / all, 6 GHz, everything). With several adapters the list is split between them, and each channel only goes to an adapter that can tune it.
+- **Per adapter:** a list for just one adapter (a single channel locks it to that channel, with no hopping).
+- **Regulatory domain** (needed for 6 GHz) and the **time on each channel**.
+
+Saving applies **at once** on this server, with no restart. A remote sensor gets the settings back in the answer to its next upload (a few seconds), applies them while it runs, and reports which version it runs, so the page shows *waiting for the sensor…* and then *applied*. If a sensor is offline, the settings are kept and applied when it reconnects.
+
+Anything left empty stays as that sensor's own configuration (`WIFI_CHANNELS`, `WIFI_CHANNELS_<iface>`, `WIFI_REGDOMAIN`, `WIFI_HOP_INTERVAL`) says, and **Back to the sensor's own settings** removes everything you set. A saved setting wins over the environment, until you remove it. A bare `5` or `6` on its own means that whole band, so write `2g:6` for 2.4 GHz channel 6.
+
+The sensor itself must run a version that has this feature; the page says *sensor software too old* for one that doesn't, and its channels then keep coming from its environment.
+
 ---
 
 ## Backup & restore
@@ -1004,6 +1018,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `POST /api/backup/full` · `GET /api/backup/list` · `GET /api/backup/files/{name}` | Create, list and download full backups (admin) |
 | `GET /api/backup/files/{name}/sections` · `POST /api/backup/inspect` | List what a stored / uploaded full backup holds, per section (admin) |
 | `POST /api/backup/restore-selected` | Restore a stored (`source`: its name) or just-inspected (`"upload"`) backup, all (`"sections": "all"`) or only the listed sections, then restart (admin) |
+| `GET /api/channel-settings` · `PUT` / `DELETE /api/channel-settings/{target}` | Wi-Fi channel settings of this server (`local`) or a remote sensor (its id), with the adapters each reports (admin) |
 | `POST /api/backup/files/{name}/restore` · `POST /api/backup/restore` | Restore a whole stored / uploaded full backup, then restart (admin) |
 | `GET /api/logs?after=` · `GET /api/logs/stream` · `PUT /api/logs/level` | Recent log lines, live log stream (Server-Sent Events) and runtime log level (admin) |
 | `GET /metrics` | Prometheus metrics |
@@ -1080,6 +1095,7 @@ sniffowireless/
   dfs.py        DFS / radar detection from channel switch announcements and channel changes
   trackers.py   unknown tracker-tag ("following") detection
   backup.py     configuration / full backups, staged restore, scheduler
+  channels.py   Wi-Fi channel settings changed from the web UI, applied to local adapters and pushed to remote sensors
   logs.py       in-memory log buffer, live log stream, runtime log level
   appearance.py admin-customisable app name, icon and colours
   sysinfo.py    host CPU / memory, database and disk figures for the overview

@@ -45,6 +45,7 @@ class Forwarder:
         self.buf = deque(maxlen=300_000)
         self.dropped = 0
         self.sent = 0
+        self.on_channel_config = None  # called with the channel settings the server sends back, when it has any
         if not cfg.server_url or not cfg.sensor_token:
             raise SystemExit("SNIFFOWIRELESS_MODE=sensor needs SERVER_URL and SENSOR_TOKEN")
 
@@ -52,6 +53,20 @@ class Forwarder:
         if len(self.buf) == self.buf.maxlen:
             self.dropped += 1
         self.buf.append(obs)
+
+    def _handle_reply(self, reply):
+        """The server's answer to a batch may carry settings for this sensor (channels set in the web UI)."""
+        if not self.on_channel_config:
+            return
+        try:
+            conf = json.loads(reply).get("channel_config")
+        except (ValueError, AttributeError):
+            return
+        if conf:
+            try:
+                self.on_channel_config(conf)
+            except Exception:
+                log.exception("Could not apply the channel settings from the server")
 
     def run(self, stop):
         backoff = 2
@@ -66,9 +81,10 @@ class Forwarder:
                 "Content-Encoding": "gzip", "User-Agent": "sniffowireless-sensor"})
             try:
                 with urllib.request.urlopen(req, timeout=20) as r:
-                    r.read()
+                    reply = r.read()
                 self.sent += len(batch)
                 backoff = 2
+                self._handle_reply(reply)
             except Exception as e:
                 self.buf.extendleft(reversed(batch))  # keep for the next attempt
                 backoff = min(60, backoff * 2)
@@ -225,7 +241,11 @@ def routes(ctx):
         dropped = sanitize.clean_num(body.get("dropped"), 0, 10 ** 15, True)
         ctx.execute("UPDATE sensors SET last_seen=?, info=? WHERE id=?",
                     (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts}), sid))
-        return {"accepted": n, "rejected": rejected}
+        reply = {"accepted": n, "rejected": rejected}
+        chan = (ctx.settings.get("channels")["sensors"] or {}).get(sid)
+        if chan and chan.get("rev"):  # settings made in the web UI for this sensor: it applies them when the revision is new
+            reply["channel_config"] = {k: chan.get(k) for k in ("rev", "channels", "per_iface", "regdomain", "hop_interval")}
+        return reply
 
     @r.get("/api/sensors")
     def sensors(_=Depends(current_user)):
@@ -272,6 +292,9 @@ def routes(ctx):
         if s and s["token_id"]:
             ctx.execute("DELETE FROM api_tokens WHERE id=?", (s["token_id"],))
         ctx.execute("DELETE FROM sensors WHERE id=?", (sid,))
+        chan = ctx.settings.get("channels")
+        if chan["sensors"].pop(sid, None) is not None:  # its channel settings go with it
+            ctx.settings.set("channels", chan)
         ctx.location.reload()
         return {"ok": True}
 
