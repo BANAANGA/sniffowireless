@@ -116,7 +116,12 @@ def create_app(ctx):
         events = rows("SELECT e.*, d.kind, d.name, d.vendor, d.ssid, p.ssid peer_ssid, m.label FROM events e "
                       "LEFT JOIN devices d ON d.mac=e.mac LEFT JOIN devices p ON p.mac=e.peer "
                       "LEFT JOIN device_meta m ON m.mac=e.mac WHERE e.type != 'new_probe' ORDER BY e.id DESC LIMIT 30")
-        return {"kinds": kinds, "events": events, "now": now, "window": window}
+        try:  # LoRa nodes are not devices (no MAC), so they are counted from their own table
+            lora = rows("SELECT COUNT(*) total, SUM(last_seen >= ?) active, SUM(first_seen >= ?) new_24h FROM lora_nodes", (since, now - 86400))[0]
+            lora = {k: lora[k] or 0 for k in ("total", "active", "new_24h")}
+        except Exception:
+            lora = {"total": 0, "active": 0, "new_24h": 0}
+        return {"kinds": kinds, "events": events, "now": now, "window": window, "lora": lora}
 
     @app.get("/api/timeline", dependencies=[Depends(current_user)])
     def timeline(hours: float = 24, bucket: int = 0):
