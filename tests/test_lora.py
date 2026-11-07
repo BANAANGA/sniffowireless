@@ -471,3 +471,39 @@ def test_summary_counts_lora_nodes_for_the_overview_card(ctx):
     ctx.store.flush()
     assert c.get("/api/summary?window=300").json()["lora"] == {"total": 3, "active": 1, "new_24h": 2}
     assert c.get("/api/summary?window=86400").json()["lora"]["active"] == 2
+
+
+def test_overview_counts_zigbee_radios_and_lora_nodes_over_time(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    assert c.get("/api/summary?window=300").json()["zigbee"] == {"total": 0, "active": 0, "new_24h": 0}
+    now = time.time()
+    slot = int(now // 300) * 300
+    t0 = slot - 3600 + 10  # an hour ago, inside one 5 minute slot
+    radios = lambda *addrs: [[0x1A62, a, 1 << 15, 4, 0, 0, 1, 1, -70, 150] for a in addrs]
+    ctx.store.process({"t": "zb_frames", "ts": t0, "mac": "-", "undecoded": 0, "channels": {"15": 8}, "radios": radios("0x0001", "0x0002")})
+    ctx.store.process({"t": "zb_frames", "ts": t0 + 20, "mac": "-", "undecoded": 0, "channels": {"15": 4}, "radios": radios("0x0002", "0x0003")})  # one new, one again
+    ctx.store.process({"t": "zb_frames", "ts": now - 30, "mac": "-", "undecoded": 0, "channels": {"15": 4}, "radios": radios("0x0001")})
+    eu = PROFILES["meshtastic-eu868"]
+    ctx.store.process(frame(meshtastic(frm=0xA1), eu, t0))
+    ctx.store.process(frame(meshtastic(frm=0xA2), eu, t0 + 40))
+    ctx.store.process(frame(meshtastic(frm=0xA1), eu, now - 20))
+    ctx.store.flush()
+    s = c.get("/api/summary?window=300").json()
+    assert s["zigbee"] == {"total": 3, "active": 1, "new_24h": 3} and s["lora"] == {"total": 2, "active": 1, "new_24h": 2}
+    assert c.get("/api/summary?window=7200").json()["zigbee"]["active"] == 3
+    # 24 h graph: buckets of 5 minutes; distinct radios per bucket
+    d = c.get("/api/timeline?hours=24&bucket=300").json()
+    assert d["bucket"] == 300 and len(d["series"]["zigbee"]) == len(d["t"]) == len(d["series"]["lora"])
+    assert max(d["series"]["zigbee"][:-3]) == 3 and max(d["series"]["lora"][:-3]) == 2 and d["series"]["zigbee"][-1] + d["series"]["zigbee"][-2] >= 1
+    # a 6 h graph has buckets shorter than a slot: each takes the value of the slot it lies in
+    d = c.get("/api/timeline?hours=6").json()
+    assert d["bucket"] < 300 and max(d["series"]["zigbee"]) == 3 and sum(1 for n in d["series"]["zigbee"] if n == 3) >= 3
+    # pruning removes old activity
+    ctx.store.prune(now + 40 * 86400)
+    assert ctx.one("SELECT COUNT(*) n FROM radio_seen")["n"] == 0
