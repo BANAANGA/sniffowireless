@@ -39,6 +39,12 @@ def start_sensors(cfg, sink, stop, handshake=None, wifi=None):
             ZigbeeSensor(dev, cfg, sink).start(stop)
             log.info("Zigbee sensor on %s, channels %s", dev, ",".join(str(c) for c in cfg.zigbee_channels))
             n += 1
+    if cfg.lora_devices:
+        from .lora import LoraSensor
+        for dev in cfg.lora_devices:
+            LoraSensor(dev, cfg, sink).start(stop)
+            log.info("LoRa sensor on %s, profiles %s", dev, ", ".join(p.name for p in cfg.lora_profiles))
+            n += 1
     return n
 
 
@@ -51,7 +57,7 @@ def run_sensor(cfg):
     wifi = WifiControl(cfg, fwd)
     fwd.on_channel_config = wifi.apply_remote  # channel settings the admin sets in the server's web UI
     if not start_sensors(cfg, fwd, stop, wifi=wifi):
-        raise SystemExit("Sensor mode needs WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES and/or ZIGBEE_DEVICES")
+        raise SystemExit("Sensor mode needs WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES, ZIGBEE_DEVICES and/or LORA_DEVICES")
     log.info("Remote sensor forwarding to %s", cfg.server_url)
     try:
         fwd.run(stop)
@@ -79,6 +85,7 @@ def build(cfg):
     from .settings import Settings
     from .store import Store, connect, set_db_cache
     from .survey import SurveyCollector
+    from .lora import LoraMonitor
     from .zigbee import ZigbeeMonitor
 
     os.makedirs(cfg.data_dir, exist_ok=True)
@@ -106,8 +113,9 @@ def build(cfg):
     store.conn.executescript(MATCHING_SCHEMA)
     ctx.dfs = DfsMonitor(ctx)
     ctx.zigbee = ZigbeeMonitor(ctx)
+    ctx.lora = LoraMonitor(ctx)
     store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
-                    ctx.zigbee]
+                    ctx.zigbee, ctx.lora]
     store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
     apply_ignore(ctx)
     apply_meta(ctx)
@@ -141,7 +149,7 @@ def main():
         log.info("Demo mode enabled: generating synthetic devices")
     from .channels import attach
     if not start_sensors(cfg, store, stop, handshake=ctx.handshake, wifi=attach(ctx)) and not cfg.demo:
-        log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES and/or ZIGBEE_DEVICES, add remote sensors in "
+        log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES, ZIGBEE_DEVICES and/or LORA_DEVICES, add remote sensors in "
                     "Settings → Sensors, or use DEMO_MODE=1")
 
     writer = threading.Thread(target=store.run, args=(stop,), name="store")

@@ -109,6 +109,24 @@ def _zb_address(v):
     return None
 
 
+LORA_HEX = re.compile(r"[0-9a-f]{2,510}")
+LORA_BANDWIDTHS = (7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125.0, 250.0, 500.0)
+
+
+def _lora_observation(o, ts):
+    """A LoRa frame heard by a remote sniffer: radio figures in the range the radio can have, and the frame as lower-case hex."""
+    freq, bw, sf = clean_num(o.get("freq"), 150, 960), clean_num(o.get("bw"), 7, 500), clean_num(o.get("sf"), 5, 12, True)
+    sync, rssi, snr = clean_num(o.get("sync"), 0, 255, True), clean_num(o.get("rssi"), -200, 20), clean_num(o.get("snr"), -60, 60)
+    hexed = o.get("hex").lower() if isinstance(o.get("hex"), str) else None
+    if None in (freq, bw, sf, sync, rssi, snr) or not isinstance(hexed, str) or len(hexed) % 2 or not LORA_HEX.fullmatch(hexed):
+        return None
+    if min(abs(bw - b) for b in LORA_BANDWIDTHS) > 0.5:
+        return None
+    r = {"t": "lora_frame", "ts": ts, "mac": "-", "freq": freq, "bw": bw, "sf": sf, "sync": sync, "rssi": rssi, "snr": snr, "hex": hexed,
+         "profile": clean_str(o.get("profile"), 32), "ferr": clean_num(o.get("ferr"), -200000, 200000)}
+    return {k: v for k, v in r.items() if v is not None}
+
+
 def _zigbee_observation(o, t, ts):
     r = {"t": t, "ts": ts, "mac": "-"}
     if t == "zb_network":
@@ -186,6 +204,8 @@ def remote_observation(o, now):
         return {"t": t, "ts": ts, "mac": "-", "items": items, "hosts": hosts}
     if t in ("zb_network", "zb_energy", "zb_frames"):
         return _zigbee_observation(o, t, ts)
+    if t == "lora_frame":
+        return _lora_observation(o, ts)
     mac = clean_mac(o.get("mac"))
     if mac is None:
         return None

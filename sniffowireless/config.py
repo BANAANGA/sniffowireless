@@ -48,6 +48,11 @@ def _list(name):
     return [p.strip() for p in _env(name).split(",") if p.strip()]
 
 
+def _default_lora_profiles():
+    from .lora_protocols import parse_profiles
+    return parse_profiles("", "EU868")
+
+
 def zigbee_channels(spec):
     """'15,20-25' -> channel numbers, keeping only 802.15.4's 2.4 GHz channels 11-26. Empty means all of them."""
     out = []
@@ -196,6 +201,10 @@ class Config:
     zigbee_hop_interval: float = 2.0
     zigbee_scan_interval: int = 600
     zigbee_sniff: bool = True
+    lora_devices: list = field(default_factory=list)
+    lora_region: str = "EU868"
+    lora_profiles: list = field(default_factory=lambda: _default_lora_profiles())
+    lora_hop_interval: float = 5.0
 
     lan_session_timeout: int = 900
     wifi_session_timeout: int = 300
@@ -211,6 +220,12 @@ class Config:
 
     @classmethod
     def from_env(cls):
+        from .lora_protocols import parse_profiles
+        region = (_env("LORA_REGION") or "EU868").upper()
+        try:
+            lora_profiles = parse_profiles(_env("LORA_PROFILES"), region)
+        except ValueError as e:
+            raise SystemExit(f"LORA_PROFILES / LORA_REGION: {e}")
         ifaces = _list("WIFI_INTERFACES")
         per_iface = {}
         for i in ifaces:
@@ -248,6 +263,10 @@ class Config:
             zigbee_hop_interval=max(0.2, _float("ZIGBEE_HOP_INTERVAL", 2.0)),
             zigbee_scan_interval=max(30, _int("ZIGBEE_SCAN_INTERVAL", 600)),
             zigbee_sniff=_bool("ZIGBEE_SNIFF", True),
+            lora_devices=_list("LORA_DEVICES"),
+            lora_region=region,
+            lora_profiles=lora_profiles,
+            lora_hop_interval=max(0.5, _float("LORA_HOP_INTERVAL", 5.0)),
             eth_interfaces=_list("ETH_INTERFACES"),
             eth_promisc=_bool("ETH_PROMISC", True),
             lan_session_timeout=_int("LAN_SESSION_TIMEOUT", 900),

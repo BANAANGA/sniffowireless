@@ -495,7 +495,36 @@ class DemoGenerator:
                               "bssid": "24:a4:3c:10:00:01", "frame": "deauth", "reason": 7, "rssi": None})
         extra += self.lan(t, out)
         extra += self.zigbee(t)
+        extra += self.lora(t)
         return extra
+
+    def lora(self, t):
+        """A few Meshtastic nodes, a MeshCore repeater and chat clients, a LoRaWAN sensor and a stray unidentified transmitter."""
+        import struct
+        from .lora_protocols import PROFILES
+        rng, res = self.rng, []
+        eu, mc, lw = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"], PROFILES["lorawan-eu868"]
+
+        def frame(profile, payload, rssi, sensor=None):
+            o = {"t": "lora_frame", "ts": t + rng.random() * 50, "mac": "-", "profile": profile.name, "freq": profile.freq, "bw": profile.bw,
+                 "sf": profile.sf, "sync": profile.sync, "rssi": rssi + rng.randint(-4, 4), "snr": round(rng.uniform(-8, 9), 2),
+                 "ferr": rng.randint(-900, 900), "hex": payload.hex()}
+            if sensor:
+                o["sensor"] = sensor
+            res.append(o)
+
+        for node, rate, rssi in ((0x1A2B3C4D, 3, -96), (0x5E6F7A8B, 2, -108), (0x0C0FFEE1, 1, -112)):
+            for _ in range(rng.randint(0, rate)):
+                flags = 0x63 if rng.random() < 0.7 else 0x6B
+                frame(eu, struct.pack("<IIIBBBB", 0xFFFFFFFF, node, rng.getrandbits(32), flags, 0x08, 0, node & 0xFF) + bytes(rng.getrandbits(8) for _ in range(rng.randint(12, 60))), rssi)
+        if int(t // 60) % 15 == 0:
+            advert = bytes(range(0x40, 0x60)) + struct.pack("<I", int(t)) + bytes(64) + bytes([0x92]) + struct.pack("<ii", 0, 0) + b"Hilltop Repeater"
+            frame(mc, bytes([0x11, 0x00]) + advert, -101)
+        for _ in range(rng.randint(0, 2)):
+            frame(mc, bytes([0x09, 0x02, 0x4F, 0xA1, 0xA1, 0x4F]) + bytes(rng.getrandbits(8) for _ in range(rng.randint(20, 70))), -104)
+        if int(t // 60) % 5 == 0:
+            frame(lw, bytes([0x40]) + struct.pack("<I", 0x26011BDA)[:4] + bytes([0x80]) + struct.pack("<H", int(t // 300) & 0xFFFF) + b"\x01" + bytes(rng.getrandbits(8) for _ in range(8)) + bytes(4), -92)
+        return res
 
     def zigbee(self, t):
         """A home Zigbee network, a Thread network, and an encrypted system of unknown protocol."""
