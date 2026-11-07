@@ -559,3 +559,4 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 .h-link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 .h-link::after { content: " →"; opacity: 0; transition: opacity .15s; }
 .h-link:hover::after, .h-link:focus-visible::after { opacity: .7; }
+.nav-group[hidden], [data-mod][hidden] { display: none !important; }

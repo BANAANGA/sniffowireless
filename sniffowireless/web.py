@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import (alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
-               matching, metrics, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+               matching, metrics, modules, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -654,7 +654,7 @@ def create_app(ctx):
     # ------------------------------------------------------------------ static
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
-    for mod in (auth, appearance, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
+    for mod in (auth, appearance, modules, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
                 trackers, backup, search, logs, matching, handshake, channels):
         app.include_router(mod.routes(ctx))
 

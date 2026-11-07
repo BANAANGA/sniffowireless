@@ -24,6 +24,8 @@ DEFAULTS = {
     "appearance": {"name": "sniffowireless", "icon": "dot", "clock": "auto", "colors": {}, "icon_file": None, "icon_ver": 0},
     # Wi-Fi channel settings set from the web UI, for this server ("local") and per remote sensor id. See channels.py.
     "channels": {"local": {}, "sensors": {}},
+    # Kinds of radios whose menu entries, overview cards and statistics are hidden (display only). See modules.py.
+    "modules": {"disabled": []},
     # Performance (admin): the database page cache and memory map; switch off on low-memory machines.
     "performance": {"db_cache": True},
     # MQTT presence publish (e.g. for Home Assistant): arrived/left for known/labelled devices only.
