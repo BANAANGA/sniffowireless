@@ -11,8 +11,8 @@ import logging
 import os
 import threading
 import time
-from pathlib import Path
 from collections import deque
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -45,6 +45,12 @@ CONFIG_TIMEOUT = 3.0
 SILENCE_LIMIT = 45   # the firmware prints a STAT line every 10 s: this long without any line means the stick is gone
 MAX_PENDING = 50_000
 SEEN_SLOT = 300  # radio_seen granularity, seconds
+# Behaviour worth an alert (events, so alert rules can pick them up). Fixed thresholds: frames are only heard while the radio
+# listens on that profile, so these are lower bounds of what is really on the air.
+FLOOD_PACKETS, FLOOD_WINDOW = 40, 300      # one node sending this many frames in this many seconds
+JOIN_FLOOD, JOIN_WINDOW = 8, 600           # one LoRaWAN device sending this many join requests
+FCNT_BACK = 16                             # a LoRaWAN frame counter going back by more than this (and not a wrap)
+TRACK_MAX = 5000
 
 
 class LoraError(Exception):
@@ -216,7 +222,57 @@ class LoraMonitor:
         self.nodes = {}
         self.stats = {}
         self.seen = set()
+        self.known = set()          # (protocol, addr) nodes seen before, for "new node" events
+        self.rate = {}              # node -> recent frame times, for flood detection
+        self.joins = {}             # LoRaWAN DevEUI -> recent join request times
+        self.fcnt = {}              # LoRaWAN DevAddr -> last frame counter
+        try:
+            self.known = {(p, a) for p, a in ctx.store.conn.execute("SELECT protocol, addr FROM lora_nodes LIMIT 200000")}
+        except Exception:
+            pass
         self.pending = False
+
+    def _events(self, store, ts, protocol, addr, node, r):
+        """New nodes, floods and LoRaWAN counter resets as events (see the thresholds above)."""
+        mac, kind = f"lora:{addr}", node[2] if node else None
+        key = (protocol, addr)
+        if key not in self.known and len(self.known) < 200_000:
+            self.known.add(key)
+            if kind != "hash" and protocol != "unknown":
+                label = PROTOCOLS.get(protocol, protocol)
+                name = f" “{node[1]}”" if node[1] else ""
+                store._event(ts, mac, "lora_new_node", protocol, f"New {label} node {addr}{name}" + (f" ({kind})" if kind else ""), always=True)
+        if kind == "hash":
+            return  # a one-byte hash is shared by many nodes: rates and counters per hash mean nothing
+        q = self.rate.setdefault(key, deque())
+        q.append(ts)
+        while q and ts - q[0] > FLOOD_WINDOW:
+            q.popleft()
+        if len(q) == FLOOD_PACKETS:
+            store._event(ts, mac, "lora_flood", protocol, f"{PROTOCOLS.get(protocol, protocol)} node {addr} sent {FLOOD_PACKETS} frames in "
+                         f"{int(ts - q[0]) or 1} s (heard here only part of the time)", always=True)
+        if len(self.rate) > TRACK_MAX:
+            self.rate.clear()
+        info = r.get("info") or {}
+        if protocol == "lorawan" and info.get("dev_eui") and r["kind"] == "join request":
+            j = self.joins.setdefault(info["dev_eui"], deque())
+            j.append(ts)
+            while j and ts - j[0] > JOIN_WINDOW:
+                j.popleft()
+            if len(j) == JOIN_FLOOD:
+                store._event(ts, mac, "lora_join_flood", protocol, f"LoRaWAN device {info['dev_eui']} sent {JOIN_FLOOD} join requests in "
+                             f"{int(ts - j[0]) or 1} s: it cannot join, or someone is probing", always=True)
+            if len(self.joins) > TRACK_MAX:
+                self.joins.clear()
+        elif protocol == "lorawan" and info.get("fcnt") is not None:
+            last, cur = self.fcnt.get(addr), info["fcnt"]
+            self.fcnt[addr] = cur
+            ahead = (cur - last) % 65536 if last is not None else 0  # forward distance; a wrap past 65535 is still forward
+            if ahead >= 32768 and 65536 - ahead > FCNT_BACK:
+                store._event(ts, mac, "lora_fcnt_reset", protocol, f"LoRaWAN device {addr}: frame counter went back from {last} to {cur} "
+                             "(the device restarted, or old frames are being replayed; two devices sharing an address look the same)", always=True)
+            if len(self.fcnt) > TRACK_MAX:
+                self.fcnt.clear()
 
     def observe(self, store, o, dev):
         if o["t"] != "lora_frame":
@@ -241,6 +297,8 @@ class LoraMonitor:
         s[1] += len(payload)
         s[2] += rssi or 0
         node = r.get("node")
+        if node:
+            self._events(store, ts, protocol, node[0], node, r)
         if node and len(self.nodes) < MAX_PENDING:
             addr, name, kind = node
             self.seen.add((int(ts // SEEN_SLOT) * SEEN_SLOT, f"{protocol}:{addr}"))

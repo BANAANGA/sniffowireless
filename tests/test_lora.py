@@ -507,3 +507,64 @@ def test_overview_counts_zigbee_radios_and_lora_nodes_over_time(ctx):
     # pruning removes old activity
     ctx.store.prune(now + 40 * 86400)
     assert ctx.one("SELECT COUNT(*) n FROM radio_seen")["n"] == 0
+
+
+# ------------------------------------------------------------------ events: new nodes and behaviour worth an alert
+def events_of(ctx, *types):
+    ctx.store.flush()
+    q = ",".join("?" * len(types))
+    return ctx.rows(f"SELECT type, mac, peer, detail FROM events WHERE type IN ({q}) ORDER BY id", types)
+
+
+def test_new_lora_nodes_raise_one_event_each(ctx):
+    eu, mc, lw = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"], PROFILES["lorawan-eu868"]
+    t = time.time()
+    ctx.store.process(frame(meshtastic(frm=0xAB), eu, t))
+    ctx.store.process(frame(meshtastic(frm=0xAB, pid=2), eu, t + 1))           # the same node again: nothing new
+    ctx.store.process(frame(meshcore_advert(), mc, t + 2))
+    ctx.store.process(frame(meshcore_text(), mc, t + 3))                       # only a one-byte hash: not worth an alert
+    ctx.store.process(frame(lorawan_uplink(), lw, t + 4))
+    ev = events_of(ctx, "lora_new_node")
+    assert [e["mac"] for e in ev] == ["lora:!000000ab", "lora:pk:00010203", "lora:26011bda"]
+    assert "Meshtastic node !000000ab" in ev[0]["detail"] and "Garage Repeater" in ev[1]["detail"] and "repeater" in ev[1]["detail"]
+    # known after a restart too (the monitor reads the nodes it already stored)
+    ctx.lora.known.clear()
+    ctx.lora.known = {(p, a) for p, a in ctx.store.conn.execute("SELECT protocol, addr FROM lora_nodes")}
+    ctx.store.process(frame(meshtastic(frm=0xAB, pid=3), eu, t + 5))
+    assert len(events_of(ctx, "lora_new_node")) == 3
+
+
+def test_lora_flood_join_flood_and_counter_reset_are_flagged(ctx):
+    eu, lw = PROFILES["meshtastic-eu868"], PROFILES["lorawan-eu868"]
+    t = time.time()
+    for i in range(lora_mod.FLOOD_PACKETS + 5):
+        ctx.store.process(frame(meshtastic(frm=0xF1, pid=i), eu, t + i))
+    ev = events_of(ctx, "lora_flood")
+    assert len(ev) == 1 and ev[0]["mac"] == "lora:!000000f1" and "40 frames" in ev[0]["detail"]
+    for i in range(lora_mod.JOIN_FLOOD + 3):
+        ctx.store.process(frame(lorawan_join_request(), lw, t + i * 10))
+    assert len(events_of(ctx, "lora_join_flood")) == 1
+    # frame counters: forward, a retransmission, a 16 bit wrap and a small step back are normal; a big step back is not
+    for n, fcnt in enumerate((100, 101, 101, 102, 65530, 3)):
+        ctx.store.process(frame(lorawan_uplink(fcnt=fcnt), lw, t + 500 + n))
+    ev = events_of(ctx, "lora_fcnt_reset")
+    # 102 -> 65530 is 65428 steps back (flagged); 65530 -> 3 is a wrap forward (not)
+    assert len(ev) == 1 and "from 102 to 65530" in ev[0]["detail"]
+    ctx.store.process(frame(lorawan_uplink(fcnt=300), lw, t + 600))
+    ctx.store.process(frame(lorawan_uplink(fcnt=290), lw, t + 601))  # 10 back: out of order, not a reset
+    assert len(events_of(ctx, "lora_fcnt_reset")) == 1
+
+
+def test_zigbee_new_network_and_joining_events(ctx):
+    t = time.time()
+    net = lambda permit, ts: {"t": "zb_network", "ts": ts, "mac": "-", "ext_pan": "00:12:4b:00:1e:a0:44:01", "pan": 0x1A62, "channel": 15,
+                              "permit_join": permit, "stack_profile": 2, "update_id": 1, "lqi": 200, "rssi": -50, "routers": []}
+    ctx.store.process(net(False, t))
+    ctx.store.process(net(False, t + 600))                                       # seen again: nothing
+    ctx.store.process(net(True, t + 1200))                                       # joining opened
+    ctx.store.process(net(True, t + 1800))                                       # still open: one event only
+    ev = events_of(ctx, "zigbee_new_network", "zigbee_permit_join")
+    assert [e["type"] for e in ev] == ["zigbee_new_network", "zigbee_permit_join"] and ev[0]["mac"] == "zb:1a62" and "channel 15" in ev[0]["detail"]
+    ctx.store.process(net(False, t + 2400))
+    ctx.store.process(net(True, t + 3000))                                       # opened again later: another event
+    assert len(events_of(ctx, "zigbee_permit_join")) == 2
