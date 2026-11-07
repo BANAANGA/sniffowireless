@@ -74,8 +74,9 @@ A self-hosted Wi-Fi and Bluetooth monitor that runs as a single Docker container
 10. [Security monitoring](#security-monitoring)
 11. [Ethernet monitoring](#ethernet-monitoring)
 12. [Zigbee & 802.15.4](#zigbee--802154)
-13. [Multiple sensors & the map](#multiple-sensors--the-map)
-14. [Backup & restore](#backup--restore)
+13. [LoRa: Meshtastic, MeshCore, LoRaWAN](#lora-meshtastic-meshcore-lorawan)
+14. [Multiple sensors & the map](#multiple-sensors--the-map)
+15. [Backup & restore](#backup--restore)
 15. [Prometheus & Grafana](#prometheus--grafana)
 16. [API](#api)
 17. [Troubleshooting](#troubleshooting)
@@ -612,6 +613,10 @@ All settings are environment variables (put them in `.env`).
 | `ZIGBEE_HOP_INTERVAL` | `2` | Seconds spent on each channel when listening to more than one. |
 | `ZIGBEE_SCAN_INTERVAL` | `600` | Seconds between network scans (minimum 30). |
 | `ZIGBEE_SNIFF` | `1` | `0` turns passive listening off, leaving only network scans. |
+| `LORA_DEVICES` | *(empty)* | Heltec V3 LoRa receivers flashed with `firmware/lora-sniffer`, by stable path under `/dev/serial/by-id/`. Empty disables LoRa monitoring. |
+| `LORA_REGION` | `EU868` | `EU868`, `US915` or `ANZ`: picks the default listening profiles. |
+| `LORA_PROFILES` | *(region default)* | Profiles to listen on, see [LoRa](#lora-meshtastic-meshcore-lorawan). |
+| `LORA_HOP_INTERVAL` | `5` | Seconds spent on each profile when there is more than one (minimum 0.5). |
 | `ETH_PROMISC` | `1` | Put the Ethernet interface in promiscuous mode (needed on a mirror/SPAN port). |
 | `LAN_SESSION_TIMEOUT` | `900` | Seconds without traffic before a LAN device counts as offline. |
 | `BT_ACTIVE_SCAN` | `1` | Active LE scanning (sends scan requests, which gets device names). `0` is fully passive. |
@@ -966,6 +971,44 @@ ZIGBEE_DEVICES=/dev/serial/by-id/usb-...
 - On Ubuntu, `brltty` can claim CP210x and CH340 sticks, making the port vanish. Remove it if the stick doesn't show up.
 
 Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
+
+---
+
+## LoRa: Meshtastic, MeshCore, LoRaWAN
+
+A **Heltec WiFi LoRa 32 V3** (ESP32-S3 + SX1262) flashed with the receive-only firmware in [`firmware/lora-sniffer`](firmware/lora-sniffer) listens on LoRa bands and the server works out what it heard. The **LoRa** page shows packets per protocol over time, every node address heard, and the latest packets with their type, hop count and signal.
+
+**What it recognises** (from the unencrypted headers, never by decrypting anything):
+
+| Protocol | What you see |
+|---|---|
+| **Meshtastic** | Sender and destination node IDs, hop count, relay, MQTT gateway flag, channel hash |
+| **MeshCore** | Packet type (advert, text, ack, path, …), route, hops, and for adverts the node name and type (chat, repeater, room, sensor) |
+| **LoRaWAN** | Message type, device address, frame counter; join requests show the device EUI |
+| **LoRa APRS** | Callsigns and packet type |
+| anything else | Shown as *Unidentified LoRa* with size and a "looks like text / random" hint |
+
+Each packet carries a confidence (*sure*, *likely*, *a guess*). A LoRa receiver only hears packets whose **sync word** and **spreading factor / bandwidth** match its settings, so the radio **hops between profiles** (frequency, bandwidth, SF, sync word). Hopping means each profile is heard only part of the time, and a quiet profile is not proof of silence. With a single profile the radio stays put and misses nothing on it. Protocols not in this list (for example IoTNet) show up as unidentified for now; the classifier in `sniffowireless/lora_protocols.py` is built to take more.
+
+**Privacy:** only metadata is stored (addresses, types, signal, size). Message bodies, raw bytes and shared coordinates are never written to the database.
+
+**Setup:**
+
+1. Flash the firmware. This replaces whatever is on the board. Easiest is **Settings → LoRa flasher**: plug the board into the computer you browse from and click *Select board and flash* (it can save a copy of the current firmware first). It needs a Chromium based browser and a secure page, so `https://` or `http://localhost` (for example via `ssh -L 8080:localhost:8080 your-server`). Or build and flash from a terminal, see [`firmware/lora-sniffer/README.md`](firmware/lora-sniffer/README.md).
+2. Plug the board into the machine that runs the container and note its path: `ls /dev/serial/by-id`.
+3. Set `LORA_DEVICES=/dev/serial/by-id/usb-Silicon_Labs_CP2102_...` and `LORA_REGION=EU868` (or `US915`, `ANZ`), then restart the container. As with Zigbee, `privileged: true` exposes devices present at start, and with [less privilege](#less-privilege) you pass `--device` yourself.
+
+Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `LORA_DEVICES` too.
+
+**Profiles.** `LORA_REGION` picks sensible defaults (EU868: Meshtastic LongFast on 869.525 MHz and MeshCore on 869.618 MHz; US915: Meshtastic LongFast on 906.875 MHz; ANZ: Meshtastic and MeshCore narrow). Override with `LORA_PROFILES`, a comma separated list of:
+
+- built-in names: `meshtastic-eu868`, `meshtastic-us`, `meshtastic-anz`, `meshtastic-eu433`, `meshcore-eu868`, `meshcore-au-narrow`, `meshcore-nz-narrow`, `lorawan-eu868`, `lorawan-us915-sb2`, `lora-aprs-433`
+- `meshtastic:<region>[:<preset>]` for another Meshtastic region or preset, for example `meshtastic:EU868:MediumFast`
+- your own: `name=freq/bw/sf/cr/sync[/preamble]`, for example `mynet=868.1/125/7/5/0x12`
+
+The V3 board covers 863–928 MHz; 433 MHz profiles need a 433 MHz board.
+
+Receive-only: the firmware has no transmit code.
 
 ---
 

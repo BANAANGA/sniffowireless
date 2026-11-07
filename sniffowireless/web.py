@@ -12,13 +12,14 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, manage,
+from . import (alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
                matching, metrics, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
 
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
+ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
 CSV_FORMULA = ("=", "+", "-", "@", "\t", "\r")
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
@@ -653,7 +654,7 @@ def create_app(ctx):
     # ------------------------------------------------------------------ static
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
-    for mod in (auth, appearance, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, interference, dfs,
+    for mod in (auth, appearance, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
                 trackers, backup, search, logs, matching, handshake, channels):
         app.include_router(mod.routes(ctx))
 
@@ -682,6 +683,13 @@ def create_app(ctx):
         # pinned version, so a week is safe; the browser keeps its copy instead of re-fetching 200 kB per visit
         return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
                 if f.exists() else RedirectResponse(CHART_JS_CDN))
+
+    @app.get("/vendor/esptool.bundle.js")
+    def esptool_js():
+        # the browser-side flasher (Settings -> LoRa flasher); bundled at build time like Chart.js, with the pinned CDN copy as fallback
+        f = vendor_dir / "esptool.bundle.js"
+        return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
+                if f.exists() else RedirectResponse(ESPTOOL_JS_CDN))
 
     app.mount("/static", ImmutableStatic(directory=static), name="static")
 
