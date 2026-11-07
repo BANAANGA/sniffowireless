@@ -19,15 +19,19 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 #include <SPI.h>
+#include <U8g2lib.h>
+#include <Wire.h>
 
 // Heltec WiFi LoRa 32 V3 wiring (the same as Meshtastic and the Heltec RadioLib examples use).
 static const int LORA_NSS = 8, LORA_DIO1 = 14, LORA_RST = 12, LORA_BUSY = 13;
 static const int LORA_SCK = 9, LORA_MISO = 11, LORA_MOSI = 10;
 static const int PIN_VEXT = 36;  // active low: powers the display and the LoRa front end
 static const int PIN_LED = 35;
+static const int OLED_SDA = 17, OLED_SCL = 18, OLED_RST = 21;  // the 0.96" SSD1306 shares the Vext supply
 static const float TCXO_VOLTAGE = 1.8;  // the SX1262's clock comes from a TCXO fed through DIO3
 
 SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, OLED_RST, OLED_SCL, OLED_SDA);
 
 static volatile bool rxFlag = false;
 static bool configured = false;
@@ -35,6 +39,13 @@ static float cfgFreq = 0, cfgBw = 0;
 static uint8_t cfgSf = 0, cfgSync = 0;
 static uint32_t packets = 0, crcErrors = 0, lastStat = 0, ledOffAt = 0;
 static String line;
+// What the screen shows: the last frame heard, the radio's live noise level and a packets-per-10-seconds graph.
+static const int GRAPH_BARS = 40;
+static uint8_t graph[GRAPH_BARS];
+static uint32_t graphAt = 0, lastDraw = 0, lastRxMs = 0;
+static float lastRssi = 0, lastSnr = 0, noise = -127;
+static uint16_t lastLen = 0;
+static uint8_t graphNow = 0;
 
 void IRAM_ATTR onReceive() { rxFlag = true; }
 
@@ -99,12 +110,39 @@ static void readPacket() {
   if (state == RADIOLIB_ERR_CRC_MISMATCH) { crcErrors++; return; }
   if (state != RADIOLIB_ERR_NONE) return;
   packets++;
+  lastRssi = rssi; lastSnr = snr; lastLen = (uint16_t)len; lastRxMs = millis();
+  if (graphNow < 255) graphNow++;
   led(true);
   ledOffAt = millis() + 60;
   Serial.printf("RX,%lu,%.4f,%.1f,%u,0x%02X,%.1f,%.2f,%.0f,%u,", (unsigned long)millis(), cfgFreq, cfgBw, cfgSf, cfgSync, rssi, snr,
                 ferr, (unsigned)len);
   for (size_t i = 0; i < len; i++) Serial.printf("%02x", buf[i]);
   Serial.println();
+}
+
+static void drawScreen() {
+  char buf[32];
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_6x10_tf);
+  if (configured) snprintf(buf, sizeof buf, "%.3f SF%u", cfgFreq, cfgSf);
+  else snprintf(buf, sizeof buf, "waiting for host");
+  oled.drawStr(0, 8, buf);
+  snprintf(buf, sizeof buf, "Pkts %lu  CRC %lu", (unsigned long)packets, (unsigned long)crcErrors);
+  oled.drawStr(0, 20, buf);
+  if (packets) snprintf(buf, sizeof buf, "Last %.0fdBm %.0fdB %uB", lastRssi, lastSnr, lastLen);
+  else snprintf(buf, sizeof buf, "Last: nothing yet");
+  oled.drawStr(0, 32, buf);
+  snprintf(buf, sizeof buf, "Noise %.0f dBm", noise);
+  oled.drawStr(0, 44, buf);
+  // activity graph: one bar per 10 s, oldest on the left; a received frame flashes the corner
+  uint8_t top = 1;
+  for (int i = 0; i < GRAPH_BARS; i++) if (graph[i] > top) top = graph[i];
+  for (int i = 0; i < GRAPH_BARS; i++) {
+    int h = graph[i] ? 1 + (int)graph[i] * 9 / top : 0;
+    if (h) oled.drawBox(i * 3, 63 - h, 2, h); else oled.drawPixel(i * 3, 63);
+  }
+  if (millis() - lastRxMs < 400 && packets) oled.drawBox(120, 0, 8, 8);
+  oled.sendBuffer();
 }
 
 void setup() {
@@ -115,6 +153,13 @@ void setup() {
   led(false);
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
   delay(200);
+  oled.begin();
+  oled.setContrast(120);
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_6x10_tf);
+  oled.drawStr(0, 10, "LoRa sniffer (RX only)");
+  oled.drawStr(0, 24, "waiting for host...");
+  oled.sendBuffer();
   Serial.println("READY,lora-sniffer,1,heltec_v3,sx1262");
 }
 
@@ -126,6 +171,17 @@ void loop() {
   }
   if (rxFlag) { rxFlag = false; if (configured) readPacket(); }
   if (ledOffAt && (int32_t)(millis() - ledOffAt) >= 0) { led(false); ledOffAt = 0; }
+  if (millis() - graphAt >= 10000) {
+    graphAt = millis();
+    memmove(graph, graph + 1, GRAPH_BARS - 1);
+    graph[GRAPH_BARS - 1] = graphNow;
+    graphNow = 0;
+  }
+  if (millis() - lastDraw >= 500) {
+    lastDraw = millis();
+    if (configured && !rxFlag) noise = radio.getRSSI(false);  // instantaneous level on the channel
+    drawScreen();
+  }
   if (millis() - lastStat >= 10000) {
     lastStat = millis();
     Serial.printf("STAT,%lu,%lu,%lu\n", (unsigned long)millis(), (unsigned long)packets, (unsigned long)crcErrors);

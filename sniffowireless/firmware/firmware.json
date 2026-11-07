@@ -1,0 +1,11 @@
+{
+  "name": "lora-sniffer-heltec-v3",
+  "title": "LoRa sniffer for the Heltec WiFi LoRa 32 V3",
+  "chip": "ESP32-S3",
+  "address": 0,
+  "size": 425344,
+  "sha256": "e1ed2c68c6061ca5012fa4d8169abc4a78b4db2c5db8477f62f0fb9046469f68",
+  "source_sha256": "90ca0056769a3e407acd227be358d9fc8748cb49520e0a816a9fa35ef2b394a6",
+  "built": "2026-11-07",
+  "file": "lora-sniffer-heltec-v3.bin"
+}

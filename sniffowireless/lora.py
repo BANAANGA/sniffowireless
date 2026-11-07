@@ -11,12 +11,14 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from collections import deque
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from . import status
-from .auth import current_user
+from .auth import current_user, require_admin
 from .lora_protocols import PROFILES, PROTOCOLS, classify
 
 log = logging.getLogger("sniffowireless.lora")
@@ -276,8 +278,34 @@ class LoraMonitor:
 
 
 # ------------------------------------------------------------------------------------------------ API
+FIRMWARE_DIR = Path(__file__).parent / "firmware"
+
+
+def firmware_manifest():
+    """The firmware image the web flasher offers (built by scripts/build_firmware.py), or None."""
+    try:
+        m = json.loads((FIRMWARE_DIR / "firmware.json").read_text())
+        return m if (FIRMWARE_DIR / m["file"]).is_file() else None
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def routes(ctx):
     r = APIRouter()
+
+    @r.get("/api/lora/firmware")
+    def firmware(_=Depends(require_admin)):
+        m = firmware_manifest()
+        if not m:
+            raise HTTPException(404, "This build has no firmware image")
+        return {**m, "url": "/api/lora/firmware.bin"}
+
+    @r.get("/api/lora/firmware.bin")
+    def firmware_bin(_=Depends(require_admin)):
+        m = firmware_manifest()
+        if not m:
+            raise HTTPException(404, "This build has no firmware image")
+        return FileResponse(FIRMWARE_DIR / m["file"], media_type="application/octet-stream", filename=m["file"])
 
     @r.get("/api/lora")
     def overview(hours: float = 24, _=Depends(current_user)):

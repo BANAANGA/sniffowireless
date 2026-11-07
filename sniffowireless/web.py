@@ -19,6 +19,7 @@ from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
 
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
+ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
 CSV_FORMULA = ("=", "+", "-", "@", "\t", "\r")
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
@@ -682,6 +683,13 @@ def create_app(ctx):
         # pinned version, so a week is safe; the browser keeps its copy instead of re-fetching 200 kB per visit
         return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
                 if f.exists() else RedirectResponse(CHART_JS_CDN))
+
+    @app.get("/vendor/esptool.bundle.js")
+    def esptool_js():
+        # the browser-side flasher (Settings -> LoRa flasher); bundled at build time like Chart.js, with the pinned CDN copy as fallback
+        f = vendor_dir / "esptool.bundle.js"
+        return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
+                if f.exists() else RedirectResponse(ESPTOOL_JS_CDN))
 
     app.mount("/static", ImmutableStatic(directory=static), name="static")
 

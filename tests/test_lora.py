@@ -412,3 +412,43 @@ def test_lora_api(ctx, tmp_path):
     assert {(p["profile"], p["protocol"]) for p in d["profiles"]} == {("meshtastic-eu868", "meshtastic"), ("meshcore-eu868", "meshcore")}
     assert c.get("/api/lora?hours=0.001").status_code == 400 and c.get("/api/lora?hours=100000").status_code == 400
     assert c.get("/api/lora?hours=720").json()["bucket"] >= 60 and c.get("/api/lora?hours=0.02").status_code == 200
+
+
+# ------------------------------------------------------------------ the web flasher's firmware image
+def test_firmware_image_matches_its_manifest_and_source():
+    import hashlib
+    import importlib.util
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    m = lora_mod.firmware_manifest()
+    assert m, "run: python3 scripts/build_firmware.py"
+    image = (lora_mod.FIRMWARE_DIR / m["file"]).read_bytes()
+    assert len(image) == m["size"] and hashlib.sha256(image).hexdigest() == m["sha256"]
+    spec = importlib.util.spec_from_file_location("build_firmware", root / "scripts" / "build_firmware.py")
+    bf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bf)
+    assert bf.source_hash() == m["source_sha256"], "firmware/lora-sniffer changed: run python3 scripts/build_firmware.py and commit the image"
+    # a flash image for the ESP32-S3 starts with the bootloader's magic byte and holds the partition table at 0x8000
+    assert image[0] == 0xE9 and image[0x8000:0x8002] == b"\xaa\x50"
+
+
+def test_firmware_endpoints_are_admin_only(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('view', ?, 'viewer', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.get("/api/lora/firmware").status_code == 401 and c.get("/api/lora/firmware.bin").status_code == 401
+    assert c.post("/api/auth/login", json={"username": "view", "password": "correct-horse-battery"}).status_code == 200
+    assert c.get("/api/lora/firmware").status_code == 403 and c.get("/api/lora/firmware.bin").status_code == 403
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    m = c.get("/api/lora/firmware").json()
+    assert m["url"] == "/api/lora/firmware.bin" and m["address"] == 0 and len(m["sha256"]) == 64
+    body = c.get(m["url"])
+    assert body.status_code == 200 and len(body.content) == m["size"]
+    import hashlib
+    assert hashlib.sha256(body.content).hexdigest() == m["sha256"]
+    assert "esptool" in c.get("/vendor/esptool.bundle.js", follow_redirects=False).headers.get("location", "esptool")

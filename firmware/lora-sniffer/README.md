@@ -4,6 +4,8 @@ Receive-only LoRa firmware for the **Heltec WiFi LoRa 32 V3** (ESP32-S3 + SX1262
 
 ## Flash
 
+The simplest way is **Settings → LoRa flasher** in the sniffowireless web interface (browser based, over Web Serial). The image it flashes is built from this directory with `python3 scripts/build_firmware.py` and committed as `sniffowireless/firmware/lora-sniffer-heltec-v3.bin`; a test fails when this source changes without a rebuilt image. To flash from a terminal instead:
+
 Flashing **replaces whatever firmware is on the board** (for example Meshtastic). To keep a copy first: `esptool.py --port /dev/ttyUSB0 read_flash 0 0x800000 backup.bin`.
 
 ```bash
@@ -13,6 +15,10 @@ pio run -t upload --upload-port /dev/ttyUSB0
 ```
 
 The board shows up as a CP2102 serial port. On Linux you need access to it (your user in the `uucp` or `dialout` group, depending on the distribution). If upload does not start, hold **PRG**, tap **RST**, release **PRG**, then retry.
+
+## Screen
+
+The built-in OLED shows the current frequency and spreading factor, packet and CRC counts, the last frame (signal, SNR, size), the live noise level on the channel (a quick antenna check: about -100 to -115 dBm is normal) and a graph of packets per 10 seconds.
 
 ## Serial protocol (115200 baud, one line each)
 

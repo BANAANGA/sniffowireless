@@ -509,7 +509,7 @@ addRoute('/reports', async (_, params) => {
 });
 
 // ===================================================================== settings
-const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'], ['wifichannels', 'Wi-Fi channels'],
+const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'], ['wifichannels', 'Wi-Fi channels'], ['loraflasher', 'LoRa flasher'],
   ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['performance', 'Performance'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance'], ['about', 'About']];
 
 addRoute('/settings', async (_, params) => {

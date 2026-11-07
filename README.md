@@ -994,7 +994,7 @@ Each packet carries a confidence (*sure*, *likely*, *a guess*). A LoRa receiver 
 
 **Setup:**
 
-1. Flash the firmware (see [`firmware/lora-sniffer/README.md`](firmware/lora-sniffer/README.md)). This replaces whatever is on the board.
+1. Flash the firmware. This replaces whatever is on the board. Easiest is **Settings → LoRa flasher**: plug the board into the computer you browse from and click *Select board and flash* (it can save a copy of the current firmware first). It needs a Chromium based browser and a secure page, so `https://` or `http://localhost` (for example via `ssh -L 8080:localhost:8080 your-server`). Or build and flash from a terminal, see [`firmware/lora-sniffer/README.md`](firmware/lora-sniffer/README.md).
 2. Plug the board into the machine that runs the container and note its path: `ls /dev/serial/by-id`.
 3. Set `LORA_DEVICES=/dev/serial/by-id/usb-Silicon_Labs_CP2102_...` and `LORA_REGION=EU868` (or `US915`, `ANZ`), then restart the container. As with Zigbee, `privileged: true` exposes devices present at start, and with [less privilege](#less-privilege) you pass `--device` yourself.
 
