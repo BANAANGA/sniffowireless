@@ -622,7 +622,8 @@ const SETTINGS_VIEWS = {
       const same = s.id === 'local' || (v.version === about.version && (!v.commit || !about.commit || v.commit === about.commit));
       return `<b>${esc(v.version)}</b>${v.commit ? ` <span class="mono faint">${esc(v.commit.slice(0, 7))}</span>` : ''}${v.arch ? ` <span class="faint small-text">${esc(v.arch)}</span>` : ''}
         ${same ? '' : `<span class="tag warn" title="The server runs ${esc(about.version)}${about.commit ? ' ' + esc(about.commit.slice(0, 7)) : ''}">differs from the server</span>`}
-        ${v.built ? `<div class="faint small-text">built ${esc(v.built.slice(0, 10))}</div>` : ''}`;
+        ${v.built ? `<div class="faint small-text">built ${esc(v.built.slice(0, 10))}</div>` : ''}
+        ${s.id !== 'local' && !s.online ? `<div class="warn-text small-text" title="The sensor is offline, so this is what it last reported, not necessarily what it runs now">as of ${ago(s.last_seen)}</div>` : ''}`;
     };
     // Load and memory of the sensor's machine (this server's own, for the built-in one); a silent sensor shows how long.
     const sysCell = s => {
