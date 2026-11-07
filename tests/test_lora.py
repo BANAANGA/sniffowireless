@@ -568,3 +568,34 @@ def test_zigbee_new_network_and_joining_events(ctx):
     ctx.store.process(net(False, t + 2400))
     ctx.store.process(net(True, t + 3000))                                       # opened again later: another event
     assert len(events_of(ctx, "zigbee_permit_join")) == 2
+
+
+# ------------------------------------------------------------------ airtime
+def test_airtime_formula():
+    from sniffowireless.lora_protocols import airtime_ms
+    assert abs(airtime_ms(10, 7, 125) - 41.2) < 0.1                       # the worked example in Semtech's calculator
+    assert airtime_ms(20, 7, 125) > airtime_ms(10, 7, 125) and airtime_ms(10, 12, 125) > 20 * airtime_ms(10, 7, 125)
+    assert airtime_ms(40, 11, 250) < airtime_ms(40, 11, 125) and airtime_ms(40, 7, 125, cr=8) > airtime_ms(40, 7, 125, cr=5)
+    assert airtime_ms(0, 7, 125) > 0
+
+
+def test_airtime_is_kept_and_shown_per_profile(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.lora_protocols import airtime_ms
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    eu = PROFILES["meshtastic-eu868"]
+    now = time.time()
+    payload = meshtastic()
+    for i in range(10):
+        ctx.store.process(frame(payload, eu, now - 100 + i))
+    ctx.store.flush()
+    each = airtime_ms(len(payload), eu.sf, eu.bw, eu.cr, 16) / 1000
+    row = c.get("/api/lora?hours=1").json()["listening"][0]
+    assert row["name"] == "meshtastic-eu868" and abs(row["air_s"] - 10 * each) < 0.05
+    # two profiles are listened to alternately: each is heard half of the time, so its use is twice the airtime share
+    assert abs(row["use"] - 10 * each / (3600 * 0.5)) < 0.0005

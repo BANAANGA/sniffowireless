@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 
 from . import status
 from .auth import current_user, require_admin
-from .lora_protocols import PROFILES, PROTOCOLS, classify
+from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
 
 log = logging.getLogger("sniffowireless.lora")
 
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS radio_seen(
   slot INTEGER NOT NULL, kind TEXT NOT NULL, addr TEXT NOT NULL, PRIMARY KEY(slot, kind, addr)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS lora_stats(
   minute INTEGER NOT NULL, protocol TEXT NOT NULL, profile TEXT NOT NULL, packets INTEGER DEFAULT 0, bytes INTEGER DEFAULT 0,
-  rssi_sum REAL DEFAULT 0, PRIMARY KEY(minute, protocol, profile)) WITHOUT ROWID;
+  rssi_sum REAL DEFAULT 0, air_ms REAL DEFAULT 0, PRIMARY KEY(minute, protocol, profile)) WITHOUT ROWID;
 """
 BAUD_RATE = 115200
 RETRY_INTERVAL = 30
@@ -222,6 +222,10 @@ class LoraMonitor:
         self.nodes = {}
         self.stats = {}
         self.seen = set()
+        try:  # databases from before the airtime figures
+            ctx.store.conn.execute("ALTER TABLE lora_stats ADD COLUMN air_ms REAL DEFAULT 0")
+        except Exception:
+            pass
         self.known = set()          # (protocol, addr) nodes seen before, for "new node" events
         self.rate = {}              # node -> recent frame times, for flood detection
         self.joins = {}             # LoRaWAN DevEUI -> recent join request times
@@ -292,10 +296,14 @@ class LoraMonitor:
                                  o.get("bw"), o.get("sf"), o.get("sync"), rssi, snr, len(payload), o.get("sensor") or "local",
                                  json.dumps(r["info"]) if r["info"] else None))
         key = (int(ts // 60) * 60, protocol, o.get("profile") or "")
-        s = self.stats.setdefault(key, [0, 0, 0.0])
+        s = self.stats.setdefault(key, [0, 0, 0.0, 0.0])
         s[0] += 1
         s[1] += len(payload)
         s[2] += rssi or 0
+        try:  # time on air, with the coding rate of the profile it was heard on (frames do not say) and the preamble the protocol sends
+            s[3] += airtime_ms(len(payload), int(o["sf"]), float(o["bw"]), profile.cr if profile else 5, AIR_PREAMBLE.get(protocol, 8))
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            pass
         node = r.get("node")
         if node:
             self._events(store, ts, protocol, node[0], node, r)
@@ -329,9 +337,10 @@ class LoraMonitor:
             "snr=excluded.snr, profile=excluded.profile, last_seen=excluded.last_seen",
             [(p, a, n["name"], n["kind"], n["packets"], n["rssi"], n["best"], n["snr"], n["profile"], n["first"], n["last"])
              for (p, a), n in self.nodes.items()])
-        c.executemany("INSERT INTO lora_stats VALUES(?,?,?,?,?,?) ON CONFLICT(minute, protocol, profile) DO UPDATE SET "
-                      "packets=packets+excluded.packets, bytes=bytes+excluded.bytes, rssi_sum=rssi_sum+excluded.rssi_sum",
-                      [(m, p, prof, s[0], s[1], s[2]) for (m, p, prof), s in self.stats.items()])
+        c.executemany("INSERT INTO lora_stats(minute, protocol, profile, packets, bytes, rssi_sum, air_ms) VALUES(?,?,?,?,?,?,?) "
+                      "ON CONFLICT(minute, protocol, profile) DO UPDATE SET packets=packets+excluded.packets, bytes=bytes+excluded.bytes, "
+                      "rssi_sum=rssi_sum+excluded.rssi_sum, air_ms=air_ms+excluded.air_ms",
+                      [(m, p, prof, s[0], s[1], s[2], s[3]) for (m, p, prof), s in self.stats.items()])
         c.executemany("INSERT OR IGNORE INTO radio_seen VALUES(?, 'lora', ?)", list(self.seen))
         self.packets, self.nodes, self.stats, self.pending = [], {}, {}, False
         self.seen = set()
@@ -397,13 +406,25 @@ def routes(ctx):
         for p in recent:
             p["label"] = PROTOCOLS.get(p["protocol"], p["protocol"])
             p["info"] = json.loads(p["info"]) if p["info"] else {}
-        profiles = ctx.rows("SELECT profile, protocol, SUM(packets) packets FROM lora_stats WHERE minute >= ? GROUP BY profile, protocol "
-                            "ORDER BY packets DESC", (int(since),))
+        profiles = ctx.rows("SELECT profile, protocol, SUM(packets) packets, SUM(air_ms) / 1000.0 air_s FROM lora_stats WHERE minute >= ? "
+                            "GROUP BY profile, protocol ORDER BY packets DESC", (int(since),))
         sensors = [s for s in status.snapshot() if s.get("type") == "lora"]
+        # Channel use while listening: airtime heard / time spent on that profile. A hopping radio sits on each of its
+        # profiles 1/N of the time, so that is the denominator (an estimate: other sensors, or a recent start, change it).
+        span = hours * 3600
+        started = [s["since"] for s in sensors if s.get("since")]
+        if started:
+            span = min(span, max(60, now - min(started)))
+        share = 1 / len(ctx.cfg.lora_profiles) if len(ctx.cfg.lora_profiles) > 1 else 1
+        air = {}
+        for p in profiles:
+            air[p["profile"]] = air.get(p["profile"], 0) + (p["air_s"] or 0)
+        use = {name: round(min(1.0, s / (span * share)), 4) for name, s in air.items()}
         return {"now": now, "since": since, "bucket": bucket, "t": ts, "protocols": protocols, "profiles": profiles, "nodes": nodes,
                 "recent": recent, "series": {k: [v.get(t, 0) for t in ts] for k, v in series.items()}, "sensors": sensors,
                 "configured": bool(sensors) or ctx.cfg.demo or bool(ctx.cfg.lora_devices),
-                "listening": [{"name": p.name, "label": p.label, "describe": p.describe(), "hint": p.hint} for p in ctx.cfg.lora_profiles],
+                "listening": [{"name": p.name, "label": p.label, "describe": p.describe(), "hint": p.hint, "air_s": round(air.get(p.name, 0), 2),
+                               "use": use.get(p.name, 0.0)} for p in ctx.cfg.lora_profiles],
                 "known_profiles": [{"name": p.name, "label": p.label, "describe": p.describe()} for p in PROFILES.values()],
                 "protocol_labels": PROTOCOLS}
 
