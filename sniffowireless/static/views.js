@@ -613,7 +613,7 @@ const SETTINGS_VIEWS = {
     };
   },
   async sensors(el) {
-    const [ss, about] = await Promise.all([api('/api/sensors'), api('/api/about')]);
+    const [ss, about, stat] = await Promise.all([api('/api/sensors'), api('/api/about'), api('/api/status')]);
     // The version a sensor runs, and whether it is the server's: a different one is worth a look (features that need both
     // ends, like channel settings from the web UI, only work once both are updated).
     const verCell = s => {
@@ -624,10 +624,20 @@ const SETTINGS_VIEWS = {
         ${same ? '' : `<span class="tag warn" title="The server runs ${esc(about.version)}${about.commit ? ' ' + esc(about.commit.slice(0, 7)) : ''}">differs from the server</span>`}
         ${v.built ? `<div class="faint small-text">built ${esc(v.built.slice(0, 10))}</div>` : ''}`;
     };
+    // Load and memory of the sensor's machine (this server's own, for the built-in one); a silent sensor shows how long.
+    const sysCell = s => {
+      const q = s.id === 'local' ? { system: stat.system } : (stat.sensor_systems || []).find(x => x.id === s.id);
+      if (!q) return '<span class="faint">—</span>';
+      if (q.stale) return `<span class="faint">no report for ${dur(q.quiet_for || 0)}</span>`;
+      const f = loadFigures(q.system), hot = (p, at) => p != null && p >= at ? ' warn-text' : '';
+      return `<div class="${hot(f.loadP, 80).trim()}"><span class="mono">${f.load ? f.load[0].toFixed(2) : '—'}</span> <span class="faint">load${f.cores ? ` · ${f.cores} core${f.cores > 1 ? 's' : ''}` : ''}</span></div>
+        <div class="${hot(f.memP, 90).trim()}"><span class="mono">${f.memP == null ? '—' : f.memP.toFixed(0) + '%'}</span> <span class="faint">memory${f.m.total ? ` · ${bytes(f.m.used || 0)} of ${bytes(f.m.total)}` : ''}</span></div>`;
+    };
     el.innerHTML = `<section class="panel"><header><h2>Sensors</h2><button class="btn primary" id="add-sensor">Add remote sensor</button></header><div class="body flush">${tableHtml(
-      '<th>Sensor</th><th>Version</th><th>Room</th><th>Status</th><th class="num">Last report</th><th>On map</th><th></th>',
+      '<th>Sensor</th><th>Version</th><th>Room</th><th>Status</th><th>Load · memory</th><th class="num">Last report</th><th>On map</th><th></th>',
       ss.map(s => { const st = (s.info && s.info.status) || []; return `<tr><td><b>${esc(s.name)}</b> <span class="mono faint">${esc(s.id)}</span></td><td>${verCell(s)}</td><td>${esc(s.room || '—')}</td>
         <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'}<div class="faint small-text" style="white-space:normal;max-width:260px">${st.map(x => `${esc(x.name)} ${num(x.pps)} pkt/s`).join(', ')}</div></td>
+        <td>${sysCell(s)}</td>
         <td class="num muted">${s.id === 'local' ? '—' : ago(s.last_seen)}</td><td>${s.x != null ? 'placed' : '<span class="faint">not placed</span>'}</td>
         <td class="num"><button class="btn small" data-edit="${esc(s.id)}">Edit</button>${s.id !== 'local' ? ` <button class="btn small danger" data-del="${esc(s.id)}">Remove</button>` : ''}</td></tr>`; }).join(''))}</div></section>
       <p class="faint small-text">A remote sensor is this same container started with <code>SNIFFOWIRELESS_MODE=sensor</code> on another machine (e.g. a Raspberry Pi in another room). It forwards everything it captures here. Give each sensor a room name, then place it on the <a href="#/map">map</a>.</p>`;

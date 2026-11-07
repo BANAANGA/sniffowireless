@@ -75,6 +75,14 @@ def render(ctx):
               sensor=s["name"])
         o.add("sniffowireless_sensor_pps", s.get("pps") or 0, "Frames per second", sensor=s["name"])
         o.add("sniffowireless_sensor_up", int(s.get("state") not in ("error", "offline")), "Sensor healthy", sensor=s["name"])
+    for sid, v in status.systems_snapshot().items():  # remote sensors' load and memory, while they are reporting
+        if v["stale"]:
+            continue
+        cpu, mem = v["system"].get("cpu", {}), v["system"].get("memory", {})
+        if cpu.get("load"):
+            o.add("sniffowireless_sensor_load1", cpu["load"][0], "Load average over 1 minute of a remote sensor's machine", sensor=sid)
+        if mem.get("total") and mem.get("used") is not None:
+            o.add("sniffowireless_sensor_memory_used_ratio", round(mem["used"] / mem["total"], 4), "Memory in use on a remote sensor's machine (excluding cache)", sensor=sid)
     for r in ctx.rows("SELECT t.mac, COALESCE(m.label, d.name, d.ip, t.mac) label, SUM(t.bytes_out) o, SUM(t.bytes_in) i "
                       "FROM lan_traffic t LEFT JOIN devices d ON d.mac=t.mac LEFT JOIN device_meta m ON m.mac=t.mac "
                       "WHERE t.minute >= ? GROUP BY t.mac ORDER BY o + i DESC LIMIT 50", (now - 3600,)):

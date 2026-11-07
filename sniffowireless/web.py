@@ -90,8 +90,11 @@ def create_app(ctx):
 
     @app.get("/api/status", dependencies=[Depends(current_user)])
     def get_status():
+        names = {r["id"]: r for r in rows("SELECT id, name, room FROM sensors")}
+        systems = [{"id": sid, "name": (names.get(sid) or {}).get("name") or sid, "room": (names.get(sid) or {}).get("room"), **v}
+                   for sid, v in status.systems_snapshot().items()]
         return {"sensors": status.snapshot(), "store": store.stats(), "demo": cfg.demo, "now": time.time(),
-                "system": sysinfo.snapshot(cfg.db_path, cfg.data_dir),
+                "system": sysinfo.snapshot(cfg.db_path, cfg.data_dir), "sensor_systems": sorted(systems, key=lambda x: x["name"].lower()),
                 "config": {"active_window": cfg.active_window, "wifi_session_timeout": cfg.wifi_session_timeout,
                            "bt_session_timeout": cfg.bt_session_timeout, "retention_days": cfg.retention_days}}
 

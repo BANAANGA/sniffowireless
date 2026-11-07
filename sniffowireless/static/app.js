@@ -330,16 +330,37 @@ async function viewSessions(params) {
 
 // ------------------------------------------------------------------ overview
 // System resources: one meter per resource; the value is always printed, colour only adds emphasis above 80 / 95 %.
+const sysPct = v => v == null ? null : Math.max(0, Math.min(100, v));
+function sysMeter(label, p, value, detail, title = '') {
+  const lvl = p == null ? '' : p >= 95 ? 'bad' : p >= 80 ? 'warn' : '';
+  return `<div class="sysm ${lvl}" title="${esc(title)}"><div class="sysm-top"><span class="muted">${label}</span><b class="mono">${value}</b></div>
+    <div class="sysm-track" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p == null ? '' : Math.round(p)}"><i style="width:${p == null ? 0 : p}%"></i></div>
+    <div class="faint small-text">${detail}</div></div>`;
+}
+// Load and memory of one machine, as shown for a remote sensor: the load average per core (1.0 = every core busy) and memory in use.
+function loadFigures(sys) {
+  const c = (sys && sys.cpu) || {}, m = (sys && sys.memory) || {}, d = sys && sys.disk;
+  const load = Array.isArray(c.load) ? c.load : null, cores = c.cores || 1;
+  return { load, cores, loadP: load ? load[0] / cores * 100 : null, cpu: c.percent,
+    memP: m.total && m.used != null ? m.used / m.total * 100 : null, m, diskP: d && d.total ? d.used / d.total * 100 : null, d };
+}
+function renderSensorSystems(list) {
+  const panel = document.getElementById('sensor-sys-panel');
+  if (!panel) return;
+  panel.hidden = !list.length;
+  if (!list.length) return;
+  document.getElementById('sensor-systems').innerHTML = list.map(x => {
+    if (x.stale) return `<div class="sysrow"><div><span class="state-dot off"></span><b>${esc(x.name)}</b> <span class="faint">offline · no report for ${dur(x.quiet_for || 0)}</span></div></div>`;
+    const f = loadFigures(x.system);
+    return `<div class="sysrow"><div><span class="state-dot ok"></span><b>${esc(x.name)}</b>${x.room ? ` <span class="faint">${esc(x.room)}</span>` : ''}</div>
+      ${sysMeter('Load', sysPct(f.loadP), f.load ? f.load[0].toFixed(2) : '—', f.load ? `${f.load.map(v => v.toFixed(2)).join(' · ')} · ${num(f.cores)} core${f.cores > 1 ? 's' : ''}${f.cpu != null ? ` · CPU ${Number(f.cpu).toFixed(0)}%` : ''}` : 'load unknown', 'Load average over 1, 5 and 15 minutes; the bar is the 1-minute load per core')}
+      ${sysMeter('Memory', sysPct(f.memP), f.memP == null ? '—' : `${f.memP.toFixed(0)}%`, `${f.m.used != null ? bytes(f.m.used) : '—'} of ${f.m.total ? bytes(f.m.total) : '—'}${f.m.sniffowireless_rss ? ` · sniffowireless ${bytes(f.m.sniffowireless_rss)}` : ''}${f.d ? ` · ${bytes(f.d.free)} disk free` : ''}`, 'Memory in use on the sensor machine (excluding cache)')}</div>`;
+  }).join('');
+}
 function renderSystem(sys) {
   const el = document.getElementById('system');
   if (!el || !sys) return;
-  const pct = v => v == null ? null : Math.max(0, Math.min(100, v));
-  const meter = (label, p, value, detail, title = '') => {
-    const lvl = p == null ? '' : p >= 95 ? 'bad' : p >= 80 ? 'warn' : '';
-    return `<div class="sysm ${lvl}" title="${esc(title)}"><div class="sysm-top"><span class="muted">${label}</span><b class="mono">${value}</b></div>
-      <div class="sysm-track" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p == null ? '' : Math.round(p)}"><i style="width:${p == null ? 0 : p}%"></i></div>
-      <div class="faint small-text">${detail}</div></div>`;
-  };
+  const pct = sysPct, meter = sysMeter;
   const c = sys.cpu || {}, m = sys.memory || {}, d = sys.disk, db = sys.db || {};
   const load = Array.isArray(c.load) ? c.load.map(x => Number(x).toFixed(2)).join(' · ') : '—';
   const memP = m.total && m.used != null ? m.used / m.total * 100 : null;
@@ -376,6 +397,7 @@ async function viewOverview(params) {
       <div class="stack">
         <section class="panel"><header><h2>System</h2><span class="faint small-text" id="sys-note"></span></header><div class="body" id="system"></div></section>
         <section class="panel"><header><h2>Sensors</h2><span id="sensors-health"></span></header><div class="body flush" id="sensors"></div></section>
+        <section class="panel" id="sensor-sys-panel" hidden><header><h2>Sensor load</h2><span class="faint small-text">remote sensors</span></header><div class="body" id="sensor-systems"></div></section>
       </div>
       <section class="panel span-3">
         <header><h2>Interface activity</h2><span class="faint small-text">Packets/sec per capturing interface, live over the last ${Math.round(IFACE_HIST_MAX * 10 / 60)} minutes</span></header>
@@ -474,6 +496,7 @@ async function viewOverview(params) {
   async function loadSensors() {
     const s = await apiStatus();
     renderSystem(s.system);
+    renderSensorSystems(s.sensor_systems || []);
     const list = s.sensors;
     const hc = healthCounts(list);
     document.getElementById('sensors-health').innerHTML = !list.length ? '' : [
