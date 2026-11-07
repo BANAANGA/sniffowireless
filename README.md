@@ -467,21 +467,19 @@ With plain `docker run` (see above), use the same image name instead of `sniffow
 
 **First take a backup** (*Settings → Backup → Back up now*). The database schema is created and upgraded automatically on start, and that only goes forward: to go back to an older version you restore the backup as well. Your data lives in `./data`, so recreating the container loses nothing.
 
-**What am I running?** *Settings → About* shows the version (the release tag, with a link to its notes), the commit, when the image was built and how long it has been running. *Settings → Sensors* shows each remote sensor's version next to the server's, and marks one that **differs from the server**. A sensor that shows *not reported* is offline, or runs a version from before this was added. Images from the published registry carry this information; for a build from source, record the commit by building with it:
-
-```bash
-GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
-```
+**What am I running?** *Settings → About* shows the version (the release tag, with a link to its notes), the commit, when the image was built and how long it has been running. *Settings → Sensors* shows each remote sensor's version next to the server's, and marks one that **differs from the server**. A sensor that shows *not reported* is offline, or runs a version from before this was added; a sensor that is offline shows the version it last reported, marked *as of* when. Images from the published registry carry this information; a build from source records it when you update with `./scripts/update.sh`. A page that was open while the server was updated offers a *Reload* button, since it still runs the old scripts.
 
 #### The main server
 
 Pick the way you run it:
 
-- **Built from source** (the default `docker-compose.yml`):
+- **Built from source** (the default `docker-compose.yml`). The script pulls, rebuilds, and records the version so *Settings → About* shows it:
 
   ```bash
-  cd sniffowireless && git pull && docker compose up -d --build
+  cd sniffowireless && ./scripts/update.sh
   ```
+
+  Without it (`git pull && docker compose up -d --build`) everything works, but the build is labelled `source` with no number.
 
 - **Prebuilt image** (compose with `image: ghcr.io/banaanga/sniffowireless:latest`, see [Prebuilt image](#prebuilt-image)):
 

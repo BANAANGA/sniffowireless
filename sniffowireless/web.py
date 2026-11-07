@@ -94,6 +94,7 @@ def create_app(ctx):
         systems = [{"id": sid, "name": (names.get(sid) or {}).get("name") or sid, "room": (names.get(sid) or {}).get("room"), **v}
                    for sid, v in status.systems_snapshot().items()]
         return {"sensors": status.snapshot(), "store": store.stats(), "demo": cfg.demo, "now": time.time(),
+                "build": {**version.info(), "started": version.STARTED, "ui": ui_hash},
                 "system": sysinfo.snapshot(cfg.db_path, cfg.data_dir), "sensor_systems": sorted(systems, key=lambda x: x["name"].lower()),
                 "config": {"active_window": cfg.active_window, "wifi_session_timeout": cfg.wifi_session_timeout,
                            "bt_session_timeout": cfg.bt_session_timeout, "retention_days": cfg.retention_days}}
@@ -668,6 +669,7 @@ def create_app(ctx):
         return re.sub(r'/static/([\w.-]+\.(?:js|css))"', tag, html)
 
     pages = {"index": versioned("index.html"), "login": versioned("login.html")}
+    ui_hash = hashlib.sha1(pages["index"].encode()).hexdigest()[:10]  # changes when any script or style of the UI does
 
     @app.get("/login")
     def login_page():

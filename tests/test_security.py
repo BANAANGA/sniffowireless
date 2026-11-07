@@ -1117,3 +1117,16 @@ def test_remote_sensor_load_and_memory(env, monkeypatch):
     # Removing the sensor removes its figures.
     assert c.delete(f"/api/sensors/{sid}", headers=H).status_code == 200
     assert not mine()
+
+
+def test_status_tells_the_page_when_the_server_was_updated(env):
+    ctx, c = env
+    login(c)
+    b = c.get("/api/status").json()["build"]
+    assert set(b) >= {"version", "commit", "built", "release", "started", "ui"} and len(b["ui"]) == 10
+    assert c.get("/api/status").json()["build"]["ui"] == b["ui"]  # steady while the same UI is served
+    # A different server (another set of scripts and styles) reports another value, which is what tells an open page to reload.
+    from sniffowireless import web
+    other = TestClient(web.create_app(ctx), base_url="http://sniffowireless.test")
+    assert other.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H).status_code == 200
+    assert other.get("/api/status").json()["build"]["ui"] == b["ui"]  # same files, same value

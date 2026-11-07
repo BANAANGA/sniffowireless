@@ -275,10 +275,27 @@ function healthCounts(list) {
   list.forEach(x => { c[sensorHealth(x)]++; });
   return c;
 }
+// The server was updated while this page was open: the scripts here are the old ones, so say so instead of quietly
+// showing old behaviour and numbers.
+let seenUi = null;
+function checkBuild(b) {
+  if (!b || !b.ui) return;
+  if (seenUi === null) { seenUi = b.ui; return; }
+  if (b.ui === seenUi || document.getElementById('update-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'update-banner';
+  bar.className = 'update-banner';
+  bar.innerHTML = `<span>sniffowireless was updated${b.version && b.version !== 'dev' ? ' to <b>' + esc(b.version) + '</b>' : ''}. Reload this page to use the new version.</span>
+    <button class="btn small primary" type="button">Reload</button><button class="btn small ghost" type="button" aria-label="Dismiss">✕</button>`;
+  bar.querySelector('.primary').onclick = () => location.reload();
+  bar.querySelector('.ghost').onclick = () => bar.remove();
+  document.body.appendChild(bar);
+}
 async function pollStatus() {
   const el = document.getElementById('live');
   try {
     const s = await apiStatus();
+    checkBuild(s.build);
     const c = healthCounts(s.sensors);
     const total = s.sensors.reduce((a, x) => a + (Number(x.pps) || 0), 0);
     const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;

@@ -2,7 +2,7 @@ services:
   sniffowireless:
     build:
       context: .
-      args:  # optional, for the About page: GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+      args:  # optional, for the About page: ./scripts/update.sh sets them
         VERSION: ${SNIFFOWIRELESS_VERSION:-source}
         COMMIT: ${GIT_COMMIT:-}
         BUILD_DATE: ${BUILD_DATE:-}
