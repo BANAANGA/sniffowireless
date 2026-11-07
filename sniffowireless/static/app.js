@@ -475,6 +475,7 @@ async function viewOverview(params) {
   async function loadSummary() {
     const s = await api(`/api/summary?window=${actWin}`);
     const prev = lastCounts; lastCounts = {};
+    document.getElementById('cards').className = 'grid cols-' + Math.max(2, Math.min(6, kindEntries().length + (modOn('lora') ? 1 : 0)));
     document.getElementById('cards').innerHTML = kindEntries().map(([k, m]) => {
       const v = s.kinds[k] || {};
       const conn = k === 'wifi_client' || k === 'bt_classic' || k === 'ble'
@@ -486,6 +487,15 @@ async function viewOverview(params) {
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span>${conn ? `<span>${conn}</span>` : ''}</div></div>`;
     }).join('');
+    if (modOn('lora')) {
+      const v = s.lora || {};
+      lastCounts.lora = v.active || 0;
+      const changed = prev && prev.lora !== undefined && prev.lora !== lastCounts.lora;
+      document.getElementById('cards').insertAdjacentHTML('beforeend', `<div class="card link${changed ? ' bump' : ''}" data-href="#/lora">
+        <div class="label"><span class="swatch" style="background:#c792ea"></span>LoRa nodes</div>
+        <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
+        <div class="meta"><span>+${num(v.new_24h)} new 24h</span></div></div>`);
+    }
     document.querySelectorAll('#cards .card').forEach(c => c.onclick = e => { if (!e.target.closest('a')) location.hash = c.dataset.href; });
     const ev = s.events;
     document.getElementById('events').innerHTML = ev.length ? `<ul class="events">${ev.slice(0, 14).map(e => eventRow(e)).join('')}</ul>` : '<div class="empty">No events yet</div>';

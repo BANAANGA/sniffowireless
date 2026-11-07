@@ -452,3 +452,22 @@ def test_firmware_endpoints_are_admin_only(ctx):
     import hashlib
     assert hashlib.sha256(body.content).hexdigest() == m["sha256"]
     assert "esptool" in c.get("/vendor/esptool.bundle.js", follow_redirects=False).headers.get("location", "esptool")
+
+
+def test_summary_counts_lora_nodes_for_the_overview_card(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    assert c.get("/api/summary?window=300").json()["lora"] == {"total": 0, "active": 0, "new_24h": 0}
+    eu = PROFILES["meshtastic-eu868"]
+    now = time.time()
+    ctx.store.process(frame(meshtastic(frm=1), eu, now - 60))       # heard a minute ago
+    ctx.store.process(frame(meshtastic(frm=2), eu, now - 3600))     # an hour ago: not active in 5 minutes
+    ctx.store.process(frame(meshtastic(frm=3), eu, now - 3 * 86400))  # known for days
+    ctx.store.flush()
+    assert c.get("/api/summary?window=300").json()["lora"] == {"total": 3, "active": 1, "new_24h": 2}
+    assert c.get("/api/summary?window=86400").json()["lora"]["active"] == 2
