@@ -742,6 +742,8 @@ On a phone the sidebar becomes a top bar with search and a menu button, cards si
 
 ### Appearance
 
+Admins can hide what an installation doesn't use under **Settings → Modules**: Wi-Fi, Bluetooth, Ethernet / LAN, Zigbee and LoRa. A hidden kind disappears from the menu, the overview (cards, charts, sensor list, discovery panels) and the statistics. Each row says whether anything of that kind is configured or has been seen, and *Hide the unused* switches off all that aren't in use. This only changes what is shown: nothing is deleted and capture still follows the environment variables, so switching a kind back on brings everything back. The overview also lists the latest discovered **Zigbee** networks and radios and **LoRa** nodes.
+
 Admins can change the look under **Settings → Appearance**: the app name, the default **time format** (automatic from the browser language, 24-hour or 12-hour; also used in notifications and the weekly report), the icon (a few built-in glyphs or an uploaded square PNG/JPEG/WebP up to 256 kB, also used as the browser-tab icon) and the colours of surfaces, text, device types and status. Presets (*Slate*, *Forest*, *High contrast*) are a starting point; changes preview immediately and apply to everyone, including the sign-in page, once saved. *Reset to default* brings back the stock dark palette. The appearance is part of configuration backups; an uploaded icon is included in full backups.
 
 Each user can override the time format for their own browser under **Settings → Account → Display**.

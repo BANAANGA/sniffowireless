@@ -7,6 +7,21 @@ const KINDS = {
   bt_classic: { label: 'Bluetooth classic', short: 'BT classic', color: '#ef6f6c' },
   lan: { label: 'LAN devices', short: 'LAN', color: '#a8b3c2' },
 };
+// Kinds of radios an admin has switched off (Settings → Modules): their menu entries, cards and statistics are hidden.
+let MODS = {};
+const KIND_MOD = { ap: 'wifi', wifi_client: 'wifi', ble: 'bluetooth', bt_classic: 'bluetooth', lan: 'lan' };
+const SENSOR_MOD = { wifi: 'wifi', bluetooth: 'bluetooth', ethernet: 'lan', zigbee: 'zigbee', lora: 'lora' };
+const modOn = m => MODS[m] !== false;
+const kindOn = k => modOn(KIND_MOD[k]);
+const kindEntries = () => Object.entries(KINDS).filter(([k]) => kindOn(k));
+function paintModules() { document.querySelectorAll('[data-mod]').forEach(e => { e.hidden = !modOn(e.dataset.mod); }); }
+async function loadModules() {
+  try {
+    const r = await fetch('/api/modules');
+    if (r.ok) { MODS = {}; (await r.json()).modules.forEach(m => { MODS[m.id] = m.enabled; }); }
+  } catch { /* keep showing everything */ }
+  paintModules();
+}
 let TEXT = '#e6e7e9', MUTED = '#8a8f98', FAINT = '#5b6068', GRID = '#1f2227';
 const TZ = new Date().getTimezoneOffset();
 const IFACE_HIST_MAX = 60;  // 10s poll interval -> 10 minutes of history, kept in the browser only
@@ -400,6 +415,7 @@ async function viewOverview(params) {
   const w = +(params && params.get('window'));
   if (ACT_WINDOWS.some(([v]) => v === w)) actWin = w;
   let live = true, lastUpdate = 0;
+  if (!modOn('wifi')) tlView = 'type';  // the by-band view is about Wi-Fi
   app.innerHTML = `
     <div class="page-head"><div><h1>Overview</h1><div class="sub">Devices seen within the selected window are counted as active.</div></div>
       <div class="row"><button class="btn small ghost live-btn on" id="livebtn" type="button" aria-pressed="true" title="Pause or resume automatic refresh"><span class="pulse-dot"></span><span id="livetxt">Live</span></button>
@@ -408,7 +424,7 @@ async function viewOverview(params) {
     <div class="grid cols-5" id="cards"></div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2">
-        <header><h2>Active devices over time</h2><div class="row">${seg('tlview', [['band', 'By band'], ['type', 'By type']], tlView)}${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</div></header>
+        <header><h2>Active devices over time</h2><div class="row">${modOn('wifi') ? seg('tlview', [['band', 'By band'], ['type', 'By type']], tlView) : ''}${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</div></header>
         <div class="body"><div class="legend" id="tl-legend" style="margin-bottom:10px"></div><div id="tl-box"></div></div>
       </section>
       <div class="stack">
@@ -429,6 +445,10 @@ async function viewOverview(params) {
         <div class="body flush table-wrap" id="watched"></div></section>
       <section class="panel span-3"><header><h2>Latest discovered devices</h2><a class="muted" href="#/devices?sort=first_seen&order=desc">View all →</a></header>
         <div class="body flush table-wrap" id="discovered"></div></section>
+      <section class="panel span-3" id="ov-zigbee" ${modOn('zigbee') ? '' : 'hidden'}><header><h2>Zigbee discovered</h2><a class="muted" href="#/zigbee">View all →</a></header>
+        <div class="body flush table-wrap" id="zigbee-disc"></div></section>
+      <section class="panel span-3" id="ov-lora" ${modOn('lora') ? '' : 'hidden'}><header><h2>LoRa discovered</h2><a class="muted" href="#/lora">View all →</a></header>
+        <div class="body flush table-wrap" id="lora-disc"></div></section>
     </div>`;
   let hours = 24, lastCounts = null;
   const ifaceHist = {}, ifaceColors = {};  // name -> [{t, pps}], reset each time this page is entered
@@ -455,7 +475,7 @@ async function viewOverview(params) {
   async function loadSummary() {
     const s = await api(`/api/summary?window=${actWin}`);
     const prev = lastCounts; lastCounts = {};
-    document.getElementById('cards').innerHTML = Object.entries(KINDS).map(([k, m]) => {
+    document.getElementById('cards').innerHTML = kindEntries().map(([k, m]) => {
       const v = s.kinds[k] || {};
       const conn = k === 'wifi_client' || k === 'bt_classic' || k === 'ble'
         ? `<a href="#/devices?kind=${k}&connected=1">${num(v.connected || 0)} connected</a>` : '';
@@ -510,11 +530,32 @@ async function viewOverview(params) {
       </tbody></table>` : '<div class="empty">No devices discovered yet</div>';
     linkRows(document.getElementById('discovered'));
   }
+  async function loadZigbeeDisc() {
+    if (!modOn('zigbee')) return;
+    const z = await api('/api/zigbee?hours=168');
+    const pan = p => p == null ? '—' : '0x' + p.toString(16).padStart(4, '0');
+    const nets = z.networks.map(n => ({ at: n.first_seen || n.last_seen, kind: 'Network', id: pan(n.pan), what: `${esc(n.ext_pan)} · channel ${n.channel}${n.permit_join ? ' · <b>joining open</b>' : ''}`, last: n.last_seen }));
+    const rads = z.radios.map(r => ({ at: r.first_seen || r.last_seen, kind: 'Radio', id: esc(r.addr), what: `${esc(r.hint_label || 'unknown')}${r.vendor ? ' · ' + esc(r.vendor) + '?' : ''} · PAN ${pan(r.pan)}`, last: r.last_seen }));
+    const items = [...nets, ...rads].sort((a, b) => b.at - a.at).slice(0, 12);
+    document.getElementById('zigbee-disc').innerHTML = items.length ? `<table><thead><tr><th>Type</th><th>Address</th><th>Details</th><th class="num">Discovered</th></tr></thead><tbody>
+      ${items.map(x => `<tr class="link" data-href="#/zigbee"><td>${x.kind}</td><td class="mono">${x.id}</td><td class="trunc muted">${x.what}</td><td class="num muted" title="${esc(dt(x.at))}">${ago(x.at)}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="empty">${z.configured ? 'Nothing found yet' : 'No Zigbee stick configured'}</div>`;
+    linkRows(document.getElementById('zigbee-disc'));
+  }
+  async function loadLoraDisc() {
+    if (!modOn('lora')) return;
+    const l = await api('/api/lora?hours=168');
+    const nodes = l.nodes.slice().sort((a, b) => (b.first_seen || 0) - (a.first_seen || 0)).slice(0, 12);
+    document.getElementById('lora-disc').innerHTML = nodes.length ? `<table><thead><tr><th>Protocol</th><th>Address</th><th>Name</th><th>Type</th><th class="num">Packets</th><th class="num">Signal</th><th class="num">Discovered</th></tr></thead><tbody>
+      ${nodes.map(n => `<tr class="link" data-href="#/lora"><td>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${esc(n.name || '—')}</td><td class="muted">${esc(n.kind || '—')}</td><td class="num">${num(n.packets)}</td><td class="num">${n.rssi != null ? Math.round(n.rssi) + ' dBm' : '—'}</td><td class="num muted" title="${esc(dt(n.first_seen))}">${ago(n.first_seen)}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="empty">${l.configured ? 'Nothing heard yet' : 'No LoRa receiver configured'}</div>`;
+    linkRows(document.getElementById('lora-disc'));
+  }
   async function loadSensors() {
     const s = await apiStatus();
     renderSystem(s.system);
     renderSensorSystems(s.sensor_systems || []);
-    const list = s.sensors;
+    const list = s.sensors.filter(x => modOn(SENSOR_MOD[x.type]));
     const hc = healthCounts(list);
     document.getElementById('sensors-health').innerHTML = !list.length ? '' : [
       hc.bad ? `<span class="tag bad">${hc.bad} error${hc.bad > 1 ? 's' : ''}</span>` : '', hc.warn ? `<span class="tag warn">${hc.warn} warning${hc.warn > 1 ? 's' : ''}</span>` : '',
@@ -575,10 +616,10 @@ async function viewOverview(params) {
     });
     const sw = (c, label, dash) => `<span><span class="swatch" style="background:${c}${dash ? ';opacity:.6' : ''}"></span>${label}</span>`;
     if (tlView === 'type') {
-      document.getElementById('tl-legend').innerHTML = Object.entries(KINDS).map(([k, m]) => sw(m.color, `${m.label} · avg ${num(avg(t.series[k]))}`)).join('')
+      document.getElementById('tl-legend').innerHTML = kindEntries().map(([k, m]) => sw(m.color, `${m.label} · avg ${num(avg(t.series[k]))}`)).join('')
         + sw(TEXT, `Connected clients · avg ${num(avg(t.connected))}`, true);
       box.innerHTML = '<div class="chart-box tall"><canvas id="tl"></canvas></div>';
-      const ds = Object.entries(KINDS).map(([k, m]) => line(m.label, xy(t.series[k]), m.color));
+      const ds = kindEntries().map(([k, m]) => line(m.label, xy(t.series[k]), m.color));
       ds.push(line('Connected clients', xy(t.connected), TEXT, dashed));
       chart(document.getElementById('tl'), { type: 'line', data: { datasets: ds }, options: opts() });
       return;
@@ -587,14 +628,14 @@ async function viewOverview(params) {
     // plus Bluetooth & LAN (no band).
     document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
       + sw(TEXT, 'Connected clients', true);
-    const bands = t.bands || {};
+    const bands = t.bands || {}, others = ['ble', 'bt_classic', 'lan'].filter(kindOn);
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
         <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).ap))})</span> · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).wifi_client))})</span> · ${num(now(b, 'connected'))} connected <span class="faint">(avg ${num(avg((bands[b] || {}).connected))})</span></span></div>
         <div class="chart-box short"><canvas id="tl-${b.replace('.', '')}"></canvas></div></div>`).join('')}
-      <div class="band-cell"><div class="band-head"><b>Bluetooth &amp; LAN</b>
-        <span class="legend small-text">${['ble', 'bt_classic', 'lan'].map(k => sw(KINDS[k].color, `${KINDS[k].label} · avg ${num(avg(t.series[k]))}`)).join('')}</span></div>
-        <div class="chart-box short"><canvas id="tl-other"></canvas></div></div></div>
+      ${others.length ? `<div class="band-cell"><div class="band-head"><b>${modOn('bluetooth') && modOn('lan') ? 'Bluetooth &amp; LAN' : modOn('bluetooth') ? 'Bluetooth' : 'LAN'}</b>
+        <span class="legend small-text">${others.map(k => sw(KINDS[k].color, `${KINDS[k].label} · avg ${num(avg(t.series[k]))}`)).join('')}</span></div>
+        <div class="chart-box short"><canvas id="tl-other"></canvas></div></div>` : ''}</div>
       <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to. Averages are over the selected time range.</p>`;
     BAND_PANELS.forEach(([b]) => {
       const v = bands[b] || {};
@@ -602,14 +643,14 @@ async function viewOverview(params) {
         line('Access points', xy(v.ap), KINDS.ap.color), line('Wi-Fi clients', xy(v.wifi_client), KINDS.wifi_client.color),
         line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(null, true) });
     });
-    chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: ['ble', 'bt_classic', 'lan'].map(k =>
+    if (others.length) chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: others.map(k =>
       line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
   }
 
-  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), loadDiscovered(), pollStatus()]);
+  await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), loadDiscovered(), loadZigbeeDisc(), loadLoraDisc(), pollStatus()]);
   lastUpdate = Date.now();
   setTimeout(() => { if (document.getElementById('system')) loadSensors(); }, 1500);  // CPU % needs a second sample
-  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); loadWatched(); loadDiscovered(); lastUpdate = Date.now(); };
+  const refresh = () => { loadSummary(); loadSensors(); loadConnected(); loadWatched(); loadDiscovered(); loadZigbeeDisc(); loadLoraDisc(); lastUpdate = Date.now(); };
   every(10000, () => { if (live && !document.hidden) refresh(); });
   document.addEventListener('visibilitychange', onVis);
   onLeave(() => document.removeEventListener('visibilitychange', onVis));
@@ -658,7 +699,7 @@ async function viewDevices(params) {
         <a class="btn muted" id="exp-json" href="${exportHref('json')}" title="Download the devices matching the current filters">Export JSON</a></div></div>
     <div class="filters">
       <input type="search" id="q" placeholder="Search MAC, name, SSID, brand, model…" value="${esc(st.q || '')}">
-      <select id="kind"><option value="">All types</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+      <select id="kind"><option value="">All types</option>${kindEntries().map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       <select id="devtype"><option value="">All device types</option>${Object.entries(DEV_TYPES).map(([k, l]) => `<option value="${k}" ${st.dev_type === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="active">${[['', 'Any time'], ['300', 'Active (5 min)'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']].map(([v, l]) => `<option value="${v}" ${String(st.active || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="band"><option value="">All bands</option>${BAND_LIST.map(([b, m]) => `<option value="${b}" ${st.band === b ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
@@ -969,10 +1010,10 @@ function sensorPies(el, data) {
   el.innerHTML = `<header><h2>Per sensor</h2><span class="faint">device types each sensor heard · a device heard by several sensors counts for each</span></header>
     <div class="body"><div class="pie-grid">${sensors.map((x, i) => `<div class="pie-card"><h3 class="subhead">${esc(x.name)}</h3>
       <div class="pie-wrap"><div class="pie-box"><canvas id="sp-${i}" role="img" aria-label="${esc(x.name)} device types"></canvas><div class="pie-total"><b>${num(x.total)}</b><span>devices</span></div></div>
-      <ul class="pie-legend">${Object.entries(KINDS).filter(([k]) => x.kinds[k]).map(([k, m]) => `<li><span class="swatch" style="background:${m.color}"></span><span class="pl-name">${esc(m.label)}</span>
+      <ul class="pie-legend">${kindEntries().filter(([k]) => x.kinds[k]).map(([k, m]) => `<li><span class="swatch" style="background:${m.color}"></span><span class="pl-name">${esc(m.label)}</span>
         <span class="pl-n">${num(x.kinds[k])}</span><span class="pl-p">${Math.round(x.kinds[k] / x.total * 100)}%</span></li>`).join('')}</ul></div></div>`).join('')}</div></div>`;
   sensors.forEach((x, i) => {
-    const ks = Object.entries(KINDS).filter(([k]) => x.kinds[k]);
+    const ks = kindEntries().filter(([k]) => x.kinds[k]);
     chart(document.getElementById(`sp-${i}`), {
       type: 'doughnut',
       data: { labels: ks.map(([, m]) => m.label), datasets: [{ data: ks.map(([k]) => x.kinds[k]), backgroundColor: ks.map(([, m]) => m.color),
@@ -996,7 +1037,7 @@ function breakdown(el, s, kind) {
     ['Bluetooth company', of(s.company), 'company', v => v]);
   const total = charts[0][1].reduce((a, r) => a + r.n, 0);
   el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices</span>
-      ${seg('bkind', BREAKDOWN_KINDS, kind)}</header>
+      ${seg('bkind', BREAKDOWN_KINDS.filter(([k]) => kindOn(k)), kind)}</header>
     <div class="body">${total ? `<div class="pie-grid">${charts.map((c, i) => `<div class="pie-card"><h3 class="subhead">${c[0]}</h3>
       <div class="pie-wrap"><div class="pie-box"><canvas id="pie-${i}" role="img" aria-label="${esc(c[0])} breakdown"></canvas><div class="pie-total"><b>${num(total)}</b><span>devices</span></div></div>
       <ul class="pie-legend" id="pie-leg-${i}"></ul></div></div>`).join('')}</div>` : '<div class="empty">No devices of this kind in this period</div>'}</div>`;
@@ -1057,7 +1098,7 @@ async function viewStats(params) {
     <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
     <section class="panel"><header><h2>${ttl('', 'Session durations', hrefWith('/sessions', { type: 'assoc', days }))}</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
     <section class="panel" data-list="st-type"><header><h2>${ttl('st-type', 'Device types')}</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
-    <section class="panel" data-list="st-brand"><header><h2>${ttl('st-brand', 'Brands')}</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
+    <section class="panel" data-list="st-brand"><header><h2>${ttl('st-brand', 'Brands')}</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${kindEntries().map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
     <section class="panel" data-list="st-gen"><header><h2>${ttl('st-gen', 'Wi-Fi generation')}</h2><span class="faint">newest standard supported</span></header><div class="body"><ul class="bars-list" id="st-gen"></ul></div></section>
     <section class="panel" data-list="st-era"><header><h2>${ttl('st-era', 'Estimated age')}</h2><span class="faint">earliest possible year</span></header><div class="body"><ul class="bars-list" id="st-era"></ul></div></section>
     <section class="panel" data-list="st-os"><header><h2>${ttl('st-os', 'Operating systems')}</h2></header><div class="body"><ul class="bars-list" id="st-os"></ul></div></section>
@@ -1069,6 +1110,8 @@ async function viewStats(params) {
     <section class="panel" data-list="topap"><header><h2>${ttl('topap', 'Busiest access points')}</h2></header><div class="body flush table-wrap" id="topap"></div></section>
     <section class="panel" data-list="probes"><header><h2>${ttl('probes', 'Probed SSIDs')}</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
 
+  if (!modOn('wifi')) ['st-gen', 'chans', 'ssids', 'topc', 'topap', 'probes'].forEach(id => { const p = document.getElementById(id) || root.querySelector(`[data-list="${id}"]`); const sec = p && p.closest('section'); if (sec) sec.hidden = true; });
+
   if (listId) {
     const keep = root.querySelector(`[data-list="${listId}"]`);
     root.querySelectorAll(':scope > section').forEach(el => { el.hidden = el !== keep; });
@@ -1078,7 +1121,7 @@ async function viewStats(params) {
     } else root.innerHTML = '<div class="empty span-all">Unknown list</div>';
   }
   if (!listId) {
-    breakdown(document.getElementById('breakdown'), s, 'ble');
+    breakdown(document.getElementById('breakdown'), s, (BREAKDOWN_KINDS.find(([k]) => kindOn(k)) || ['ble'])[0]);
     sensorPies(document.getElementById('per-sensor'), s.sensor_kinds || []);
   }
 
@@ -1086,13 +1129,13 @@ async function viewStats(params) {
   const hours = Array.from({ length: 24 }, (_, i) => i);
   chart(document.getElementById('hourly'), {
     type: 'bar',
-    data: { labels: hours.map(h => hourLabel(h)), datasets: Object.entries(KINDS).map(([k, m]) => ({
+    data: { labels: hours.map(h => hourLabel(h)), datasets: kindEntries().map(([k, m]) => ({
       label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
       data: hours.map(h => +((s.hourly.rows.find(r => r.h === h && r.kind === k) || { n: 0 }).n / s.hourly.days).toFixed(1)),
     })) },
     options: { maintainAspectRatio: false, scales: { x: { stacked: true, grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ stacked: true }) },
       plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, color: MUTED } } },
-      onClick: (e, els) => { if (els.length) location.hash = hrefWith('/devices', { kind: Object.keys(KINDS)[els[0].datasetIndex] }); } },
+      onClick: (e, els) => { if (els.length) location.hash = hrefWith('/devices', { kind: (kindEntries()[els[0].datasetIndex] || [])[0] }); } },
   });
 
   // new per day
@@ -1100,7 +1143,7 @@ async function viewStats(params) {
   chart(document.getElementById('newday'), {
     type: 'bar',
     data: { labels: daysList.map(d => new Date(d * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' })),
-      datasets: Object.entries(KINDS).map(([k, m]) => ({ label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
+      datasets: kindEntries().map(([k, m]) => ({ label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
         data: daysList.map(d => (s.new_per_day.find(r => r.day === d && r.kind === k) || { n: 0 }).n) })) },
     options: { maintainAspectRatio: false, scales: { x: { stacked: true, grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ stacked: true }) } },
   });
@@ -1119,7 +1162,7 @@ async function viewStats(params) {
   onSeg(root, 'dtype', drawDur);
 
   // randomized
-  const rnd = Object.entries(KINDS).filter(([k]) => k !== 'ap').map(([k, m]) => {
+  const rnd = kindEntries().filter(([k]) => k !== 'ap').map(([k, m]) => {
     const r = s.randomized.filter(x => x.kind === k);
     const tot = r.reduce((a, x) => a + x.n, 0), rn = (r.find(x => x.randomized) || { n: 0 }).n;
     return { k, m, tot, rn };
@@ -1165,7 +1208,7 @@ async function viewStats(params) {
     list = list.slice(0, CAP);
     const max = Math.max(1, ...list.map(([, o]) => o.n));
     document.getElementById(id).innerHTML = list.map(([v, o]) => `<li data-href="${hrefWith('/devices', { [filterKey]: v === '' ? (filterKey === 'wifi_gen' || filterKey === 'era' ? '0' : 'Unknown') : v, kind })}">
-      <div><div class="name">${v === '' ? '<span class="faint">Unknown</span>' : esc(label(v))}</div><div class="track">${Object.entries(o.kinds).map(([k, n]) => `<i style="width:${n / max * 100}%;background:${KINDS[k].color}"></i>`).join('')}</div></div>
+      <div><div class="name">${v === '' ? '<span class="faint">Unknown</span>' : esc(label(v))}</div><div class="track">${Object.entries(o.kinds).map(([k, n]) => `<i style="width:${n / max * 100}%;background:${(KINDS[k] || {}).color || FAINT}"></i>`).join('')}</div></div>
       <div class="n">${num(o.n)}</div></li>`).join('') || '<div class="empty">No data</div>';
     bindLi(root);
   };
@@ -1248,7 +1291,7 @@ async function viewEvents(params) {
     <div class="page-head"><div><h1>Events</h1><div class="sub">Arrivals, departures, connections, roaming and deauthentication.</div></div></div>
     <div class="filters">
       <select id="etype"><option value="">All types</option></select>
-      <select id="ekind"><option value="">All device types</option>${Object.entries(KINDS).map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+      <select id="ekind"><option value="">All device types</option>${kindEntries().map(([k, m]) => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       ${st.mac ? `<span class="chip">Device: <b class="mono">${esc(st.mac)}</b><a href="${hrefWith('/events', { ...st, mac: '' })}">✕</a></span>` : ''}
     </div>
     <section class="panel"><div class="body flush" id="elist"></div><div class="pager"><span id="ecount"></span><button class="btn" id="more">Load more</button></div></section>`;
@@ -1378,7 +1421,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('hashchange', () => setMenu(false));
     document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
   }
-  await appearance;
+  await Promise.all([appearance, loadModules()]);
   route();
   pollStatus();
 });
