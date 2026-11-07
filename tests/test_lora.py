@@ -599,3 +599,37 @@ def test_airtime_is_kept_and_shown_per_profile(ctx):
     assert row["name"] == "meshtastic-eu868" and abs(row["air_s"] - 10 * each) < 0.05
     # two profiles are listened to alternately: each is heard half of the time, so its use is twice the airtime share
     assert abs(row["use"] - 10 * each / (3600 * 0.5)) < 0.0005
+
+
+# ------------------------------------------------------------------ report, metrics, MQTT
+def test_radios_in_weekly_report_metrics_and_mqtt(ctx):
+    from sniffowireless import metrics, mqtt, reports
+    eu, mc = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"]
+    now = time.time()
+    ctx.store.process(frame(meshtastic(frm=0xC1), eu, now - 60))
+    ctx.store.process(frame(meshcore_advert(), mc, now - 50))
+    ctx.store.process({"t": "zb_frames", "ts": now - 30, "mac": "-", "undecoded": 0, "channels": {"15": 4},
+                       "radios": [[0x1A62, "0x0001", 1 << 15, 4, 0, 0, 1, 1, -70, 150]]})
+    ctx.store.process({"t": "zb_network", "ts": now - 20, "mac": "-", "ext_pan": "00:12:4b:00:1e:a0:44:01", "pan": 0x1A62, "channel": 15,
+                       "permit_join": True, "stack_profile": 2, "update_id": 1, "lqi": 200, "rssi": -50, "routers": []})
+    ctx.store.flush()
+    lines = reports.radio_lines(ctx, now - 7 * 86400)
+    assert any(l.startswith("LoRa: 2 nodes heard (2 new)") and "Meshtastic 1" in l and "MeshCore 1" in l for l in lines)
+    assert any(l.startswith("Zigbee: 1 radios on 1 networks (1 new)") for l in lines) and any("warnings: 1" in l for l in lines)
+    ctx.settings.set("modules", {"disabled": ["lora"]})                      # hidden modules stay out of the report
+    assert not any(l.startswith("LoRa:") for l in reports.radio_lines(ctx, now - 7 * 86400))
+    text = metrics.render(ctx)
+    assert 'sniffowireless_lora_nodes_total{protocol="meshtastic"} 1' in text and 'sniffowireless_lora_packets_1h{protocol="meshcore"} 1' in text
+    assert "sniffowireless_zigbee_radios_total 1" in text and "sniffowireless_zigbee_networks 1" in text and "sniffowireless_lora_airtime_seconds_1h" in text
+
+    sent = []
+
+    class Pub(mqtt.MqttPublisher):
+        def __init__(self):
+            self.cfg, self.ctx = {"topic_prefix": "sn", "qos": 0}, ctx
+
+        client = type("C", (), {"publish": lambda s, topic, payload, **kw: sent.append((topic, json.loads(payload), kw))})()
+    Pub()._publish([{"type": "lora_new_node", "mac": "lora:!1", "detail": "x", "ts": 1.0}, {"type": "arrived", "mac": "aa:bb:cc:00:00:01", "ts": 1.0, "detail": None},
+                    {"type": "zigbee_permit_join", "mac": "zb:1a62", "detail": "open", "ts": 2.0}])
+    assert [(t, p["type"]) for t, p, kw in sent] == [("sn/radio/lora_new_node", "lora_new_node"), ("sn/radio/zigbee_permit_join", "zigbee_permit_join")]
+    assert all(kw["retain"] is False for _, _, kw in sent)

@@ -97,6 +97,21 @@ def render(ctx):
         for k, v in ctx.dfs.counts.items():
             o.add("sniffowireless_dfs_events_total", v, "DFS events since start (radar, channel switch announcements, channel changes)",
                   "counter", kind=k)
+    # LoRa and Zigbee: counted from their own tables (their radios have no MAC address)
+    try:
+        for r in ctx.rows("SELECT protocol, COUNT(*) total, SUM(last_seen >= ?) active FROM lora_nodes GROUP BY protocol", (active,)):
+            o.add("sniffowireless_lora_nodes_total", r["total"], "LoRa nodes ever heard (within retention)", protocol=r["protocol"])
+            o.add("sniffowireless_lora_nodes_active", r["active"] or 0, "LoRa nodes heard within the active window", protocol=r["protocol"])
+        for r in ctx.rows("SELECT protocol, SUM(packets) n, SUM(air_ms) / 1000.0 air FROM lora_stats WHERE minute >= ? GROUP BY protocol", (now - 3600,)):
+            o.add("sniffowireless_lora_packets_1h", r["n"] or 0, "LoRa frames heard in the last hour (only while the radio listens on that profile)", protocol=r["protocol"])
+            o.add("sniffowireless_lora_airtime_seconds_1h", round(r["air"] or 0, 3), "Estimated airtime of the LoRa frames heard in the last hour", protocol=r["protocol"])
+        z = ctx.one("SELECT COUNT(*) total, SUM(last_seen >= ?) active FROM zigbee_radios", (active,))
+        o.add("sniffowireless_zigbee_radios_total", z["total"], "Zigbee / 802.15.4 radios ever heard or addressed (within retention)")
+        o.add("sniffowireless_zigbee_radios_active", z["active"] or 0, "Zigbee / 802.15.4 radios heard within the active window")
+        o.add("sniffowireless_zigbee_networks", ctx.one("SELECT COUNT(*) n FROM zigbee_networks WHERE last_seen >= ?", (now - 86400,))["n"],
+              "Zigbee networks that answered a scan in the last 24 hours")
+    except Exception:  # tables not there (yet)
+        pass
     st = ctx.store.stats()
     o.add("sniffowireless_store_queue", st["queue"], "Observations waiting to be processed")
     o.add("sniffowireless_store_dropped_total", st["dropped"], "Observations dropped because the queue was full", "counter")

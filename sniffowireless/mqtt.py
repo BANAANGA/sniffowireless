@@ -8,6 +8,9 @@ Topics (under the configured prefix, "sniffowireless" by default):
                                a standard MQTT "availability" topic.
   <prefix>/presence/<mac>      JSON {"state": "home"|"away", "mac", "label", "name", "ts"}, retained,
                                published whenever a labelled device arrives or leaves.
+  <prefix>/radio/<type>        JSON {"type", "id", "detail", "ts"}, not retained, for LoRa and Zigbee events:
+                               lora_new_node, lora_flood, lora_join_flood, lora_fcnt_reset, zigbee_new_network,
+                               zigbee_permit_join.
 """
 import json
 import logging
@@ -16,6 +19,8 @@ import threading
 import time
 
 log = logging.getLogger("sniffowireless.mqtt")
+
+RADIO_EVENTS = ("lora_new_node", "lora_flood", "lora_join_flood", "lora_fcnt_reset", "zigbee_new_network", "zigbee_permit_join")
 
 
 def _mac_topic(mac):
@@ -124,7 +129,7 @@ class MqttPublisher:
         unreachable broker can never hold up ingestion."""
         if not self.client or not self.connected:
             return
-        presence = [e for e in events if e["type"] in ("arrived", "left")]
+        presence = [e for e in events if e["type"] in ("arrived", "left") or e["type"] in RADIO_EVENTS]
         if not presence:
             return
         try:
@@ -132,9 +137,22 @@ class MqttPublisher:
         except queue.Full:
             log.warning("MQTT queue full; dropping %d presence events", len(presence))
 
-    def _publish(self, presence):
+    def _publish_radio(self, events):
+        """LoRa / Zigbee events (new node, flood, joining opened, ...) go out as they are, not retained: they are things that
+        happened, not a state. Topic: <prefix>/radio/<event type>."""
+        for e in events:
+            try:
+                self.client.publish(f"{self.cfg['topic_prefix']}/radio/{e['type']}",
+                                    json.dumps({"type": e["type"], "id": e["mac"], "detail": e.get("detail"), "ts": e["ts"]}),
+                                    qos=self.cfg.get("qos", 0), retain=False)
+            except Exception:
+                log.warning("MQTT: publish failed for %s", e["type"], exc_info=True)
+
+    def _publish(self, events):
+        self._publish_radio([e for e in events if e["type"] in RADIO_EVENTS])
+        presence = [e for e in events if e["type"] in ("arrived", "left")]
         macs = {e["mac"] for e in presence}
-        if not self._known(macs):
+        if not macs or not self._known(macs):
             return
         q = ",".join("?" * len(macs))
         meta = {r["mac"]: r for r in self.ctx.rows(
