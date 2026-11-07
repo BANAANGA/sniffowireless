@@ -56,6 +56,7 @@ class ImmutableStatic(StaticFiles):
         return resp
 
 
+RADIO_SLOT = 300  # granularity of the Zigbee / LoRa activity kept in radio_seen
 PASSERBY_STAY = 600     # heard for this long in one go: not passing by, it's here
 PASSERBY_MIN_READINGS = 3
 PASSERBY_SWING_DB = 10  # a pass whose signal rises and falls by about this much looks like movement
@@ -116,12 +117,15 @@ def create_app(ctx):
         events = rows("SELECT e.*, d.kind, d.name, d.vendor, d.ssid, p.ssid peer_ssid, m.label FROM events e "
                       "LEFT JOIN devices d ON d.mac=e.mac LEFT JOIN devices p ON p.mac=e.peer "
                       "LEFT JOIN device_meta m ON m.mac=e.mac WHERE e.type != 'new_probe' ORDER BY e.id DESC LIMIT 30")
-        try:  # LoRa nodes are not devices (no MAC), so they are counted from their own table
-            lora = rows("SELECT COUNT(*) total, SUM(last_seen >= ?) active, SUM(first_seen >= ?) new_24h FROM lora_nodes", (since, now - 86400))[0]
-            lora = {k: lora[k] or 0 for k in ("total", "active", "new_24h")}
-        except Exception:
-            lora = {"total": 0, "active": 0, "new_24h": 0}
-        return {"kinds": kinds, "events": events, "now": now, "window": window, "lora": lora}
+        # LoRa nodes and Zigbee radios are not devices (no MAC): they are counted from their own tables
+        extra = {}
+        for name, table, col in (("lora", "lora_nodes", "last_seen"), ("zigbee", "zigbee_radios", "last_seen")):
+            try:
+                r = rows(f"SELECT COUNT(*) total, SUM({col} >= ?) active, SUM(first_seen >= ?) new_24h FROM {table}", (since, now - 86400))[0]
+                extra[name] = {k: r[k] or 0 for k in ("total", "active", "new_24h")}
+            except Exception:
+                extra[name] = {"total": 0, "active": 0, "new_24h": 0}
+        return {"kinds": kinds, "events": events, "now": now, "window": window, **extra}
 
     @app.get("/api/timeline", dependencies=[Depends(current_user)])
     def timeline(hours: float = 24, bucket: int = 0):
@@ -165,8 +169,25 @@ def create_app(ctx):
             conn = overlap_counts(by_band.get(b, []), since, now, bucket)
             band_out[b] = {"ap": [v["ap"].get(t, 0) for t in ts], "wifi_client": [v["wifi_client"].get(t, 0) for t in ts],
                            "connected": [n for _, n in conn][:len(ts)]}
+        out = {k: [v.get(t, 0) for t in ts] for k, v in series.items()}
+        # Zigbee radios and LoRa nodes heard (kept per 5 minutes in radio_seen): distinct per bucket, or, for buckets
+        # shorter than a slot, what the slot holding that bucket had.
+        out.update(zigbee=[0] * len(ts), lora=[0] * len(ts))
+        try:
+            if bucket >= RADIO_SLOT:
+                found = {(r["kind"], r["t"]): r["n"] for r in rows(
+                    "SELECT kind, (slot / ?) * ? t, COUNT(DISTINCT addr) n FROM radio_seen WHERE slot >= ? GROUP BY kind, t", (bucket, bucket, since - RADIO_SLOT))}
+                for k in ("zigbee", "lora"):
+                    out[k] = [found.get((k, t), 0) for t in ts]
+            else:
+                found = {(r["kind"], r["slot"]): r["n"] for r in rows(
+                    "SELECT kind, slot, COUNT(*) n FROM radio_seen WHERE slot >= ? GROUP BY kind, slot", (since - RADIO_SLOT,))}
+                for k in ("zigbee", "lora"):
+                    out[k] = [found.get((k, int(t // RADIO_SLOT) * RADIO_SLOT), 0) for t in ts]
+        except Exception:  # no such table yet
+            pass
         return {"bucket": bucket, "t": ts,
-                "series": {k: [v.get(t, 0) for t in ts] for k, v in series.items()},
+                "series": out,
                 "connected": [n for _, n in connected], "bands": band_out}
 
     # ----------------------------------------------------------------- devices

@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS zigbee_radios(
   encrypted INTEGER DEFAULT 0, hint INTEGER DEFAULT 0, types INTEGER DEFAULT 0, rssi INTEGER, lqi INTEGER, vendor TEXT,
   first_seen REAL, last_seen REAL, PRIMARY KEY(pan, addr)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_zigbee_radios_last ON zigbee_radios(last_seen);
+-- which radios / nodes were heard in each 5 minutes (zigbee and lora), for the overview's active-devices graph
+CREATE TABLE IF NOT EXISTS radio_seen(
+  slot INTEGER NOT NULL, kind TEXT NOT NULL, addr TEXT NOT NULL, PRIMARY KEY(slot, kind, addr)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS zigbee_channels(
   minute INTEGER NOT NULL, channel INTEGER NOT NULL, frames INTEGER DEFAULT 0, PRIMARY KEY(minute, channel)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS zigbee_energy(
@@ -163,6 +166,9 @@ class ZigbeeSensor:
         status.update(self.name, packets=self.packets)
 
 
+SEEN_SLOT = 300  # radio_seen granularity, seconds
+
+
 class ZigbeeMonitor:
     """Store plugin (writer thread)."""
 
@@ -173,6 +179,7 @@ class ZigbeeMonitor:
         self.radios = {}
         self.channels = {}
         self.energy = {}
+        self.seen = set()
         self.pending = False
 
     def _vendor(self, store, address):
@@ -216,6 +223,8 @@ class ZigbeeMonitor:
             k = (minute, int(ch))
             self.channels[k] = self.channels.get(k, 0) + frames
         for pan, addr, channels, sent, received, encrypted, hint, types, rssi, lqi in o.get("radios") or []:
+            if len(self.seen) < 100_000:
+                self.seen.add((int(ts // SEEN_SLOT) * SEEN_SLOT, f"{pan}:{addr}"))
             r = self.radios.get((pan, addr))
             if r is None:
                 self.radios[(pan, addr)] = {
@@ -259,6 +268,8 @@ class ZigbeeMonitor:
                       "frames=frames+excluded.frames", [(m, ch, n) for (m, ch), n in self.channels.items()])
         c.executemany("INSERT OR REPLACE INTO zigbee_energy VALUES(?,?,?)",
                       [(m, ch, rssi) for (m, ch), rssi in self.energy.items()])
+        c.executemany("INSERT OR IGNORE INTO radio_seen VALUES(?, 'zigbee', ?)", list(self.seen))
+        self.seen.clear()
         self.networks.clear()
         self.radios.clear()
         self.channels.clear()
@@ -270,6 +281,7 @@ class ZigbeeMonitor:
         c.execute("DELETE FROM zigbee_radios WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM zigbee_channels WHERE minute < ?", (cutoff,))
         c.execute("DELETE FROM zigbee_energy WHERE minute < ?", (cutoff,))
+        c.execute("DELETE FROM radio_seen WHERE kind='zigbee' AND slot < ?", (cutoff,))
 
 
 def _channels(mask):
