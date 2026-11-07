@@ -240,6 +240,23 @@ def remote_version(v):
     return out or None
 
 
+def remote_system(s):
+    """A remote sensor's load and memory figures (the shape of sysinfo.snapshot, without the database): numbers in
+    sane ranges only, since the server shows them and exports them to Prometheus."""
+    if not isinstance(s, dict):
+        return None
+    c, m, d = (s[k] if isinstance(s.get(k), dict) else {} for k in ("cpu", "memory", "disk"))
+    load = [clean_num(x, 0, 100000) for x in c["load"][:3]] if isinstance(c.get("load"), list) else None
+    big = 2 ** 50
+    out = {"cpu": {"percent": clean_num(c.get("percent"), 0, 100), "sniffowireless_percent": clean_num(c.get("sniffowireless_percent"), 0, 100),
+                   "cores": clean_num(c.get("cores"), 1, 4096, True), "load": load if load and len(load) == 3 and None not in load else None},
+           "memory": {"total": clean_num(m.get("total"), 0, big, True), "used": clean_num(m.get("used"), 0, big, True),
+                      "sniffowireless_rss": clean_num(m.get("sniffowireless_rss"), 0, big, True)},
+           "disk": {k: clean_num(d.get(k), 0, big, True) for k in ("total", "used", "free")}}
+    out = {k: {a: b for a, b in v.items() if b is not None} for k, v in out.items()}
+    return {k: v for k, v in out.items() if v} or None
+
+
 def remote_status(s):
     """Validate a sensor status entry pushed by a remote sensor."""
     if not isinstance(s, dict) or not clean_str(s.get("name"), 64):

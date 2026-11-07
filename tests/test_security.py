@@ -1061,3 +1061,59 @@ def test_remote_sensor_status_clears_and_goes_offline(env, monkeypatch):
     # Removing the sensor removes its entries.
     assert c.delete(f"/api/sensors/{sid}", headers=H).status_code == 200
     assert not mine()
+
+
+def test_remote_sensor_load_and_memory(env, monkeypatch):
+    from sniffowireless import status as status_mod
+    from sniffowireless.metrics import render
+    from sniffowireless.sanitize import remote_system
+    from sniffowireless.sensors import Forwarder
+    ctx, c = env
+
+    # What the sensor itself sends: its machine's figures, without a database.
+    sys_ = Forwarder._system()
+    assert sys_ and "db" not in sys_ and sys_["memory"]["total"] and sys_["cpu"]["cores"] >= 1 and len(sys_["cpu"]["load"]) == 3
+
+    # What the server keeps: sane numbers only.
+    good = {"cpu": {"percent": 12.5, "sniffowireless_percent": 1.2, "cores": 4, "load": [0.52, 0.4, 0.31]},
+            "memory": {"total": 1_000_000_000, "used": 380_000_000, "sniffowireless_rss": 60_000_000},
+            "disk": {"total": 32_000_000_000, "used": 8_000_000_000, "free": 24_000_000_000}, "db": {"bytes": 5}}
+    assert remote_system(good) == {k: v for k, v in good.items() if k != "db"}
+    bad = remote_system({"cpu": {"percent": 900, "cores": 0, "load": [1, "x", 3]}, "memory": {"total": -5, "used": "lots"}, "disk": "full"})
+    assert bad is None
+    assert remote_system({"cpu": {"percent": float("nan"), "load": [1, 2]}, "memory": {"total": 10, "used": 5}}) == {"memory": {"total": 10, "used": 5}}
+    assert remote_system("nope") is None and remote_system({}) is None and remote_system(None) is None
+
+    login(c)
+    s = c.post("/api/sensors", json={"name": "Garage Pi", "room": "Garage"}, headers=H).json()
+    sid, tok = s["id"], {"Authorization": f"Bearer {s['token']}"}
+    plain = TestClient(c.app, base_url="http://sniffowireless.test")
+    send = lambda **extra: plain.post("/api/ingest", json={"sent_at": time.time(), "obs": [], "status": [], **extra}, headers=tok)
+    mine = lambda: [x for x in c.get("/api/status").json()["sensor_systems"] if x["id"] == sid]
+
+    # A sensor that sends none (older software) isn't listed.
+    assert send().status_code == 200 and not mine()
+    assert send(system=good).status_code == 200
+    got = mine()[0]
+    assert got["name"] == "Garage Pi" and got["room"] == "Garage" and got["stale"] is False
+    assert got["system"]["cpu"]["load"] == [0.52, 0.4, 0.31] and got["system"]["memory"]["used"] == 380_000_000 and "db" not in got["system"]
+    # Prometheus gets the load and the memory share, while it reports.
+    text = render(ctx)
+    assert f'sniffowireless_sensor_load1{{sensor="{sid}"}} 0.52' in text and f'sniffowireless_sensor_memory_used_ratio{{sensor="{sid}"}} 0.38' in text
+    # Junk is dropped (not stored), a batch without any leaves the last figures to go stale.
+    assert send(system={"cpu": {"percent": 9999}}).status_code == 200 and not mine()
+    send(system=good)
+    assert send().status_code == 200 and mine()
+
+    # A sensor that went quiet: its figures are marked stale (the UI shows "offline"), and leave Prometheus.
+    real = time.time
+    monkeypatch.setattr(status_mod.time, "time", lambda: real() + status_mod.STALE_AFTER + 30)
+    old = mine()[0]
+    assert old["stale"] is True and 90 < old["quiet_for"] < 150
+    assert f'sniffowireless_sensor_load1{{sensor="{sid}"}}' not in render(ctx)
+    monkeypatch.setattr(status_mod.time, "time", real)
+    assert mine()[0]["stale"] is False
+
+    # Removing the sensor removes its figures.
+    assert c.delete(f"/api/sensors/{sid}", headers=H).status_code == 200
+    assert not mine()

@@ -484,6 +484,8 @@ th.csort[aria-sort="ascending"]::after { content: " ↑"; }
 /* overview: system meters */
 .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .sysm + .sysm { margin-top: 12px; }
+.sysrow + .sysrow { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.sysrow > div:first-child { margin-bottom: 8px; }
 .sysm-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .sysm-track { height: 6px; border-radius: 3px; background: var(--panel-2); margin: 5px 0 3px; overflow: hidden; }
 .sysm-track i { display: block; height: 100%; border-radius: 3px; background: var(--ap); }

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import sanitize, status, version
+from . import sanitize, status, sysinfo, version
 from .sanitize import Name
 from .auth import current_user, require_admin
 
@@ -55,6 +55,16 @@ class Forwarder:
             self.dropped += 1
         self.buf.append(obs)
 
+    @staticmethod
+    def _system():
+        """This machine's load and memory (and the root disk), reported with every batch. A sensor has no database."""
+        try:
+            s = sysinfo.snapshot("", "/")
+        except Exception:
+            return None
+        s.pop("db", None)
+        return s
+
     def _handle_reply(self, reply):
         """The server's answer to a batch may carry settings for this sensor (channels set in the web UI)."""
         if not self.on_channel_config:
@@ -76,7 +86,8 @@ class Forwarder:
             while self.buf and len(batch) < 20_000:
                 batch.append(self.buf.popleft())
             body = gzip.compress(json.dumps({"sent_at": time.time(), "obs": batch, "status": status.snapshot(),
-                                             "dropped": self.dropped, "version": self.version}, default=str).encode())
+                                             "dropped": self.dropped, "version": self.version,
+                                             "system": self._system()}, default=str).encode())
             req = urllib.request.Request(f"{self.cfg.server_url}/api/ingest", data=body, method="POST", headers={
                 "Authorization": f"Bearer {self.cfg.sensor_token}", "Content-Type": "application/json",
                 "Content-Encoding": "gzip", "User-Agent": "sniffowireless-sensor"})
@@ -239,6 +250,9 @@ def routes(ctx):
                            if isinstance(body.get("status"), list)) if x]
         if isinstance(body.get("status"), list):  # a batch without one leaves the last report as it was
             status.replace_remote(sid, sts, now)
+        system = sanitize.remote_system(body.get("system"))
+        if "system" in body:  # older sensors send none: leave whatever is there to go stale
+            status.set_system(sid, system, now)
         dropped = sanitize.clean_num(body.get("dropped"), 0, 10 ** 15, True)
         ctx.execute("UPDATE sensors SET last_seen=?, info=? WHERE id=?",
                     (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts,

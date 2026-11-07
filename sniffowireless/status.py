@@ -4,6 +4,7 @@ import time
 
 _lock = threading.Lock()
 SENSORS = {}
+SYSTEMS = {}  # remote sensor id -> {"system": load / memory / disk figures it reported, "reported": when}
 
 
 def register(name, **fields):
@@ -36,9 +37,27 @@ def remove_remote(sid):
     with _lock:
         for k in [k for k, v in SENSORS.items() if v.get("remote") == sid]:
             del SENSORS[k]
+        SYSTEMS.pop(sid, None)
 
 
 STALE_AFTER = 90  # seconds without a report before a remote sensor's entries count as offline (it reports every ~2 s)
+
+
+def set_system(sid, system, now):
+    with _lock:
+        if system:
+            SYSTEMS[sid] = {"system": system, "reported": now}
+        else:
+            SYSTEMS.pop(sid, None)
+
+
+def systems_snapshot():
+    """The load and memory of each remote sensor that reports them; one that went quiet is marked stale (its last figures
+    are shown by the UI as unknown, not as current)."""
+    now = time.time()
+    with _lock:
+        return {sid: {**v, "stale": now - v["reported"] > STALE_AFTER, "quiet_for": max(0, int(now - v["reported"]))}
+                for sid, v in SYSTEMS.items()}
 
 
 def snapshot():

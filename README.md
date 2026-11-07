@@ -985,7 +985,7 @@ Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in anothe
    The sensor buffers and retries if the server is unreachable, and corrects small clock differences.
 3. **Map → Edit layout:** upload a floor plan (PNG, JPEG, WebP or SVG) and drag each sensor to where it really is.
 
-The **Sensors** panel on the Overview lists every interface of this server and of each remote sensor with a status dot: green *working*, amber *needs attention* (a warning, such as 6 GHz being blocked by the regulatory domain, or an error the sensor is already retrying), red *error*, and grey *offline*. A badge in the panel header sums it up, and the pill at the bottom of the menu follows it. What you see is what the sensor reported in its latest upload, so an error disappears as soon as the sensor reports that it is gone. A sensor that has sent nothing for 90 seconds shows as *offline* with how long it has been quiet, and counts as down in the Prometheus `sniffowireless_sensor_up` metric.
+The **Sensors** panel on the Overview lists every interface of this server and of each remote sensor with a status dot: green *working*, amber *needs attention* (a warning, such as 6 GHz being blocked by the regulatory domain, or an error the sensor is already retrying), red *error*, and grey *offline*. A **Sensor load** panel below it shows the load average (per core) and the memory in use of each remote sensor's machine, with a bar that turns amber from 80% and red from 95%, plus the CPU use, the memory sniffowireless itself uses and the free disk space; the same figures are on *Settings → Sensors* (*Load · memory*). They come with every upload, so a silent sensor shows *offline* instead of its last values. A badge in the panel header sums it up, and the pill at the bottom of the menu follows it. What you see is what the sensor reported in its latest upload, so an error disappears as soon as the sensor reports that it is gone. A sensor that has sent nothing for 90 seconds shows as *offline* with how long it has been quiet, and counts as down in the Prometheus `sniffowireless_sensor_up` metric.
 
 Every device gets a **room** (the sensor that hears it strongest, with 4 dB hysteresis so it doesn't flicker) and a "moved" event when that changes. It also gets an approximate **position**: the signal-weighted average of the three strongest sensors. With one sensor, devices are drawn in a ring around it by signal strength. Room-level accuracy is realistic with a sensor per room. Exact positions are not; walls, bodies and phone orientation easily change the signal by 10 dB.
 
@@ -1037,7 +1037,7 @@ Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since 
 - events per type, open findings by severity
 - channel airtime and retry ratios, radar hits per DFS channel (`sniffowireless_dfs_radar_24h`) and DFS events (`sniffowireless_dfs_events_total`)
 - sensor frames/s, and store queue/drops
-- the version and commit of the server (`sniffowireless_build_info`)
+- the version and commit of the server (`sniffowireless_build_info`), and the load (`sniffowireless_sensor_load1`) and memory use share (`sniffowireless_sensor_memory_used_ratio`) of each remote sensor that is reporting
 
 Create a token with scope `metrics` and scrape with it:
 
