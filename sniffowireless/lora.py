@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS lora_nodes(
   protocol TEXT NOT NULL, addr TEXT NOT NULL, name TEXT, kind TEXT, packets INTEGER DEFAULT 0, rssi REAL, best_rssi REAL, snr REAL,
   profile TEXT, first_seen REAL, last_seen REAL, PRIMARY KEY(protocol, addr)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_lora_nodes_last ON lora_nodes(last_seen);
+CREATE TABLE IF NOT EXISTS radio_seen(
+  slot INTEGER NOT NULL, kind TEXT NOT NULL, addr TEXT NOT NULL, PRIMARY KEY(slot, kind, addr)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS lora_stats(
   minute INTEGER NOT NULL, protocol TEXT NOT NULL, profile TEXT NOT NULL, packets INTEGER DEFAULT 0, bytes INTEGER DEFAULT 0,
   rssi_sum REAL DEFAULT 0, PRIMARY KEY(minute, protocol, profile)) WITHOUT ROWID;
@@ -42,6 +44,7 @@ HANDSHAKE_TRIES = 4
 CONFIG_TIMEOUT = 3.0
 SILENCE_LIMIT = 45   # the firmware prints a STAT line every 10 s: this long without any line means the stick is gone
 MAX_PENDING = 50_000
+SEEN_SLOT = 300  # radio_seen granularity, seconds
 
 
 class LoraError(Exception):
@@ -212,6 +215,7 @@ class LoraMonitor:
         self.packets = []
         self.nodes = {}
         self.stats = {}
+        self.seen = set()
         self.pending = False
 
     def observe(self, store, o, dev):
@@ -239,6 +243,7 @@ class LoraMonitor:
         node = r.get("node")
         if node and len(self.nodes) < MAX_PENDING:
             addr, name, kind = node
+            self.seen.add((int(ts // SEEN_SLOT) * SEEN_SLOT, f"{protocol}:{addr}"))
             n = self.nodes.get((protocol, addr))
             if n is None:
                 self.nodes[(protocol, addr)] = {"name": name, "kind": kind, "packets": 1, "rssi": rssi, "best": rssi, "snr": snr,
@@ -269,12 +274,15 @@ class LoraMonitor:
         c.executemany("INSERT INTO lora_stats VALUES(?,?,?,?,?,?) ON CONFLICT(minute, protocol, profile) DO UPDATE SET "
                       "packets=packets+excluded.packets, bytes=bytes+excluded.bytes, rssi_sum=rssi_sum+excluded.rssi_sum",
                       [(m, p, prof, s[0], s[1], s[2]) for (m, p, prof), s in self.stats.items()])
+        c.executemany("INSERT OR IGNORE INTO radio_seen VALUES(?, 'lora', ?)", list(self.seen))
         self.packets, self.nodes, self.stats, self.pending = [], {}, {}, False
+        self.seen = set()
 
     def prune(self, store, c, cutoff):
         c.execute("DELETE FROM lora_packets WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM lora_nodes WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM lora_stats WHERE minute < ?", (cutoff,))
+        c.execute("DELETE FROM radio_seen WHERE kind='lora' AND slot < ?", (cutoff,))
 
 
 # ------------------------------------------------------------------------------------------------ API

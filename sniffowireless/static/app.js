@@ -9,7 +9,13 @@ const KINDS = {
 };
 // Kinds of radios an admin has switched off (Settings → Modules): their menu entries, cards and statistics are hidden.
 let MODS = {};
-const KIND_MOD = { ap: 'wifi', wifi_client: 'wifi', ble: 'bluetooth', bt_classic: 'bluetooth', lan: 'lan' };
+const KIND_MOD = { ap: 'wifi', wifi_client: 'wifi', ble: 'bluetooth', bt_classic: 'bluetooth', lan: 'lan', zigbee: 'zigbee', lora: 'lora' };
+// Radios that are not devices with a MAC: counted from their own tables, shown on the overview next to the kinds above.
+const EXTRA_KINDS = {
+  zigbee: { label: 'Zigbee radios', color: '#ff9f6b', href: '#/zigbee' },
+  lora: { label: 'LoRa nodes', color: '#c792ea', href: '#/lora' },
+};
+const extraEntries = () => Object.entries(EXTRA_KINDS).filter(([k]) => kindOn(k));
 const SENSOR_MOD = { wifi: 'wifi', bluetooth: 'bluetooth', ethernet: 'lan', zigbee: 'zigbee', lora: 'lora' };
 const modOn = m => MODS[m] !== false;
 const kindOn = k => modOn(KIND_MOD[k]);
@@ -421,7 +427,7 @@ async function viewOverview(params) {
       <div class="row"><button class="btn small ghost live-btn on" id="livebtn" type="button" aria-pressed="true" title="Pause or resume automatic refresh"><span class="pulse-dot"></span><span id="livetxt">Live</span></button>
         <button class="btn small ghost" id="ov-link" type="button" title="Copy a link to this view">Copy link</button>
         <span class="muted">Active = seen in last</span><select id="actwin">${ACT_WINDOWS.map(([v, l]) => `<option value="${v}" ${v === actWin ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
-    <div class="grid cols-5" id="cards"></div>
+    <div class="grid cards-auto" id="cards"></div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-2">
         <header><h2>Active devices over time</h2><div class="row">${modOn('wifi') ? seg('tlview', [['band', 'By band'], ['type', 'By type']], tlView) : ''}${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</div></header>
@@ -475,7 +481,6 @@ async function viewOverview(params) {
   async function loadSummary() {
     const s = await api(`/api/summary?window=${actWin}`);
     const prev = lastCounts; lastCounts = {};
-    document.getElementById('cards').className = 'grid cols-' + Math.max(2, Math.min(6, kindEntries().length + (modOn('lora') ? 1 : 0)));
     document.getElementById('cards').innerHTML = kindEntries().map(([k, m]) => {
       const v = s.kinds[k] || {};
       const conn = k === 'wifi_client' || k === 'bt_classic' || k === 'ble'
@@ -487,15 +492,15 @@ async function viewOverview(params) {
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span>${conn ? `<span>${conn}</span>` : ''}</div></div>`;
     }).join('');
-    if (modOn('lora')) {
-      const v = s.lora || {};
-      lastCounts.lora = v.active || 0;
-      const changed = prev && prev.lora !== undefined && prev.lora !== lastCounts.lora;
-      document.getElementById('cards').insertAdjacentHTML('beforeend', `<div class="card link${changed ? ' bump' : ''}" data-href="#/lora">
-        <div class="label"><span class="swatch" style="background:#c792ea"></span>LoRa nodes</div>
+    extraEntries().forEach(([k, m]) => {
+      const v = s[k] || {};
+      lastCounts[k] = v.active || 0;
+      const changed = prev && prev[k] !== undefined && prev[k] !== lastCounts[k];
+      document.getElementById('cards').insertAdjacentHTML('beforeend', `<div class="card link${changed ? ' bump' : ''}" data-href="${m.href}">
+        <div class="label"><span class="swatch" style="background:${m.color}"></span>${m.label}</div>
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span></div></div>`);
-    }
+    });
     document.querySelectorAll('#cards .card').forEach(c => c.onclick = e => { if (!e.target.closest('a')) location.hash = c.dataset.href; });
     const ev = s.events;
     document.getElementById('events').innerHTML = ev.length ? `<ul class="events">${ev.slice(0, 14).map(e => eventRow(e)).join('')}</ul>` : '<div class="empty">No events yet</div>';
@@ -626,10 +631,11 @@ async function viewOverview(params) {
     });
     const sw = (c, label, dash) => `<span><span class="swatch" style="background:${c}${dash ? ';opacity:.6' : ''}"></span>${label}</span>`;
     if (tlView === 'type') {
-      document.getElementById('tl-legend').innerHTML = kindEntries().map(([k, m]) => sw(m.color, `${m.label} · avg ${num(avg(t.series[k]))}`)).join('')
+      const all = [...kindEntries(), ...extraEntries()];
+      document.getElementById('tl-legend').innerHTML = all.map(([k, m]) => sw(m.color, `${m.label} · avg ${num(avg(t.series[k]))}`)).join('')
         + sw(TEXT, `Connected clients · avg ${num(avg(t.connected))}`, true);
       box.innerHTML = '<div class="chart-box tall"><canvas id="tl"></canvas></div>';
-      const ds = kindEntries().map(([k, m]) => line(m.label, xy(t.series[k]), m.color));
+      const ds = all.map(([k, m]) => line(m.label, xy(t.series[k]), m.color));
       ds.push(line('Connected clients', xy(t.connected), TEXT, dashed));
       chart(document.getElementById('tl'), { type: 'line', data: { datasets: ds }, options: opts() });
       return;
@@ -638,13 +644,15 @@ async function viewOverview(params) {
     // plus Bluetooth & LAN (no band).
     document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
       + sw(TEXT, 'Connected clients', true);
-    const bands = t.bands || {}, others = ['ble', 'bt_classic', 'lan'].filter(kindOn);
+    const bands = t.bands || {}, others = ['ble', 'bt_classic', 'lan', 'zigbee', 'lora'].filter(kindOn), info = k => KINDS[k] || EXTRA_KINDS[k];
+    const names = [['bluetooth', 'Bluetooth'], ['lan', 'LAN'], ['zigbee', 'Zigbee'], ['lora', 'LoRa']].filter(([m]) => modOn(m)).map(([, n]) => n);
+    const otherTitle = names.length > 1 ? names.slice(0, -1).join(', ') + ' &amp; ' + names[names.length - 1] : names[0] || '';
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
         <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).ap))})</span> · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).wifi_client))})</span> · ${num(now(b, 'connected'))} connected <span class="faint">(avg ${num(avg((bands[b] || {}).connected))})</span></span></div>
         <div class="chart-box short"><canvas id="tl-${b.replace('.', '')}"></canvas></div></div>`).join('')}
-      ${others.length ? `<div class="band-cell"><div class="band-head"><b>${modOn('bluetooth') && modOn('lan') ? 'Bluetooth &amp; LAN' : modOn('bluetooth') ? 'Bluetooth' : 'LAN'}</b>
-        <span class="legend small-text">${others.map(k => sw(KINDS[k].color, `${KINDS[k].label} · avg ${num(avg(t.series[k]))}`)).join('')}</span></div>
+      ${others.length ? `<div class="band-cell"><div class="band-head"><b>${otherTitle}</b>
+        <span class="legend small-text">${others.map(k => sw(info(k).color, `${info(k).label} · avg ${num(avg(t.series[k]))}`)).join('')}</span></div>
         <div class="chart-box short"><canvas id="tl-other"></canvas></div></div>` : ''}</div>
       <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to. Averages are over the selected time range.</p>`;
     BAND_PANELS.forEach(([b]) => {
@@ -654,7 +662,7 @@ async function viewOverview(params) {
         line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(null, true) });
     });
     if (others.length) chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: others.map(k =>
-      line(KINDS[k].label, xy(t.series[k]), KINDS[k].color)) }, options: opts(null, true) });
+      line(info(k).label, xy(t.series[k]), info(k).color)) }, options: opts(null, true) });
   }
 
   await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), loadDiscovered(), loadZigbeeDisc(), loadLoraDisc(), pollStatus()]);
