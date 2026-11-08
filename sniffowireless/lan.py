@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .auth import current_user, require_admin
+from .modules import cutoff_for
 from .sanitize import Mac, clean_str
 
 SCHEMA = """
@@ -176,6 +177,7 @@ class LanMonitor:
         self.pending = False
 
     def prune(self, store, c, cutoff):
+        cutoff = cutoff_for(self.ctx, "lan", cutoff)
         c.execute("DELETE FROM lan_traffic WHERE minute < ?", (cutoff,))
         c.execute("DELETE FROM lan_flows WHERE hour < ?", (cutoff,))
         c.execute("DELETE FROM lan_dns WHERE last_seen < ?", (cutoff,))

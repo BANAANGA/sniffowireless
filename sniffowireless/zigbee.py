@@ -15,6 +15,8 @@ from . import status
 from .auth import current_user
 from .zigbee_radio import ALL_CHANNELS, HINTS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect
 
+from .modules import cutoff_for
+
 log = logging.getLogger("sniffowireless.zigbee")
 
 SCHEMA = """
@@ -302,6 +304,7 @@ class ZigbeeMonitor:
         self.pending = False
 
     def prune(self, store, c, cutoff):
+        cutoff = cutoff_for(self.ctx, "zigbee", cutoff)
         c.execute("DELETE FROM zigbee_networks WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM zigbee_radios WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM zigbee_channels WHERE minute < ?", (cutoff,))

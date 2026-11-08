@@ -27,7 +27,7 @@ DEFAULTS = {
     # Anonymised view (display only): MAC addresses and / or SSIDs shown as pseudonyms to everyone. See anonymize.py.
     "privacy": {"macs": False, "ssids": False, "secret": ""},
     # Kinds of radios whose menu entries, overview cards and statistics are hidden (display only). See modules.py.
-    "modules": {"disabled": []},
+    "modules": {"disabled": [], "retention": {}},
     # Performance (admin): the database page cache and memory map; switch off on low-memory machines.
     "performance": {"db_cache": True},
     # MQTT presence publish (e.g. for Home Assistant): arrived/left for known/labelled devices only.

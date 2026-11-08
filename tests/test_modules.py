@@ -48,7 +48,7 @@ def test_admin_can_hide_modules_and_it_sticks(ctx):
     r = c.put("/api/modules", json={"disabled": ["lora", "zigbee", "lora"]})
     assert r.status_code == 200
     assert {m["id"] for m in r.json()["modules"] if not m["enabled"]} == {"lora", "zigbee"}
-    assert ctx.settings.get("modules") == {"disabled": ["lora", "zigbee"]}
+    assert ctx.settings.get("modules")["disabled"] == ["lora", "zigbee"]
     # a fresh session (and a viewer) sees the same
     v = client(ctx, "view")
     assert {m["id"] for m in v.get("/api/modules").json()["modules"] if not m["enabled"]} == {"lora", "zigbee"}
@@ -63,4 +63,38 @@ def test_only_admins_change_modules_and_ids_are_checked(ctx):
     a = client(ctx, "admin")
     assert a.put("/api/modules", json={"disabled": ["toaster"]}).status_code == 400
     assert a.put("/api/modules", json={"disabled": "lora"}).status_code == 422
-    assert ctx.settings.get("modules") == {"disabled": []}
+    assert ctx.settings.get("modules")["disabled"] == []
+
+
+def test_a_module_can_keep_its_data_for_a_shorter_time_than_the_rest(ctx):
+    from tests.test_lora import PROFILES, frame, meshtastic
+    a = client(ctx, "admin")
+    r = a.put("/api/modules", json={"disabled": ["zigbee"], "retention": {"lora": 1}})
+    assert r.status_code == 200
+    d = {m["id"]: m for m in r.json()["modules"]}
+    assert d["lora"]["retention"] == 1 and d["lora"]["has_retention"] and d["zigbee"]["retention"] is None and not d["wifi"]["has_retention"]
+    assert r.json()["default_retention"] == ctx.cfg.retention_days and not d["zigbee"]["enabled"]
+    # the retention survives another change of what is shown
+    assert a.put("/api/modules", json={"disabled": []}).json()["modules"][-1]["retention"] == 1
+    now = time.time()
+    eu = PROFILES["meshtastic-eu868"]
+    ctx.store.process(frame(meshtastic(frm=1), eu, now - 2 * 86400))   # older than the module's 1 day, newer than the general 30
+    ctx.store.process(frame(meshtastic(frm=2), eu, now - 3600))
+    ctx.store.flush()
+    ctx.store.prune(now)
+    assert [r["addr"] for r in ctx.rows("SELECT addr FROM lora_nodes")] == ["!00000002"]
+    assert ctx.one("SELECT COUNT(*) n FROM lora_packets")["n"] == 1
+    # no module retention: the general one applies again
+    assert a.put("/api/modules", json={"disabled": [], "retention": {"lora": 0}}).json()["modules"][-1]["retention"] is None
+    ctx.store.process(frame(meshtastic(frm=3), eu, now - 2 * 86400))
+    ctx.store.flush()
+    ctx.store.prune(now)
+    assert ctx.one("SELECT COUNT(*) n FROM lora_nodes")["n"] == 2
+
+
+def test_retention_is_validated(ctx):
+    a = client(ctx, "admin")
+    assert a.put("/api/modules", json={"disabled": [], "retention": {"wifi": 5}}).status_code == 400
+    assert a.put("/api/modules", json={"disabled": [], "retention": {"lora": 99999}}).status_code == 400
+    assert a.put("/api/modules", json={"disabled": [], "retention": {"lora": -1}}).status_code == 400
+    assert ctx.settings.get("modules")["retention"] == {}

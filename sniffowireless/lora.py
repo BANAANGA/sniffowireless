@@ -21,6 +21,8 @@ from . import status
 from .auth import current_user, require_admin
 from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
 
+from .modules import cutoff_for
+
 log = logging.getLogger("sniffowireless.lora")
 
 SCHEMA = """
@@ -363,6 +365,7 @@ class LoraMonitor:
         self.seen = set()
 
     def prune(self, store, c, cutoff):
+        cutoff = cutoff_for(self.ctx, "lora", cutoff)
         c.execute("DELETE FROM lora_packets WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM lora_nodes WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM lora_stats WHERE minute < ?", (cutoff,))
