@@ -9,6 +9,7 @@ Bluetooth dongle that stopped answering, a USB serial stick that hung). What it 
 
 For a remote sensor the server keeps the request until the sensor's next upload and hands it over in the reply."""
 import fcntl
+import hashlib
 import logging
 import os
 import re
@@ -140,7 +141,17 @@ def reset(name, usb=False):
 def queue(sid, name, usb):
     with _lock:
         q = PENDING.setdefault(sid, [])
-        q[:] = [c for c in q if c["name"] != name][-9:] + [{"action": "reset", "name": name, "usb": bool(usb), "at": time.time()}]
+        q[:] = [c for c in q if not (c["name"] == name and c["action"] == "reset")][-9:] + [
+            {"action": "reset", "name": name, "usb": bool(usb), "at": time.time()}]
+
+
+def queue_flash(sid, name, manifest):
+    """Ask a remote sensor to update the firmware of its LoRa board: it fetches the image from this server with its own token."""
+    with _lock:
+        q = PENDING.setdefault(sid, [])
+        q[:] = [c for c in q if not (c["name"] == name and c["action"] == "flash")][-9:] + [
+            {"action": "flash", "name": name, "version": manifest["version"], "sha256": manifest["sha256"], "size": manifest["size"],
+             "at": time.time()}]
 
 
 def take(sid):
@@ -150,18 +161,39 @@ def take(sid):
     return [{k: v for k, v in c.items() if k != "at"} for c in cmds]
 
 
-def run_commands(cmds):
-    """On the sensor: carry out what the server asked for, in a thread (a USB reset can take several seconds)."""
+def flash_lora(name, image):
+    """Write a firmware image to the LoRa board behind a status name (lora:ttyUSB0). Raises ValueError/FlashError with a sentence."""
+    sensor = REGISTRY.get(name)
+    if not name.startswith("lora:") or sensor is None or not hasattr(sensor, "flash"):
+        raise ValueError(f"{name} is not a LoRa board of this machine")
+    try:
+        sensor.flash(image)
+    except Exception as e:
+        status.update(name, state="error", error=f"Firmware update failed: {e}"[:200], note=None)
+        raise
+    log.info("Updated the firmware of %s", name)
+
+
+def run_commands(cmds, fetch_firmware=None):
+    """On the sensor: carry out what the server asked for, in a thread (a USB reset can take several seconds, a firmware update
+    about a minute). `fetch_firmware()` downloads the image from the server."""
     def work():
         for c in cmds[:10]:
-            if not isinstance(c, dict) or c.get("action") != "reset" or not isinstance(c.get("name"), str):
+            if not isinstance(c, dict) or not isinstance(c.get("name"), str):
                 continue
             try:
-                reset(c["name"], c.get("usb") is True)
+                if c.get("action") == "reset":
+                    reset(c["name"], c.get("usb") is True)
+                elif c.get("action") == "flash" and fetch_firmware and NAME_RX.match(c["name"]):
+                    image = fetch_firmware()
+                    if len(image) != c.get("size") or hashlib.sha256(image).hexdigest() != c.get("sha256"):
+                        raise ValueError("the firmware image from the server does not match what it announced")
+                    flash_lora(c["name"], image)
             except Exception as e:
-                log.warning("Reset of %s failed: %s", c.get("name"), e)
-                status.update(c["name"], note=f"Reset failed: {e}") if c["name"] in status.SENSORS else None
-    threading.Thread(target=work, daemon=True, name="adapter-reset").start()
+                log.warning("%s of %s failed: %s", c.get("action"), c.get("name"), e)
+                if c["name"] in status.SENSORS:
+                    status.update(c["name"], note=f"{'Firmware update' if c.get('action') == 'flash' else 'Reset'} failed: {e}")
+    threading.Thread(target=work, daemon=True, name="adapter-commands").start()
 
 
 class ResetBody(BaseModel):

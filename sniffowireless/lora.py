@@ -9,13 +9,15 @@ are not stored and encrypted ones are never decrypted. The sensor never transmit
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from . import adapters, status
 from .auth import current_user, require_admin
@@ -115,6 +117,7 @@ class LoraSensor:
         self.packets = 0
         self.profile = None
         self.link, self.reset_requested = None, threading.Event()
+        self.flashing, self.port_lock = threading.Event(), threading.Lock()  # a firmware update has the port: the loop stays away
         adapters.REGISTRY[self.name] = self
         status.register(self.name, type="lora", iface=device, profiles=[p.name for p in cfg.lora_profiles])
 
@@ -125,19 +128,51 @@ class LoraSensor:
     def _loop(self):
         while not self.stop.is_set():
             link = None
-            try:
-                link = self.link = self.link_factory(self.device)
-                self.run(link)
-            except Exception as e:  # serial errors depend on the platform; a replug must not end the thread
-                log.warning("%s: %s", self.name, e)
-                status.update(self.name, state="error", error=str(e)[:200])
-            finally:
-                if link is not None:
-                    try:
-                        link.close()
-                    except Exception:
-                        pass
+            with self.port_lock:
+                try:
+                    if self.flashing.is_set():
+                        raise LoraError("firmware update in progress")
+                    link = self.link = self.link_factory(self.device)
+                    self.run(link)
+                except Exception as e:  # serial errors depend on the platform; a replug must not end the thread
+                    if not self.flashing.is_set():
+                        log.warning("%s: %s", self.name, e)
+                        status.update(self.name, state="error", error=str(e)[:200])
+                finally:
+                    if link is not None:
+                        try:
+                            link.close()
+                        except Exception:
+                            pass
             self._retry_wait()
+
+    def flash(self, image, progress=None, flasher=None):
+        """Write a firmware image to the board on this port, then let the loop find it again. Raises espflash.FlashError.
+        The read loop is stopped first (it holds the port) and kept away until the board has restarted."""
+        from . import espflash
+        if self.flashing.is_set():
+            raise espflash.FlashError("a firmware update of this board is already running")
+        self.flashing.set()
+        try:
+            end = time.monotonic() + 30
+            while not self.port_lock.acquire(timeout=1):  # the loop gives the port up once its link is closed
+                self.reset()
+                if time.monotonic() > end:
+                    raise espflash.FlashError("could not take over the serial port from the capture loop")
+            try:
+                status.update(self.name, state="updating", error=None, warning=None, note="Updating the firmware: starting")
+
+                def report(f):
+                    status.update(self.name, note=f"Updating the firmware: {int(f * 100)}%")
+                    if progress:
+                        progress(f)
+                (flasher or espflash.flash)(self.device, image, progress=report)
+                status.update(self.name, note=f"Firmware updated at {time.strftime('%H:%M')}")
+            finally:
+                self.port_lock.release()
+        finally:
+            self.flashing.clear()
+            self.reset_requested.set()  # reconnect now: the handshake reads the new version
 
     def reset(self, usb=False):
         """Close the serial link so the loop opens it (and runs the handshake) again at once; optionally reset the USB device too."""
@@ -410,6 +445,13 @@ def firmware_manifest():
         return None
 
 
+def _flash_local(name, image):
+    try:
+        adapters.flash_lora(name, image)
+    except Exception as e:
+        log.warning("Firmware update of %s failed: %s", name, e)
+
+
 def routes(ctx):
     r = APIRouter()
 
@@ -430,6 +472,45 @@ def routes(ctx):
         if not m:
             raise HTTPException(404, "This build has no firmware image")
         return {**m, "url": "/api/lora/firmware.bin"}
+
+    @r.get("/api/ingest/firmware")
+    def firmware_for_sensor(request: Request):
+        """The same image for a remote sensor, which updates its own LoRa board when an admin asks (sensor tokens only)."""
+        u = request.state.user
+        if not u or getattr(u, "scope", None) != "sensor":
+            raise HTTPException(401, "sensor token required")
+        m = firmware_manifest()
+        if not m:
+            raise HTTPException(404, "This build has no firmware image")
+        return FileResponse(FIRMWARE_DIR / m["file"], media_type="application/octet-stream")
+
+    class FlashBody(BaseModel):
+        sensor: str = Field("local", max_length=64)   # "local" or a remote sensor's id
+        name: str = Field(max_length=120)             # lora:<device> as the sensor names it
+
+    @r.post("/api/lora/flash")
+    def flash(body: FlashBody, _=Depends(require_admin)):
+        m = firmware_manifest()
+        if not m:
+            raise HTTPException(404, "This build has no firmware image")
+        if not re.fullmatch(r"lora:[\w./:@+-]{1,100}", body.name):
+            raise HTTPException(400, "Unknown interface")
+        if body.sensor != "local":
+            entry = status.SENSORS.get(f"{body.sensor}/{body.name}")
+            if not entry:
+                raise HTTPException(404, "That sensor does not report such a board")
+            if entry.get("state") == "updating":
+                raise HTTPException(409, "That board is already being updated")
+            adapters.queue_flash(body.sensor, body.name, m)
+            return {"done": False, "queued": True, "version": m["version"]}
+        sensor = adapters.REGISTRY.get(body.name)
+        if sensor is None or not hasattr(sensor, "flash"):
+            raise HTTPException(404, "This server has no such LoRa board")
+        if sensor.flashing.is_set():
+            raise HTTPException(409, "That board is already being updated")
+        image = (FIRMWARE_DIR / m["file"]).read_bytes()
+        threading.Thread(target=lambda: _flash_local(body.name, image), daemon=True, name="lora-flash").start()
+        return {"done": False, "started": True, "version": m["version"]}
 
     @r.get("/api/lora/firmware.bin")
     def firmware_bin(_=Depends(require_admin)):

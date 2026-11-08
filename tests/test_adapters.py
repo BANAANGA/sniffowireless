@@ -112,7 +112,7 @@ def test_a_remote_sensor_gets_the_request_with_its_next_upload(ctx):
     f = sensors.Forwarder.__new__(sensors.Forwarder)
     f.on_channel_config = None
     orig = adapters.run_commands
-    adapters.run_commands = lambda cmds: got.append(cmds)
+    adapters.run_commands = lambda cmds, fetch=None: got.append(cmds)
     try:
         f._handle_reply(b'{"accepted": 1, "commands": [{"action": "reset", "name": "wifi:wlan1", "usb": false}]}')
         f._handle_reply(b'{"accepted": 1}')
