@@ -126,6 +126,11 @@ class InterferenceDetector:
                 e["base"] = max(e["base"], b_retry or 0)
         return out
 
+    def reset(self, module):
+        """Episodes in progress belong to rows that Settings -> Clear data just deleted."""
+        if module == "wifi":
+            self.open, self.closed, self.pending = {}, [], False
+
     def sweep(self, store, now):
         if now - self.last_run < RUN_EVERY:
             return

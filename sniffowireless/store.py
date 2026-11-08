@@ -290,14 +290,17 @@ class Store:
         self.probe_updates = {k: v for k, v in self.probe_updates.items() if k[0] not in macs}
         c = self.conn
         c.execute("BEGIN")
-        for m in macs:
-            for sql in ("DELETE FROM devices WHERE mac=?", "DELETE FROM sessions WHERE mac=? OR peer=?",
-                        "DELETE FROM samples WHERE mac=?", "DELETE FROM presence_hours WHERE mac=?",
-                        "DELETE FROM events WHERE mac=? OR peer=?",
-                        "DELETE FROM probes WHERE mac=?", "DELETE FROM sightings WHERE mac=?"):
-                c.execute(sql, (m, m) if sql.count("?") == 2 else (m,))
+        todo = sorted(macs)
+        for i in range(0, len(todo), 400):  # in batches: one statement per table for 400 devices, not 400
+            chunk = todo[i:i + 400]
+            q = ",".join("?" * len(chunk))
+            for sql, twice in (("DELETE FROM devices WHERE mac IN ({q})", False), ("DELETE FROM sessions WHERE mac IN ({q}) OR peer IN ({q})", True),
+                               ("DELETE FROM samples WHERE mac IN ({q})", False), ("DELETE FROM presence_hours WHERE mac IN ({q})", False),
+                               ("DELETE FROM events WHERE mac IN ({q}) OR peer IN ({q})", True), ("DELETE FROM probes WHERE mac IN ({q})", False),
+                               ("DELETE FROM sightings WHERE mac IN ({q})", False)):
+                c.execute(sql.format(q=q), chunk * 2 if twice else chunk)
         c.execute("COMMIT")
-        log.info("Purged %d ignored devices", len(macs))
+        log.info("Purged %d devices", len(macs))
 
     def retune(self):
         """Re-apply the cache settings to the writer's own connection (on the writer thread, which owns it)."""

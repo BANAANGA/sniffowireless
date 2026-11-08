@@ -151,6 +151,10 @@ class LanMonitor:
             self.ip_owner.clear()
 
     # --------------------------------------------------------------- flush
+    def reset(self, module):
+        if module == "lan":
+            self.traffic, self.flows, self.dns, self.servers, self.pending = {}, {}, {}, {}, False
+
     def flush(self, store, c):
         if not self.pending:
             return
