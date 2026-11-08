@@ -76,12 +76,22 @@ class Forwarder:
         except (ValueError, AttributeError):
             return
         if isinstance(cmds, list) and cmds:
-            adapters.run_commands(cmds)
+            adapters.run_commands(cmds, self.fetch_firmware)
         if conf and self.on_channel_config:
             try:
                 self.on_channel_config(conf)
             except Exception:
                 log.exception("Could not apply the channel settings from the server")
+
+    def fetch_firmware(self):
+        """The LoRa firmware image the server ships (for an update the admin asked for), fetched with this sensor's token."""
+        req = urllib.request.Request(f"{self.cfg.server_url.rstrip('/')}/api/ingest/firmware", headers={
+            "Authorization": f"Bearer {self.cfg.sensor_token}", "User-Agent": "sniffowireless-sensor"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = r.read(4 * 1024 * 1024 + 1)
+        if len(data) > 4 * 1024 * 1024:
+            raise ValueError("the firmware image from the server is too large")
+        return data
 
     def _post(self, body):
         """POST one batch to /api/ingest and return the reply. The connection is kept open between batches (one every 2 s),
