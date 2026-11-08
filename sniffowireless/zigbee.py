@@ -208,6 +208,12 @@ class ZigbeeMonitor:
         elif t == "zb_frames":
             self._frames(store, o)
 
+    def reset(self, module):
+        """Forget what is remembered about what Settings -> Clear data deleted (new networks raise events again)."""
+        if module == "zigbee":
+            self.networks, self.radios, self.channels, self.energy, self.seen = {}, {}, {}, {}, set()
+            self.known_nets, self.open_nets, self.pending = set(), set(), False
+
     def _network(self, store, o):
         key = (o["ext_pan"], o["pan"], o["channel"])
         mac = f"zb:{o['pan']:04x}"

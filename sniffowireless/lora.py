@@ -247,6 +247,12 @@ class LoraMonitor:
             pass
         self.pending = False
 
+    def reset(self, module):
+        """Forget what is remembered about what Settings -> Clear data deleted (new nodes raise events again)."""
+        if module == "lora":
+            self.packets, self.nodes, self.stats, self.seen, self.pending = [], {}, {}, set(), False
+            self.known, self.rate, self.joins, self.fcnt = set(), {}, {}, {}
+
     def _events(self, store, ts, protocol, addr, node, r):
         """New nodes, floods and LoRaWAN counter resets as events (see the thresholds above)."""
         mac, kind = f"lora:{addr}", node[2] if node else None

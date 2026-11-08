@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import (alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
-               matching, metrics, modules, mqtt, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+               matching, metrics, modules, mqtt, purge, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+from .anonymize import AnonymizeMiddleware
 from .auth import current_user
 from .httpsec import SecurityMiddleware
 from .web_util import overlap_counts
@@ -68,6 +69,7 @@ def create_app(ctx):
     static = Path(__file__).parent / "static"
     vendor_dir = Path("/app/vendor")
     ctx.auth.install(app)
+    app.add_middleware(AnonymizeMiddleware, ctx=ctx)  # innermost: masks what the routes return
     app.add_middleware(SecurityMiddleware, allowed_hosts=cfg.allowed_hosts)  # runs before auth
     app.add_middleware(JsonAndStaticGZip, minimum_size=1024, compresslevel=5)  # outermost
     rows, one = ctx.rows, ctx.one
@@ -680,7 +682,7 @@ def create_app(ctx):
     # ------------------------------------------------------------------ static
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
-    for mod in (auth, appearance, modules, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
+    for mod in (auth, appearance, modules, purge, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
                 trackers, backup, search, logs, matching, handshake, channels):
         app.include_router(mod.routes(ctx))
 
