@@ -146,6 +146,17 @@ class LoraSensor:
         raise LoraError("This device did not answer as the lora-sniffer firmware. It may run other firmware (flash "
                         "firmware/lora-sniffer), or another program may be using the port")
 
+    def read_version(self, link):
+        """The firmware version the board reports in INFO (1 for boards flashed before that field existed), or None."""
+        link.write_line("INFO")
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end and not self.stop.is_set():
+            line = link.read_line(0.3)
+            if line and line.startswith("INFO,lora-sniffer"):
+                f = line.split(",")
+                return int(f[12]) if len(f) > 12 and f[12].isdigit() else 1
+        return None
+
     def configure(self, link, profile):
         """Tell the sniffer to listen with a profile's settings; False if it refused them (frames that arrive meanwhile are kept)."""
         link.write_line(f"CFG,{profile.freq:g},{profile.bw:g},{profile.sf},{profile.cr},0x{profile.sync:02X},{profile.preamble}")
@@ -182,7 +193,7 @@ class LoraSensor:
     def run(self, link):
         first = self.handshake(link)
         firmware = "lora-sniffer"
-        status.update(self.name, state="listening", error=None, firmware=firmware, warning=None)
+        status.update(self.name, state="listening", error=None, firmware=firmware, warning=None, fw_version=self.read_version(link))
         log.info("%s: sniffer answered (%s)", self.name, first)
         profiles = list(self.cfg.lora_profiles)
         refused = []
@@ -423,6 +434,7 @@ def routes(ctx):
         return {"now": now, "since": since, "bucket": bucket, "t": ts, "protocols": protocols, "profiles": profiles, "nodes": nodes,
                 "recent": recent, "series": {k: [v.get(t, 0) for t in ts] for k, v in series.items()}, "sensors": sensors,
                 "configured": bool(sensors) or ctx.cfg.demo or bool(ctx.cfg.lora_devices),
+                "firmware_latest": (firmware_manifest() or {}).get("version"),
                 "listening": [{"name": p.name, "label": p.label, "describe": p.describe(), "hint": p.hint, "air_s": round(air.get(p.name, 0), 2),
                                "use": use.get(p.name, 0.0)} for p in ctx.cfg.lora_profiles],
                 "known_profiles": [{"name": p.name, "label": p.label, "describe": p.describe()} for p in PROFILES.values()],

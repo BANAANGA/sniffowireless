@@ -11,7 +11,7 @@ SETTINGS_VIEWS.loraflasher = async function (el) {
 
   el.innerHTML = `<p class="muted" style="margin-top:0">Put the receive-only LoRa firmware on a <b>Heltec WiFi LoRa 32 V3</b>. The board must be plugged into <b>this computer</b> (the one running your browser), not necessarily the server. Afterwards plug it into the machine that runs sniffowireless and set <code>LORA_DEVICES</code> (see README → LoRa).</p>
     ${!fw ? '<div class="callout"><span class="err">This build contains no firmware image.</span> Build one with <code>python3 scripts/build_firmware.py</code>.</div>' : `
-    <section class="panel" style="max-width:760px"><header><h2>${esc(fw.title)}</h2><span class="faint">built ${esc(fw.built)} · ${kb(fw.size)} · sha256 ${esc(fw.sha256.slice(0, 12))}</span></header><div class="body">
+    <section class="panel" style="max-width:760px"><header><h2>${esc(fw.title)}</h2><span class="faint">version ${esc(fw.version)} · built ${esc(fw.built)} · ${kb(fw.size)} · sha256 ${esc(fw.sha256.slice(0, 12))}</span></header><div class="body">
       <p style="margin-top:0"><b>Flashing replaces whatever is on the board</b> (for example Meshtastic). Tick the box below to save a copy first so you can restore it later.</p>
       ${!supported || !secure ? `<div class="callout"><span class="warn-text">${!supported ? 'This browser cannot talk to serial ports (Web Serial). Use Chrome, Edge or another Chromium based browser.' :
         'Web Serial only works on a secure page. Open sniffowireless over <b>https://</b>, or on <b>http://localhost</b> (for example through <code>ssh -L 8080:localhost:8080 your-server</code>).'}</span>

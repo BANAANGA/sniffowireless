@@ -178,13 +178,15 @@ def rx_line(payload, profile, rssi=-97.5, snr=6.25, ferr=-320, ms=1000):
 class FakeSniffer:
     """What the firmware does on the serial line: answers PING and CFG, and 'hears' what is on the air for the current settings."""
 
-    def __init__(self, air, answer_ping=True, refuse=(), die_after=None):
-        self.air, self.answer_ping, self.refuse, self.die_after = air, answer_ping, set(refuse), die_after
+    def __init__(self, air, answer_ping=True, refuse=(), die_after=None, fw=2):
+        self.air, self.answer_ping, self.refuse, self.die_after, self.fw = air, answer_ping, set(refuse), die_after, fw
         self.out, self.cfgs, self.current, self.closed = [], [], None, False
 
     def write_line(self, text):
         if text == "PING" and self.answer_ping:
             self.out.append("PONG")
+        elif text == "INFO" and self.fw is not False:  # fw=1: a board flashed before the version field existed
+            self.out.append("INFO,lora-sniffer,1,heltec_v3,sx1262,idle,0.0000,0.0,0,0x00,0,0" + (f",{self.fw}" if self.fw != 1 else ""))
         elif text.startswith("CFG,"):
             f = text.split(",")
             self.cfgs.append((float(f[1]), float(f[2]), int(f[3]), int(f[4]), int(f[5], 0), int(f[6])))
@@ -260,7 +262,7 @@ def test_sensor_hops_between_profiles_and_attributes_frames():
     assert sensor.packets == len(sink) >= 2
     st = status.SENSORS["lora:ttyUSB9"]
     assert st["type"] == "lora" and st["crc_errors"] == 2 and st["firmware"] == "lora-sniffer" and st["state"] == "listening"
-    assert st["profiles"] == ["meshtastic-eu868", "meshcore-eu868"]
+    assert st["profiles"] == ["meshtastic-eu868", "meshcore-eu868"] and st["fw_version"] == 2
 
 
 def test_sensor_with_one_profile_does_not_hop():
@@ -424,6 +426,8 @@ def test_firmware_image_matches_its_manifest_and_source():
     assert m, "run: python3 scripts/build_firmware.py"
     image = (lora_mod.FIRMWARE_DIR / m["file"]).read_bytes()
     assert len(image) == m["size"] and hashlib.sha256(image).hexdigest() == m["sha256"]
+    import re
+    assert m["version"] == int(re.search(r"FW_VERSION\s*=\s*(\d+)", (root / "firmware" / "lora-sniffer" / "src" / "main.cpp").read_text()).group(1))
     spec = importlib.util.spec_from_file_location("build_firmware", root / "scripts" / "build_firmware.py")
     bf = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bf)
@@ -633,3 +637,26 @@ def test_radios_in_weekly_report_metrics_and_mqtt(ctx):
                     {"type": "zigbee_permit_join", "mac": "zb:1a62", "detail": "open", "ts": 2.0}])
     assert [(t, p["type"]) for t, p, kw in sent] == [("sn/radio/lora_new_node", "lora_new_node"), ("sn/radio/zigbee_permit_join", "zigbee_permit_join")]
     assert all(kw["retain"] is False for _, _, kw in sent)
+
+
+def test_sensor_reads_the_firmware_version_of_the_board():
+    eu = PROFILES["meshtastic-eu868"]
+    for fw, want in ((2, 2), (1, 1), (False, None)):
+        status.SENSORS.clear()
+        run_sensor(FakeSniffer({}, fw=fw), Config(lora_profiles=[eu]), seconds=0.5 if fw is not False else 2.2)
+        assert status.SENSORS["lora:ttyUSB9"]["fw_version"] == want, fw
+
+
+def test_old_firmware_is_pointed_out_on_the_lora_page(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    status.register("lora:x", type="lora", iface="/dev/x")
+    status.update("lora:x", fw_version=1)
+    d = c.get("/api/lora").json()
+    assert d["firmware_latest"] == lora_mod.firmware_manifest()["version"] >= 2 and d["sensors"][0]["fw_version"] == 1
+    assert c.get("/api/lora/firmware").json()["version"] == d["firmware_latest"]

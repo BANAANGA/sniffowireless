@@ -8,7 +8,7 @@
 // Host -> device (one command per line):
 //   CFG,<freq MHz>,<bw kHz>,<sf>,<cr 5-8>,<sync, e.g. 0x2B>,<preamble symbols>   listen with these settings
 //   PING                                                                         -> PONG
-//   INFO                                                                         -> INFO,...
+//   INFO                                                                         -> INFO,...,<firmware version>
 // Device -> host besides RX:
 //   READY,lora-sniffer,1,heltec_v3,sx1262     after boot
 //   OK,CFG,...  /  ERR,CFG,<RadioLib status>  answer to CFG
@@ -28,6 +28,8 @@ static const int LORA_SCK = 9, LORA_MISO = 11, LORA_MOSI = 10;
 static const int PIN_VEXT = 36;  // active low: powers the display and the LoRa front end
 static const int PIN_LED = 35;
 static const int OLED_SDA = 17, OLED_SCL = 18, OLED_RST = 21;  // the 0.96" SSD1306 shares the Vext supply
+// Bump on every change that a flashed board should get: the server compares it with the version it ships (Settings -> LoRa flasher).
+static const int FW_VERSION = 2;
 static const float TCXO_VOLTAGE = 1.8;  // the SX1262's clock comes from a TCXO fed through DIO3
 
 SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
@@ -81,8 +83,8 @@ static void handleLine(String cmd) {
   if (cmd.length() == 0) return;
   if (cmd == "PING") { Serial.println("PONG"); return; }
   if (cmd == "INFO") {
-    Serial.printf("INFO,lora-sniffer,1,heltec_v3,sx1262,%s,%.4f,%.1f,%d,0x%02X,%lu,%lu\n", configured ? "listening" : "idle",
-                  cfgFreq, cfgBw, cfgSf, cfgSync, (unsigned long)packets, (unsigned long)crcErrors);
+    Serial.printf("INFO,lora-sniffer,1,heltec_v3,sx1262,%s,%.4f,%.1f,%d,0x%02X,%lu,%lu,%d\n", configured ? "listening" : "idle",
+                  cfgFreq, cfgBw, cfgSf, cfgSync, (unsigned long)packets, (unsigned long)crcErrors, FW_VERSION);
     return;
   }
   if (cmd.startsWith("CFG,")) {

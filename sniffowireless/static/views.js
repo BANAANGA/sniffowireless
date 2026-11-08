@@ -643,9 +643,15 @@ const SETTINGS_VIEWS = {
         <td class="num muted">${s.id === 'local' ? '—' : ago(s.last_seen)}</td><td>${s.x != null ? 'placed' : '<span class="faint">not placed</span>'}</td>
         <td class="num"><button class="btn small" data-edit="${esc(s.id)}">Edit</button>${s.id !== 'local' ? ` <button class="btn small danger" data-del="${esc(s.id)}">Remove</button>` : ''}</td></tr>`; }).join(''))}</div></section>
       <p class="faint small-text">A remote sensor is this same container started with <code>SNIFFOWIRELESS_MODE=sensor</code> on another machine (e.g. a Raspberry Pi in another room). It forwards everything it captures here. Give each sensor a room name, then place it on the <a href="#/map">map</a>.</p>`;
-    el.querySelector('#add-sensor').onclick = () => openModal('Add remote sensor', `<label class="field">Name<input name="name" required placeholder="e.g. Garage Pi"></label><label class="field">Room<input name="room" placeholder="e.g. Garage"></label>`,
+    el.querySelector('#add-sensor').onclick = () => openModal('Add remote sensor', `<label class="field">Name<input name="name" required placeholder="e.g. Garage Pi"></label><label class="field">Room<input name="room" placeholder="e.g. Garage"></label>
+      <div class="row" style="gap:10px;align-items:flex-end"><label class="field" style="flex:1">LoRa board (optional)<input name="lora" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false"></label>
+        <label class="field">Region<select name="region"><option>EU868</option><option>US915</option><option>ANZ</option></select></label></div>
+      <p class="faint small-text" style="margin-top:0">A Heltec V3 flashed with the LoRa firmware, as the machine names it (<code>ls /dev/ttyUSB*</code>). Use the plain name: <code>/dev/serial/by-id/…</code> names are often missing inside the container.</p>`,
       async f => {
+        const lora = fv(f, 'lora') || '';
+        if (lora && !/^\/dev\/[A-Za-z0-9_./-]+$/.test(lora)) throw new Error('The LoRa board should be a device path like /dev/ttyUSB0');
         const r = await send('POST', '/api/sensors', { name: fv(f, 'name'), room: fv(f, 'room') || null });
+        const loraArgs = lora ? `  --device ${lora} -e LORA_DEVICES=${lora} -e LORA_REGION=${fv(f, 'region')} \\\n` : '';
         // The published image, from the GitHub Container Registry (the repository is lower-cased there): nothing to build.
         const image = `ghcr.io/${about.repo.replace('https://github.com/', '').toLowerCase()}:latest`;
         setTimeout(() => openModal(`Sensor “${r.id}” created`, `<p>Run this on the sensor machine (after connecting its adapters as in the README). It pulls the published image, so there is nothing to build. <b>The token is shown only once.</b></p>
@@ -653,8 +659,8 @@ const SETTINGS_VIEWS = {
   -e SNIFFOWIRELESS_MODE=sensor -e SERVER_URL=${esc(r.server_url)} \\
   -e SENSOR_TOKEN=${esc(r.token)} \\
   -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 \\
-  ${esc(image)}</pre><button type="button" class="btn small" id="copy">Copy</button>
-          <p class="faint small-text">Adjust <code>WIFI_INTERFACES</code> and <code>BT_DEVICES</code> to the sensor's adapters. To update it later, pull the image and run the command again (see <i>Updating</i> in the README).</p>`, null), 50);
+${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id="copy">Copy</button>
+          <p class="faint small-text">Adjust <code>WIFI_INTERFACES</code> and <code>BT_DEVICES</code> to the sensor's adapters.${lora ? ' The LoRa board must be plugged in before the container starts.' : ''} To update it later, pull the image and run the command again (see <i>Updating</i> in the README).</p>`, null), 50);
         setTimeout(() => { const c = document.getElementById('copy'); if (c) c.onclick = () => navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(() => toast('Copied')); }, 100);
         SETTINGS_VIEWS.sensors(el);
       });

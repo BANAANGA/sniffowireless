@@ -822,6 +822,9 @@ These rules are created on first start and only log to the alert history until y
 - unknown devices at night
 - networks under investigation
 - radar (DFS) on my networks
+- LoRa and Zigbee security (the four events in bold below)
+
+LoRa and Zigbee have their own events, usable in rules with the target *any* (they have no MAC address, so the device based targets don't apply): *New LoRa node*, *New Zigbee network*, **LoRa node sending unusually many frames** (40 frames in 5 minutes from one node), **LoRaWAN device repeating join requests** (8 in 10 minutes), **LoRaWAN frame counter went back** (a device restart, or replayed frames) and **Zigbee network is accepting new devices**. The thresholds are fixed and count only what the radio heard, which is part of the time when it hops between profiles.
 
 **Channels** (Settings → Notifications):
 
@@ -1002,6 +1005,12 @@ Each packet carries a confidence (*sure*, *likely*, *a guess*). A LoRa receiver 
 
 Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `LORA_DEVICES` too.
 
+**Channel use.** For each listening profile the LoRa page shows the airtime of the frames heard and an estimate of how busy the channel is: airtime heard divided by the time the radio listened on that profile (a hopping radio listens to each profile `1/N` of the time, so the figure is an estimate, and other senders you can't hear add to it). Airtime is calculated from the frame size, spreading factor and bandwidth (Semtech's formula) with the coding rate of the profile and the preamble Meshtastic and MeshCore send (16).
+
+**Firmware version.** The board reports its firmware version; the LoRa page says when it is older than the version this server ships, and *Settings → LoRa flasher* updates it. Boards flashed before this existed count as version 1.
+
+**Notifications and monitoring.** LoRa and Zigbee numbers are in the weekly report, in Prometheus (`sniffowireless_lora_nodes_active`, `sniffowireless_lora_packets_1h`, `sniffowireless_lora_airtime_seconds_1h`, `sniffowireless_zigbee_radios_active`, …) and, when MQTT is on (Settings → MQTT), the events above are published under `<prefix>/radio/<event type>` (not retained). **Settings → Sensors → Add remote sensor** has an optional LoRa board field that adds the `--device` and `LORA_*` options to the command it generates.
+
 **Profiles.** `LORA_REGION` picks sensible defaults (EU868: Meshtastic LongFast on 869.525 MHz and MeshCore on 869.618 MHz; US915: Meshtastic LongFast on 906.875 MHz; ANZ: Meshtastic and MeshCore narrow). Override with `LORA_PROFILES`, a comma separated list of:
 
 - built-in names: `meshtastic-eu868`, `meshtastic-us`, `meshtastic-anz`, `meshtastic-eu433`, `meshcore-eu868`, `meshcore-au-narrow`, `meshcore-nz-narrow`, `lorawan-eu868`, `lorawan-us915-sb2`, `lora-aprs-433`
@@ -1078,6 +1087,7 @@ Copy `data/backups` off the machine as well, e.g. with a nightly `rsync`, since 
 - clients per AP and per SSID
 - presence and signal of watched or labelled devices, and group presence
 - events per type, open findings by severity
+- LoRa nodes and frames per protocol, LoRa airtime, Zigbee radios and networks
 - channel airtime and retry ratios, radar hits per DFS channel (`sniffowireless_dfs_radar_24h`) and DFS events (`sniffowireless_dfs_events_total`)
 - sensor frames/s, and store queue/drops
 - the version and commit of the server (`sniffowireless_build_info`), and the load (`sniffowireless_sensor_load1`) and memory use share (`sniffowireless_sensor_memory_used_ratio`) of each remote sensor that is reporting
