@@ -972,7 +972,7 @@ ZIGBEE_DEVICES=/dev/serial/by-id/usb-...
 
 - Only one program can use a stick at a time. Stop Zigbee2MQTT, ZHA or similar first; that network is offline while the stick is here. If you have a spare stick, use that.
 - `privileged: true` exposes the devices present when the container starts, so restart the container after plugging the stick in or replugging it.
-- With [less privilege](#less-privilege), pass it explicitly with `--device /dev/serial/by-id/usb-...`.
+- With [less privilege](#less-privilege), pass it explicitly with `--device`. Inside a container the `/dev/serial/by-id/...` names may be missing; if the stick isn't found, use the plain name (`--device /dev/ttyUSB0`, `ZIGBEE_DEVICES=/dev/ttyUSB0`) as described for [LoRa](#lora-meshtastic-meshcore-lorawan).
 - On Ubuntu, `brltty` can claim CP210x and CH340 sticks, making the port vanish. Remove it if the stick doesn't show up.
 
 Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
@@ -1001,9 +1001,9 @@ Each packet carries a confidence (*sure*, *likely*, *a guess*). A LoRa receiver 
 
 1. Flash the firmware. This replaces whatever is on the board. Easiest is **Settings → LoRa flasher**: plug the board into the computer you browse from and click *Select board and flash* (it can save a copy of the current firmware first). It needs a Chromium based browser and a secure page, so `https://` or `http://localhost` (for example via `ssh -L 8080:localhost:8080 your-server`). Or build and flash from a terminal, see [`firmware/lora-sniffer/README.md`](firmware/lora-sniffer/README.md).
 2. Plug the board into the machine that runs the container and note its path: `ls /dev/serial/by-id`.
-3. Set `LORA_DEVICES=/dev/serial/by-id/usb-Silicon_Labs_CP2102_...` and `LORA_REGION=EU868` (or `US915`, `ANZ`), then restart the container. As with Zigbee, `privileged: true` exposes devices present at start, and with [less privilege](#less-privilege) you pass `--device` yourself.
+3. Set `LORA_DEVICES` to the board and `LORA_REGION=EU868` (or `US915`, `ANZ`), then restart the container. `privileged: true` only exposes the devices present when the container starts, so restart it after plugging the board in. **Inside a container the `/dev/serial/by-id/...` names may be missing** even though they exist on the host (the error is `could not open port ... No such file or directory`). Pass the board explicitly with `--device` and use the plain name: `--device /dev/ttyUSB0` and `LORA_DEVICES=/dev/ttyUSB0` (`ls -l /dev/serial/by-id/` on the host shows which `ttyUSB` number the board is). That name can change if you replug the board or add another USB serial device. With docker compose, add `devices: ["/dev/ttyUSB0"]` to the service.
 
-Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `LORA_DEVICES` too.
+Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `LORA_DEVICES` too; see the example under [Multiple sensors & the map](#multiple-sensors--the-map).
 
 **Channel use.** For each listening profile the LoRa page shows the airtime of the frames heard and an estimate of how busy the channel is: airtime heard divided by the time the radio listened on that profile (a hopping radio listens to each profile `1/N` of the time, so the figure is an estimate, and other senders you can't hear add to it). Airtime is calculated from the frame size, spreading factor and bandwidth (Semtech's formula) with the coding rate of the profile and the preamble Meshtastic and MeshCore send (16).
 
@@ -1035,6 +1035,17 @@ Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in anothe
      -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 ghcr.io/banaanga/sniffowireless:latest
    ```
    The sensor buffers and retries if the server is unreachable, and corrects small clock differences.
+
+   A sensor with Wi-Fi, Bluetooth and a [LoRa](#lora-meshtastic-meshcore-lorawan) receiver (a Heltec V3 flashed with the LoRa firmware) looks like this. Pass the LoRa board with `--device` and the plain device name; pull the image first, as an older cached `latest` has no LoRa support. Mind that no line in a multi-line command may be empty or end in spaces after the `\`:
+   ```bash
+   docker pull ghcr.io/banaanga/sniffowireless:latest
+   docker run -d --name sniffowireless-sensor --restart unless-stopped --network host --privileged \
+     -e SNIFFOWIRELESS_MODE=sensor -e SERVER_URL=http://192.168.1.10:8080 -e SENSOR_TOKEN=sniffowireless_... \
+     -e WIFI_INTERFACES=wlan1 -e BT_DEVICES=hci0 -e WIFI_CHANNELS=default,6ghz \
+     --device /dev/ttyUSB0 -e LORA_DEVICES=/dev/ttyUSB0 -e LORA_REGION=EU868 \
+     ghcr.io/banaanga/sniffowireless:latest
+   ```
+   `docker logs sniffowireless-sensor` should show `sniffer answered (PONG)`.
 3. **Map → Edit layout:** upload a floor plan (PNG, JPEG, WebP or SVG) and drag each sensor to where it really is.
 
 The **Sensors** panel on the Overview lists every interface of this server and of each remote sensor with a status dot: green *working*, amber *needs attention* (a warning, such as 6 GHz being blocked by the regulatory domain, or an error the sensor is already retrying), red *error*, and grey *offline*. A **Sensor load** panel below it shows the load average (per core) and the memory in use of each remote sensor's machine, with a bar that turns amber from 80% and red from 95%, plus the CPU use, the memory sniffowireless itself uses and the free disk space; the same figures are on *Settings → Sensors* (*Load · memory*). They come with every upload, so a silent sensor shows *offline* instead of its last values. A badge in the panel header sums it up, and the pill at the bottom of the menu follows it. What you see is what the sensor reported in its latest upload, so an error disappears as soon as the sensor reports that it is gone. A sensor that has sent nothing for 90 seconds shows as *offline* with how long it has been quiet, and counts as down in the Prometheus `sniffowireless_sensor_up` metric.
