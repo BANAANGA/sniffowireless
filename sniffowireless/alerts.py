@@ -49,11 +49,15 @@ EVENT_TYPES = {
     "fingerprint_changed": "A known device's fingerprint changed",
     "handshake_attack": "Possible handshake-capture attack on my network", "ap_downgrade": "My access point's security got weaker",
     "probe_scan": "Device probing for many networks (scanner)", "mac_duplicate": "Same MAC address from two devices (cloned / spoofed)",
+    "lora_new_node": "New LoRa node (Meshtastic, MeshCore, LoRaWAN, APRS)", "lora_flood": "LoRa node sending unusually many frames",
+    "lora_join_flood": "LoRaWAN device repeating join requests", "lora_fcnt_reset": "LoRaWAN frame counter went back (restart or replay)",
+    "zigbee_new_network": "New Zigbee network", "zigbee_permit_join": "Zigbee network is accepting new devices",
 }
 SEVERITY = {"rogue_ap": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
             "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
             "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium", "fingerprint_changed": "medium",
-            "handshake_attack": "high", "ap_downgrade": "high", "probe_scan": "medium", "mac_duplicate": "medium"}
+            "handshake_attack": "high", "ap_downgrade": "high", "probe_scan": "medium", "mac_duplicate": "medium",
+            "lora_flood": "medium", "lora_join_flood": "medium", "lora_fcnt_reset": "medium", "zigbee_permit_join": "medium"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
     "telegram": ["bot_token", "chat_id"],
@@ -77,6 +81,7 @@ LATER_RULES = {
     "investigations": ("Networks under investigation",
                        ["investigated_seen", "investigated_connect", "investigated_probe"], {"mode": "any"}, {}),
     "dfs": ("Radar (DFS) on my networks", ["dfs_radar"], {"mode": "mine"}, {}),
+    "radios": ("LoRa and Zigbee security", ["lora_flood", "lora_join_flood", "lora_fcnt_reset", "zigbee_permit_join"], {"mode": "any"}, {}),
 }
 
 
@@ -204,6 +209,8 @@ def describe(ev, dev, meta, group, time_fmt="%H:%M:%S"):
         "fingerprint_changed": f"Fingerprint changed: {name}",
         "handshake_attack": f"Handshake-capture attack: {ev.get('detail')}", "ap_downgrade": f"Security downgrade: {ev.get('detail')}",
         "probe_scan": f"Scanner: {ev.get('detail')}", "mac_duplicate": f"Duplicate MAC: {ev.get('detail')}",
+        "lora_new_node": f"{ev.get('detail')}", "lora_flood": f"LoRa flood: {ev.get('detail')}", "lora_join_flood": f"LoRaWAN: {ev.get('detail')}",
+        "lora_fcnt_reset": f"LoRaWAN: {ev.get('detail')}", "zigbee_new_network": f"{ev.get('detail')}", "zigbee_permit_join": f"{ev.get('detail')}",
     }
     lines = [time.strftime("%Y-%m-%d " + time_fmt, time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:

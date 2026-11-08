@@ -50,6 +50,21 @@ MESHTASTIC_PRESETS = {"ShortTurbo": (500, 7, 5), "ShortFast": (250, 7, 5), "Shor
                       "TinyFast": (15.6, 7, 5), "TinySlow": (15.6, 8, 6)}
 
 
+def airtime_ms(length, sf, bw_khz, cr=5, preamble=8, crc=True, explicit_header=True):
+    """How long a frame of `length` bytes occupies the channel (Semtech's time-on-air formula, SX127x/SX126x datasheets).
+    cr is the coding rate denominator 5..8 (4/5 .. 4/8)."""
+    tsym = (2 ** sf) / (bw_khz * 1000.0)
+    de = 1 if tsym > 0.016 else 0  # low data rate optimisation
+    ih = 0 if explicit_header else 1
+    bits = 8 * length - 4 * sf + 28 + (16 if crc else 0) - 20 * ih
+    symbols = 8 + max(math.ceil(bits / (4 * (sf - 2 * de))) * cr, 0)
+    return ((preamble + 4.25) * tsym + symbols * tsym) * 1000.0
+
+
+# What the senders of each protocol use for the preamble (the receiver listens for 8 so it also hears shorter ones).
+AIR_PREAMBLE = {"meshtastic": 16, "meshcore": 16}
+
+
 def meshtastic_hash(name):
     """djb2 as in the firmware: the default channel's name (the preset's) picks its frequency slot."""
     h = 5381

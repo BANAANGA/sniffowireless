@@ -180,6 +180,14 @@ class ZigbeeMonitor:
         self.channels = {}
         self.energy = {}
         self.seen = set()
+        self.known_nets, self.open_nets = set(), set()  # for "new network" and "joining opened" events
+        try:
+            for ext, pan, ch, permit in ctx.store.conn.execute("SELECT ext_pan, pan, channel, permit_join FROM zigbee_networks"):
+                self.known_nets.add((ext, pan, ch))
+                if permit:
+                    self.open_nets.add((ext, pan, ch))
+        except Exception:
+            pass
         self.pending = False
 
     def _vendor(self, store, address):
@@ -202,6 +210,17 @@ class ZigbeeMonitor:
 
     def _network(self, store, o):
         key = (o["ext_pan"], o["pan"], o["channel"])
+        mac = f"zb:{o['pan']:04x}"
+        if key not in self.known_nets and len(self.known_nets) < 10_000:
+            self.known_nets.add(key)
+            store._event(o["ts"], mac, "zigbee_new_network", f"ext:{o['ext_pan']}",
+                         f"New Zigbee network: PAN 0x{o['pan']:04x} on channel {o['channel']}, extended ID {o['ext_pan']}", always=True)
+        if o.get("permit_join") and key not in self.open_nets:
+            self.open_nets.add(key)
+            store._event(o["ts"], mac, "zigbee_permit_join", f"ext:{o['ext_pan']}",
+                         f"Zigbee network PAN 0x{o['pan']:04x} (channel {o['channel']}) is accepting new devices", always=True)
+        elif not o.get("permit_join"):
+            self.open_nets.discard(key)
         n = self.networks.get(key)
         if n is None:
             n = self.networks[key] = {"permit_join": False, "lqi": None, "rssi": None, "routers": set(),

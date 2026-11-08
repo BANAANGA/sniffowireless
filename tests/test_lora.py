@@ -178,13 +178,15 @@ def rx_line(payload, profile, rssi=-97.5, snr=6.25, ferr=-320, ms=1000):
 class FakeSniffer:
     """What the firmware does on the serial line: answers PING and CFG, and 'hears' what is on the air for the current settings."""
 
-    def __init__(self, air, answer_ping=True, refuse=(), die_after=None):
-        self.air, self.answer_ping, self.refuse, self.die_after = air, answer_ping, set(refuse), die_after
+    def __init__(self, air, answer_ping=True, refuse=(), die_after=None, fw=2):
+        self.air, self.answer_ping, self.refuse, self.die_after, self.fw = air, answer_ping, set(refuse), die_after, fw
         self.out, self.cfgs, self.current, self.closed = [], [], None, False
 
     def write_line(self, text):
         if text == "PING" and self.answer_ping:
             self.out.append("PONG")
+        elif text == "INFO" and self.fw is not False:  # fw=1: a board flashed before the version field existed
+            self.out.append("INFO,lora-sniffer,1,heltec_v3,sx1262,idle,0.0000,0.0,0,0x00,0,0" + (f",{self.fw}" if self.fw != 1 else ""))
         elif text.startswith("CFG,"):
             f = text.split(",")
             self.cfgs.append((float(f[1]), float(f[2]), int(f[3]), int(f[4]), int(f[5], 0), int(f[6])))
@@ -260,7 +262,7 @@ def test_sensor_hops_between_profiles_and_attributes_frames():
     assert sensor.packets == len(sink) >= 2
     st = status.SENSORS["lora:ttyUSB9"]
     assert st["type"] == "lora" and st["crc_errors"] == 2 and st["firmware"] == "lora-sniffer" and st["state"] == "listening"
-    assert st["profiles"] == ["meshtastic-eu868", "meshcore-eu868"]
+    assert st["profiles"] == ["meshtastic-eu868", "meshcore-eu868"] and st["fw_version"] == 2
 
 
 def test_sensor_with_one_profile_does_not_hop():
@@ -424,6 +426,8 @@ def test_firmware_image_matches_its_manifest_and_source():
     assert m, "run: python3 scripts/build_firmware.py"
     image = (lora_mod.FIRMWARE_DIR / m["file"]).read_bytes()
     assert len(image) == m["size"] and hashlib.sha256(image).hexdigest() == m["sha256"]
+    import re
+    assert m["version"] == int(re.search(r"FW_VERSION\s*=\s*(\d+)", (root / "firmware" / "lora-sniffer" / "src" / "main.cpp").read_text()).group(1))
     spec = importlib.util.spec_from_file_location("build_firmware", root / "scripts" / "build_firmware.py")
     bf = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bf)
@@ -507,3 +511,152 @@ def test_overview_counts_zigbee_radios_and_lora_nodes_over_time(ctx):
     # pruning removes old activity
     ctx.store.prune(now + 40 * 86400)
     assert ctx.one("SELECT COUNT(*) n FROM radio_seen")["n"] == 0
+
+
+# ------------------------------------------------------------------ events: new nodes and behaviour worth an alert
+def events_of(ctx, *types):
+    ctx.store.flush()
+    q = ",".join("?" * len(types))
+    return ctx.rows(f"SELECT type, mac, peer, detail FROM events WHERE type IN ({q}) ORDER BY id", types)
+
+
+def test_new_lora_nodes_raise_one_event_each(ctx):
+    eu, mc, lw = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"], PROFILES["lorawan-eu868"]
+    t = time.time()
+    ctx.store.process(frame(meshtastic(frm=0xAB), eu, t))
+    ctx.store.process(frame(meshtastic(frm=0xAB, pid=2), eu, t + 1))           # the same node again: nothing new
+    ctx.store.process(frame(meshcore_advert(), mc, t + 2))
+    ctx.store.process(frame(meshcore_text(), mc, t + 3))                       # only a one-byte hash: not worth an alert
+    ctx.store.process(frame(lorawan_uplink(), lw, t + 4))
+    ev = events_of(ctx, "lora_new_node")
+    assert [e["mac"] for e in ev] == ["lora:!000000ab", "lora:pk:00010203", "lora:26011bda"]
+    assert "Meshtastic node !000000ab" in ev[0]["detail"] and "Garage Repeater" in ev[1]["detail"] and "repeater" in ev[1]["detail"]
+    # known after a restart too (the monitor reads the nodes it already stored)
+    ctx.lora.known.clear()
+    ctx.lora.known = {(p, a) for p, a in ctx.store.conn.execute("SELECT protocol, addr FROM lora_nodes")}
+    ctx.store.process(frame(meshtastic(frm=0xAB, pid=3), eu, t + 5))
+    assert len(events_of(ctx, "lora_new_node")) == 3
+
+
+def test_lora_flood_join_flood_and_counter_reset_are_flagged(ctx):
+    eu, lw = PROFILES["meshtastic-eu868"], PROFILES["lorawan-eu868"]
+    t = time.time()
+    for i in range(lora_mod.FLOOD_PACKETS + 5):
+        ctx.store.process(frame(meshtastic(frm=0xF1, pid=i), eu, t + i))
+    ev = events_of(ctx, "lora_flood")
+    assert len(ev) == 1 and ev[0]["mac"] == "lora:!000000f1" and "40 frames" in ev[0]["detail"]
+    for i in range(lora_mod.JOIN_FLOOD + 3):
+        ctx.store.process(frame(lorawan_join_request(), lw, t + i * 10))
+    assert len(events_of(ctx, "lora_join_flood")) == 1
+    # frame counters: forward, a retransmission, a 16 bit wrap and a small step back are normal; a big step back is not
+    for n, fcnt in enumerate((100, 101, 101, 102, 65530, 3)):
+        ctx.store.process(frame(lorawan_uplink(fcnt=fcnt), lw, t + 500 + n))
+    ev = events_of(ctx, "lora_fcnt_reset")
+    # 102 -> 65530 is 65428 steps back (flagged); 65530 -> 3 is a wrap forward (not)
+    assert len(ev) == 1 and "from 102 to 65530" in ev[0]["detail"]
+    ctx.store.process(frame(lorawan_uplink(fcnt=300), lw, t + 600))
+    ctx.store.process(frame(lorawan_uplink(fcnt=290), lw, t + 601))  # 10 back: out of order, not a reset
+    assert len(events_of(ctx, "lora_fcnt_reset")) == 1
+
+
+def test_zigbee_new_network_and_joining_events(ctx):
+    t = time.time()
+    net = lambda permit, ts: {"t": "zb_network", "ts": ts, "mac": "-", "ext_pan": "00:12:4b:00:1e:a0:44:01", "pan": 0x1A62, "channel": 15,
+                              "permit_join": permit, "stack_profile": 2, "update_id": 1, "lqi": 200, "rssi": -50, "routers": []}
+    ctx.store.process(net(False, t))
+    ctx.store.process(net(False, t + 600))                                       # seen again: nothing
+    ctx.store.process(net(True, t + 1200))                                       # joining opened
+    ctx.store.process(net(True, t + 1800))                                       # still open: one event only
+    ev = events_of(ctx, "zigbee_new_network", "zigbee_permit_join")
+    assert [e["type"] for e in ev] == ["zigbee_new_network", "zigbee_permit_join"] and ev[0]["mac"] == "zb:1a62" and "channel 15" in ev[0]["detail"]
+    ctx.store.process(net(False, t + 2400))
+    ctx.store.process(net(True, t + 3000))                                       # opened again later: another event
+    assert len(events_of(ctx, "zigbee_permit_join")) == 2
+
+
+# ------------------------------------------------------------------ airtime
+def test_airtime_formula():
+    from sniffowireless.lora_protocols import airtime_ms
+    assert abs(airtime_ms(10, 7, 125) - 41.2) < 0.1                       # the worked example in Semtech's calculator
+    assert airtime_ms(20, 7, 125) > airtime_ms(10, 7, 125) and airtime_ms(10, 12, 125) > 20 * airtime_ms(10, 7, 125)
+    assert airtime_ms(40, 11, 250) < airtime_ms(40, 11, 125) and airtime_ms(40, 7, 125, cr=8) > airtime_ms(40, 7, 125, cr=5)
+    assert airtime_ms(0, 7, 125) > 0
+
+
+def test_airtime_is_kept_and_shown_per_profile(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.lora_protocols import airtime_ms
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    eu = PROFILES["meshtastic-eu868"]
+    now = time.time()
+    payload = meshtastic()
+    for i in range(10):
+        ctx.store.process(frame(payload, eu, now - 100 + i))
+    ctx.store.flush()
+    each = airtime_ms(len(payload), eu.sf, eu.bw, eu.cr, 16) / 1000
+    row = c.get("/api/lora?hours=1").json()["listening"][0]
+    assert row["name"] == "meshtastic-eu868" and abs(row["air_s"] - 10 * each) < 0.05
+    # two profiles are listened to alternately: each is heard half of the time, so its use is twice the airtime share
+    assert abs(row["use"] - 10 * each / (3600 * 0.5)) < 0.0005
+
+
+# ------------------------------------------------------------------ report, metrics, MQTT
+def test_radios_in_weekly_report_metrics_and_mqtt(ctx):
+    from sniffowireless import metrics, mqtt, reports
+    eu, mc = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"]
+    now = time.time()
+    ctx.store.process(frame(meshtastic(frm=0xC1), eu, now - 60))
+    ctx.store.process(frame(meshcore_advert(), mc, now - 50))
+    ctx.store.process({"t": "zb_frames", "ts": now - 30, "mac": "-", "undecoded": 0, "channels": {"15": 4},
+                       "radios": [[0x1A62, "0x0001", 1 << 15, 4, 0, 0, 1, 1, -70, 150]]})
+    ctx.store.process({"t": "zb_network", "ts": now - 20, "mac": "-", "ext_pan": "00:12:4b:00:1e:a0:44:01", "pan": 0x1A62, "channel": 15,
+                       "permit_join": True, "stack_profile": 2, "update_id": 1, "lqi": 200, "rssi": -50, "routers": []})
+    ctx.store.flush()
+    lines = reports.radio_lines(ctx, now - 7 * 86400)
+    assert any(l.startswith("LoRa: 2 nodes heard (2 new)") and "Meshtastic 1" in l and "MeshCore 1" in l for l in lines)
+    assert any(l.startswith("Zigbee: 1 radios on 1 networks (1 new)") for l in lines) and any("warnings: 1" in l for l in lines)
+    ctx.settings.set("modules", {"disabled": ["lora"]})                      # hidden modules stay out of the report
+    assert not any(l.startswith("LoRa:") for l in reports.radio_lines(ctx, now - 7 * 86400))
+    text = metrics.render(ctx)
+    assert 'sniffowireless_lora_nodes_total{protocol="meshtastic"} 1' in text and 'sniffowireless_lora_packets_1h{protocol="meshcore"} 1' in text
+    assert "sniffowireless_zigbee_radios_total 1" in text and "sniffowireless_zigbee_networks 1" in text and "sniffowireless_lora_airtime_seconds_1h" in text
+
+    sent = []
+
+    class Pub(mqtt.MqttPublisher):
+        def __init__(self):
+            self.cfg, self.ctx = {"topic_prefix": "sn", "qos": 0}, ctx
+
+        client = type("C", (), {"publish": lambda s, topic, payload, **kw: sent.append((topic, json.loads(payload), kw))})()
+    Pub()._publish([{"type": "lora_new_node", "mac": "lora:!1", "detail": "x", "ts": 1.0}, {"type": "arrived", "mac": "aa:bb:cc:00:00:01", "ts": 1.0, "detail": None},
+                    {"type": "zigbee_permit_join", "mac": "zb:1a62", "detail": "open", "ts": 2.0}])
+    assert [(t, p["type"]) for t, p, kw in sent] == [("sn/radio/lora_new_node", "lora_new_node"), ("sn/radio/zigbee_permit_join", "zigbee_permit_join")]
+    assert all(kw["retain"] is False for _, _, kw in sent)
+
+
+def test_sensor_reads_the_firmware_version_of_the_board():
+    eu = PROFILES["meshtastic-eu868"]
+    for fw, want in ((2, 2), (1, 1), (False, None)):
+        status.SENSORS.clear()
+        run_sensor(FakeSniffer({}, fw=fw), Config(lora_profiles=[eu]), seconds=0.5 if fw is not False else 2.2)
+        assert status.SENSORS["lora:ttyUSB9"]["fw_version"] == want, fw
+
+
+def test_old_firmware_is_pointed_out_on_the_lora_page(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    status.register("lora:x", type="lora", iface="/dev/x")
+    status.update("lora:x", fw_version=1)
+    d = c.get("/api/lora").json()
+    assert d["firmware_latest"] == lora_mod.firmware_manifest()["version"] >= 2 and d["sensors"][0]["fw_version"] == 1
+    assert c.get("/api/lora/firmware").json()["version"] == d["firmware_latest"]

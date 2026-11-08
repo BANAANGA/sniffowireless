@@ -103,7 +103,7 @@ LAN_KIND = "lan"  # seen only on the wired / LAN side
 # a BLE address that answers an inquiry is dual-mode classic).
 KIND_RANK = {"wifi_client": 1, "ap": 2, "ble": 1, "bt_classic": 2}
 DEDUPE_EVENTS = {"deauth_broadcast": 60, "deauth": 30, "deauth_flood": 300, "rogue_ap": 3600, "karma_ap": 3600,
-                 "moved": 600}
+                 "moved": 600, "lora_flood": 600, "lora_join_flood": 1800, "lora_fcnt_reset": 3600, "zigbee_permit_join": 600}
 
 
 class IgnoreRules:

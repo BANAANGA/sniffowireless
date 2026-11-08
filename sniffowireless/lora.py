@@ -11,15 +11,15 @@ import logging
 import os
 import threading
 import time
-from pathlib import Path
 from collections import deque
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from . import status
 from .auth import current_user, require_admin
-from .lora_protocols import PROFILES, PROTOCOLS, classify
+from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
 
 log = logging.getLogger("sniffowireless.lora")
 
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS radio_seen(
   slot INTEGER NOT NULL, kind TEXT NOT NULL, addr TEXT NOT NULL, PRIMARY KEY(slot, kind, addr)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS lora_stats(
   minute INTEGER NOT NULL, protocol TEXT NOT NULL, profile TEXT NOT NULL, packets INTEGER DEFAULT 0, bytes INTEGER DEFAULT 0,
-  rssi_sum REAL DEFAULT 0, PRIMARY KEY(minute, protocol, profile)) WITHOUT ROWID;
+  rssi_sum REAL DEFAULT 0, air_ms REAL DEFAULT 0, PRIMARY KEY(minute, protocol, profile)) WITHOUT ROWID;
 """
 BAUD_RATE = 115200
 RETRY_INTERVAL = 30
@@ -45,6 +45,12 @@ CONFIG_TIMEOUT = 3.0
 SILENCE_LIMIT = 45   # the firmware prints a STAT line every 10 s: this long without any line means the stick is gone
 MAX_PENDING = 50_000
 SEEN_SLOT = 300  # radio_seen granularity, seconds
+# Behaviour worth an alert (events, so alert rules can pick them up). Fixed thresholds: frames are only heard while the radio
+# listens on that profile, so these are lower bounds of what is really on the air.
+FLOOD_PACKETS, FLOOD_WINDOW = 40, 300      # one node sending this many frames in this many seconds
+JOIN_FLOOD, JOIN_WINDOW = 8, 600           # one LoRaWAN device sending this many join requests
+FCNT_BACK = 16                             # a LoRaWAN frame counter going back by more than this (and not a wrap)
+TRACK_MAX = 5000
 
 
 class LoraError(Exception):
@@ -140,6 +146,17 @@ class LoraSensor:
         raise LoraError("This device did not answer as the lora-sniffer firmware. It may run other firmware (flash "
                         "firmware/lora-sniffer), or another program may be using the port")
 
+    def read_version(self, link):
+        """The firmware version the board reports in INFO (1 for boards flashed before that field existed), or None."""
+        link.write_line("INFO")
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end and not self.stop.is_set():
+            line = link.read_line(0.3)
+            if line and line.startswith("INFO,lora-sniffer"):
+                f = line.split(",")
+                return int(f[12]) if len(f) > 12 and f[12].isdigit() else 1
+        return None
+
     def configure(self, link, profile):
         """Tell the sniffer to listen with a profile's settings; False if it refused them (frames that arrive meanwhile are kept)."""
         link.write_line(f"CFG,{profile.freq:g},{profile.bw:g},{profile.sf},{profile.cr},0x{profile.sync:02X},{profile.preamble}")
@@ -176,7 +193,7 @@ class LoraSensor:
     def run(self, link):
         first = self.handshake(link)
         firmware = "lora-sniffer"
-        status.update(self.name, state="listening", error=None, firmware=firmware, warning=None)
+        status.update(self.name, state="listening", error=None, firmware=firmware, warning=None, fw_version=self.read_version(link))
         log.info("%s: sniffer answered (%s)", self.name, first)
         profiles = list(self.cfg.lora_profiles)
         refused = []
@@ -216,7 +233,61 @@ class LoraMonitor:
         self.nodes = {}
         self.stats = {}
         self.seen = set()
+        try:  # databases from before the airtime figures
+            ctx.store.conn.execute("ALTER TABLE lora_stats ADD COLUMN air_ms REAL DEFAULT 0")
+        except Exception:
+            pass
+        self.known = set()          # (protocol, addr) nodes seen before, for "new node" events
+        self.rate = {}              # node -> recent frame times, for flood detection
+        self.joins = {}             # LoRaWAN DevEUI -> recent join request times
+        self.fcnt = {}              # LoRaWAN DevAddr -> last frame counter
+        try:
+            self.known = {(p, a) for p, a in ctx.store.conn.execute("SELECT protocol, addr FROM lora_nodes LIMIT 200000")}
+        except Exception:
+            pass
         self.pending = False
+
+    def _events(self, store, ts, protocol, addr, node, r):
+        """New nodes, floods and LoRaWAN counter resets as events (see the thresholds above)."""
+        mac, kind = f"lora:{addr}", node[2] if node else None
+        key = (protocol, addr)
+        if key not in self.known and len(self.known) < 200_000:
+            self.known.add(key)
+            if kind != "hash" and protocol != "unknown":
+                label = PROTOCOLS.get(protocol, protocol)
+                name = f" “{node[1]}”" if node[1] else ""
+                store._event(ts, mac, "lora_new_node", protocol, f"New {label} node {addr}{name}" + (f" ({kind})" if kind else ""), always=True)
+        if kind == "hash":
+            return  # a one-byte hash is shared by many nodes: rates and counters per hash mean nothing
+        q = self.rate.setdefault(key, deque())
+        q.append(ts)
+        while q and ts - q[0] > FLOOD_WINDOW:
+            q.popleft()
+        if len(q) == FLOOD_PACKETS:
+            store._event(ts, mac, "lora_flood", protocol, f"{PROTOCOLS.get(protocol, protocol)} node {addr} sent {FLOOD_PACKETS} frames in "
+                         f"{int(ts - q[0]) or 1} s (heard here only part of the time)", always=True)
+        if len(self.rate) > TRACK_MAX:
+            self.rate.clear()
+        info = r.get("info") or {}
+        if protocol == "lorawan" and info.get("dev_eui") and r["kind"] == "join request":
+            j = self.joins.setdefault(info["dev_eui"], deque())
+            j.append(ts)
+            while j and ts - j[0] > JOIN_WINDOW:
+                j.popleft()
+            if len(j) == JOIN_FLOOD:
+                store._event(ts, mac, "lora_join_flood", protocol, f"LoRaWAN device {info['dev_eui']} sent {JOIN_FLOOD} join requests in "
+                             f"{int(ts - j[0]) or 1} s: it cannot join, or someone is probing", always=True)
+            if len(self.joins) > TRACK_MAX:
+                self.joins.clear()
+        elif protocol == "lorawan" and info.get("fcnt") is not None:
+            last, cur = self.fcnt.get(addr), info["fcnt"]
+            self.fcnt[addr] = cur
+            ahead = (cur - last) % 65536 if last is not None else 0  # forward distance; a wrap past 65535 is still forward
+            if ahead >= 32768 and 65536 - ahead > FCNT_BACK:
+                store._event(ts, mac, "lora_fcnt_reset", protocol, f"LoRaWAN device {addr}: frame counter went back from {last} to {cur} "
+                             "(the device restarted, or old frames are being replayed; two devices sharing an address look the same)", always=True)
+            if len(self.fcnt) > TRACK_MAX:
+                self.fcnt.clear()
 
     def observe(self, store, o, dev):
         if o["t"] != "lora_frame":
@@ -236,11 +307,17 @@ class LoraMonitor:
                                  o.get("bw"), o.get("sf"), o.get("sync"), rssi, snr, len(payload), o.get("sensor") or "local",
                                  json.dumps(r["info"]) if r["info"] else None))
         key = (int(ts // 60) * 60, protocol, o.get("profile") or "")
-        s = self.stats.setdefault(key, [0, 0, 0.0])
+        s = self.stats.setdefault(key, [0, 0, 0.0, 0.0])
         s[0] += 1
         s[1] += len(payload)
         s[2] += rssi or 0
+        try:  # time on air, with the coding rate of the profile it was heard on (frames do not say) and the preamble the protocol sends
+            s[3] += airtime_ms(len(payload), int(o["sf"]), float(o["bw"]), profile.cr if profile else 5, AIR_PREAMBLE.get(protocol, 8))
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            pass
         node = r.get("node")
+        if node:
+            self._events(store, ts, protocol, node[0], node, r)
         if node and len(self.nodes) < MAX_PENDING:
             addr, name, kind = node
             self.seen.add((int(ts // SEEN_SLOT) * SEEN_SLOT, f"{protocol}:{addr}"))
@@ -271,9 +348,10 @@ class LoraMonitor:
             "snr=excluded.snr, profile=excluded.profile, last_seen=excluded.last_seen",
             [(p, a, n["name"], n["kind"], n["packets"], n["rssi"], n["best"], n["snr"], n["profile"], n["first"], n["last"])
              for (p, a), n in self.nodes.items()])
-        c.executemany("INSERT INTO lora_stats VALUES(?,?,?,?,?,?) ON CONFLICT(minute, protocol, profile) DO UPDATE SET "
-                      "packets=packets+excluded.packets, bytes=bytes+excluded.bytes, rssi_sum=rssi_sum+excluded.rssi_sum",
-                      [(m, p, prof, s[0], s[1], s[2]) for (m, p, prof), s in self.stats.items()])
+        c.executemany("INSERT INTO lora_stats(minute, protocol, profile, packets, bytes, rssi_sum, air_ms) VALUES(?,?,?,?,?,?,?) "
+                      "ON CONFLICT(minute, protocol, profile) DO UPDATE SET packets=packets+excluded.packets, bytes=bytes+excluded.bytes, "
+                      "rssi_sum=rssi_sum+excluded.rssi_sum, air_ms=air_ms+excluded.air_ms",
+                      [(m, p, prof, s[0], s[1], s[2], s[3]) for (m, p, prof), s in self.stats.items()])
         c.executemany("INSERT OR IGNORE INTO radio_seen VALUES(?, 'lora', ?)", list(self.seen))
         self.packets, self.nodes, self.stats, self.pending = [], {}, {}, False
         self.seen = set()
@@ -339,13 +417,26 @@ def routes(ctx):
         for p in recent:
             p["label"] = PROTOCOLS.get(p["protocol"], p["protocol"])
             p["info"] = json.loads(p["info"]) if p["info"] else {}
-        profiles = ctx.rows("SELECT profile, protocol, SUM(packets) packets FROM lora_stats WHERE minute >= ? GROUP BY profile, protocol "
-                            "ORDER BY packets DESC", (int(since),))
+        profiles = ctx.rows("SELECT profile, protocol, SUM(packets) packets, SUM(air_ms) / 1000.0 air_s FROM lora_stats WHERE minute >= ? "
+                            "GROUP BY profile, protocol ORDER BY packets DESC", (int(since),))
         sensors = [s for s in status.snapshot() if s.get("type") == "lora"]
+        # Channel use while listening: airtime heard / time spent on that profile. A hopping radio sits on each of its
+        # profiles 1/N of the time, so that is the denominator (an estimate: other sensors, or a recent start, change it).
+        span = hours * 3600
+        started = [s["since"] for s in sensors if s.get("since")]
+        if started:
+            span = min(span, max(60, now - min(started)))
+        share = 1 / len(ctx.cfg.lora_profiles) if len(ctx.cfg.lora_profiles) > 1 else 1
+        air = {}
+        for p in profiles:
+            air[p["profile"]] = air.get(p["profile"], 0) + (p["air_s"] or 0)
+        use = {name: round(min(1.0, s / (span * share)), 4) for name, s in air.items()}
         return {"now": now, "since": since, "bucket": bucket, "t": ts, "protocols": protocols, "profiles": profiles, "nodes": nodes,
                 "recent": recent, "series": {k: [v.get(t, 0) for t in ts] for k, v in series.items()}, "sensors": sensors,
                 "configured": bool(sensors) or ctx.cfg.demo or bool(ctx.cfg.lora_devices),
-                "listening": [{"name": p.name, "label": p.label, "describe": p.describe(), "hint": p.hint} for p in ctx.cfg.lora_profiles],
+                "firmware_latest": (firmware_manifest() or {}).get("version"),
+                "listening": [{"name": p.name, "label": p.label, "describe": p.describe(), "hint": p.hint, "air_s": round(air.get(p.name, 0), 2),
+                               "use": use.get(p.name, 0.0)} for p in ctx.cfg.lora_profiles],
                 "known_profiles": [{"name": p.name, "label": p.label, "describe": p.describe()} for p in PROFILES.values()],
                 "protocol_labels": PROTOCOLS}
 

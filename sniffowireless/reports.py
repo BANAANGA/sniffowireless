@@ -107,6 +107,31 @@ def _dur(s):
     return f"{s // 3600}h {s % 3600 // 60:02d}m" if s >= 3600 else f"{s // 60}m"
 
 
+def radio_lines(ctx, since):
+    """LoRa and Zigbee lines of the weekly report: only for modules that are on and have something to say."""
+    from .modules import disabled
+    off, out = set(disabled(ctx)), []
+    try:
+        if "lora" not in off:
+            nodes = ctx.one("SELECT COUNT(*) n, SUM(first_seen >= ?) new FROM lora_nodes WHERE last_seen >= ?", (since, since))
+            if nodes["n"]:
+                from .lora_protocols import PROTOCOLS
+                per = ctx.rows("SELECT protocol, SUM(packets) n FROM lora_stats WHERE minute >= ? GROUP BY protocol ORDER BY n DESC", (int(since),))
+                out.append(f"LoRa: {nodes['n']} nodes heard ({nodes['new'] or 0} new), " + ", ".join(
+                    f"{PROTOCOLS.get(r['protocol'], r['protocol'])} {r['n']}" for r in per) + " frames")
+        if "zigbee" not in off:
+            z = ctx.one("SELECT COUNT(*) n FROM zigbee_radios WHERE last_seen >= ?", (since,))["n"]
+            if z:
+                nets = ctx.one("SELECT COUNT(*) n, SUM(first_seen >= ?) new FROM zigbee_networks WHERE last_seen >= ?", (since, since))
+                out.append(f"Zigbee: {z} radios on {nets['n']} networks ({nets['new'] or 0} new)")
+        n = ctx.one("SELECT COUNT(*) n FROM events WHERE ts >= ? AND type IN ('lora_flood','lora_join_flood','lora_fcnt_reset','zigbee_permit_join')", (since,))["n"]
+        if n and not ({"lora", "zigbee"} <= off):
+            out.append(f"LoRa / Zigbee warnings: {n} (see Events)")
+    except Exception:  # tables not there (yet)
+        pass
+    return out
+
+
 def weekly_summary(ctx):
     rep = occupancy(ctx, 7, tz=-int(time.localtime().tm_gmtoff / 60))
     now = time.time()
@@ -128,6 +153,7 @@ def weekly_summary(ctx):
         f"Alerts: {alerts}",
         "Open security findings: " + (", ".join(f"{f['n']} {f['severity']}" for f in findings) or "none"),
     ]
+    lines += radio_lines(ctx, since)
     if groups:
         lines.append("Groups seen: " + ", ".join(f"{g['name']} ({g['days']} days)" for g in groups))
     daily = "".join(f"<tr><td>{time.strftime('%a %d %b', time.localtime(d['day']))}</td><td>{d['people']}</td>"
