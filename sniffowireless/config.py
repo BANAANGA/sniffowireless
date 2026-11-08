@@ -191,6 +191,7 @@ class Config:
 
     bt_devices: list = field(default_factory=list)
     bt_active_scan: bool = True
+    bt_extended_scan: bool = True   # use LE extended scanning (Bluetooth 5/6 advertisements) when the controller supports it
     bt_inquiry: bool = True
     bt_inquiry_interval: int = 60
     bt_resolve_names: bool = True
@@ -257,6 +258,7 @@ class Config:
             wifi_regdomain=_env("WIFI_REGDOMAIN").upper(),
             bt_devices=_list("BT_DEVICES"),
             bt_active_scan=_bool("BT_ACTIVE_SCAN", True),
+            bt_extended_scan=_bool("BT_EXTENDED_SCAN", True),
             bt_inquiry=_bool("BT_INQUIRY", True),
             bt_inquiry_interval=_int("BT_INQUIRY_INTERVAL", 60),
             bt_resolve_names=_bool("BT_RESOLVE_NAMES", True),

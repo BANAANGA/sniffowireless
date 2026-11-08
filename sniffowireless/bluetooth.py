@@ -25,7 +25,41 @@ HCI_FILTER = 2
 HCIDEVUP = 0x400448C9
 ERFKILL = 132
 
-OGF_LINK, OGF_HOST, OGF_LE = 0x01, 0x03, 0x08
+OGF_LINK, OGF_HOST, OGF_INFO, OGF_LE = 0x01, 0x03, 0x04, 0x08
+
+# HCI/LMP version numbers the controller reports (Assigned Numbers, Link Manager Protocol version).
+BT_VERSIONS = {6: "4.0", 7: "4.1", 8: "4.2", 9: "5.0", 10: "5.1", 11: "5.2", 12: "5.3", 13: "5.4", 14: "6.0"}
+# LE features of the controller (LE Read Local Supported Features, bit number -> short label). Only bits the Core
+# specification and controller vendors agree on are listed; Channel Sounding (Core 6.0) is bit 46.
+LE_FEATURES = {8: "2M PHY", 11: "Coded PHY", 12: "Ext. adv", 13: "Periodic adv", 14: "CSA #2",
+               28: "LE Audio (CIS)", 30: "LE Audio (BIS)", 46: "Channel Sounding"}
+PHY_NAMES = {1: "1M", 2: "2M", 3: "Coded"}
+# Service UUIDs of LE Audio broadcasts (Auracast): Public Broadcast Announcement and Broadcast Audio Announcement.
+UUID_PBA, UUID_BAA = 0x1856, 0x1852
+
+
+def bt_version_label(v):
+    """'5.4', '6.0', ... for an HCI/LMP version number; versions newer than this list say so instead of guessing."""
+    if v in BT_VERSIONS:
+        return BT_VERSIONS[v]
+    return f">6.0 (0x{v:02x})" if isinstance(v, int) and v > 14 else f"? (0x{v:02x})" if isinstance(v, int) else None
+
+
+def parse_local_version(ret):
+    """Return parameters of Read Local Version Information (after the status byte): HCI version, revision, LMP version,
+    manufacturer, subversion. Returns a dict, or None when the answer is too short."""
+    if len(ret) < 8:
+        return None
+    return {"hci_version": ret[0], "lmp_version": ret[3], "company": ret[4] | ret[5] << 8,
+            "version": bt_version_label(ret[0]), "chip": bt_company(ret[4] | ret[5] << 8)}
+
+
+def parse_le_features(ret):
+    """The 8 feature bytes of LE Read Local Supported Features -> set of the short labels in LE_FEATURES that are set."""
+    if len(ret) < 8:
+        return None
+    bits = int.from_bytes(ret[:8], "little")
+    return [label for bit, label in LE_FEATURES.items() if bits >> bit & 1]
 
 COD_MAJOR = {1: "computer", 2: "phone", 3: "network", 4: "audio/video", 5: "peripheral",
              6: "imaging", 7: "wearable", 8: "toy", 9: "health"}
@@ -73,7 +107,20 @@ def parse_ad(data):
         elif t in (0x02, 0x03):
             uuids += [f"{v[j] | v[j + 1] << 8:04x}" for j in range(0, len(v) - 1, 2)]
         elif t == 0x16 and len(v) >= 2:
-            uuids.append(f"{v[0] | v[1] << 8:04x}")
+            u = v[0] | v[1] << 8
+            uuids.append(f"{u:04x}")
+            if u == UUID_PBA and len(v) >= 3:  # Public Broadcast Announcement: bit 0 encrypted, bit 1 standard / bit 2 high quality audio
+                out["auracast"] = {"encrypted": bool(v[2] & 1), "quality": "high" if v[2] & 4 else "standard" if v[2] & 2 else None}
+            elif u == UUID_BAA and len(v) >= 5:  # Broadcast Audio Announcement: the 3-byte Broadcast_ID
+                out["broadcast_id"] = bytes(v[2:5][::-1]).hex()
+        elif t == 0x30 and v:  # Broadcast_Name (LE Audio / Auracast)
+            name = v.decode("utf-8", "replace").strip("\x00").strip()
+            if name:
+                out["broadcast_name"] = name[:64]
+        elif t == 0x31:  # Encrypted Advertising Data (Bluetooth 5.4)
+            out["encrypted_ad"] = True
+        elif t == 0x34:  # Electronic Shelf Label (Bluetooth 5.4)
+            out["esl"] = True
         i += 1 + ln
     if uuids:
         out["uuids"] = sorted(set(uuids))[:16]
@@ -100,6 +147,8 @@ def parse_event(pkt):
     out = []
     if code == 0x3E and p:
         sub = p[0]
+        if sub in (0x02, 0x0D) and len(p) < 2:  # a report event without its count: nothing to read
+            return out
         if sub == 0x02:  # LE advertising report
             n, i = p[1], 2
             for _ in range(n):
@@ -121,11 +170,12 @@ def parse_event(pkt):
                 r = _rssi(p[i + 13])
                 ln = p[i + 23]
                 data = p[i + 24:i + 24 + ln]
+                phy = PHY_NAMES.get(p[i + 10] or p[i + 9])  # secondary PHY when there is one, else the primary
                 i += 24 + ln
                 out.append({"ev": "adv", "mac": bdaddr(addr), "addr_type": atype, "rssi": r,
                             "connectable": bool(evt_type & 0x01), "ad": parse_ad(data),
-                            "ext": not evt_type & 0x10})  # bit 4 set = legacy PDU
-        elif sub in (0x01, 0x0A) and len(p) >= 12 and p[1] == 0:  # LE (enhanced) connection complete
+                            "ext": not evt_type & 0x10, "phy": phy})  # evt_type bit 4 set = legacy PDU
+        elif sub in (0x01, 0x0A, 0x29) and len(p) >= 12 and p[1] == 0:  # LE (enhanced, v2) connection complete
             handle = p[2] | (p[3] & 0x0F) << 8
             out.append({"ev": "conn", "handle": handle, "mac": bdaddr(p[6:12]), "le": True,
                         "addr_type": p[5]})
@@ -163,8 +213,10 @@ def parse_event(pkt):
         out.append({"ev": "disc", "handle": p[1] | (p[2] & 0x0F) << 8, "reason": p[3]})
     elif code == 0x01:
         out.append({"ev": "inq_done"})
+    elif code == 0x0C and len(p) >= 8 and p[0] == 0:  # read remote version information complete (the host's stack asks every peer)
+        out.append({"ev": "peerver", "handle": p[1] | (p[2] & 0x0F) << 8, "version": p[3], "company": p[4] | p[5] << 8})
     elif code == 0x0E and len(p) >= 4:  # command complete
-        out.append({"ev": "cmd", "opcode": p[1] | p[2] << 8, "status": p[3]})
+        out.append({"ev": "cmd", "opcode": p[1] | p[2] << 8, "status": p[3], "ret": bytes(p[4:])})
     elif code == 0x0F and len(p) >= 4:  # command status
         out.append({"ev": "cmd", "opcode": p[2] | p[3] << 8, "status": p[0]})
     return out
@@ -184,6 +236,10 @@ class BluetoothSensor:
         self.last_adv = 0.0
         self.last_scan_setup = 0.0
         self.ext_scan = False   # use LE extended scan commands (Bluetooth 5 controllers)
+        self.coded = False      # also scan on the LE Coded PHY (long range), when the controller has it
+        self.mode_switches = 0  # legacy <-> extended scan changes after a refusal, bounded so two refusals cannot ping-pong
+        self.caps = []          # LE features of the controller (LE_FEATURES labels)
+        self.version = None     # {"version": "6.0", "chip": "Intel", ...} from Read Local Version Information
         self.fp_seen = {}       # mac -> (fingerprint, ts) to avoid re-sending identical fingerprints
         self.packets = 0
         self.stop = None
@@ -215,7 +271,47 @@ class BluetoothSensor:
     def _cmd(self, ogf, ocf, params=b""):
         self.sock.send(bytes([0x01]) + struct.pack("<HB", opcode(ogf, ocf), len(params)) + params)
 
+    def _cmd_sync(self, ogf, ocf, timeout=1.5):
+        """Send a command with no parameters and wait for its Command Complete: the bytes after the status, or None."""
+        op = opcode(ogf, ocf)
+        self._cmd(ogf, ocf)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            r, _, _ = select.select([self.sock], [], [], max(0.0, end - time.monotonic()))
+            if not r:
+                break
+            for ev in parse_event(self.sock.recv(4096)):
+                if ev["ev"] == "cmd" and ev["opcode"] == op:
+                    return ev["ret"] if ev["status"] == 0 else None
+        return None
+
+    def _probe(self):
+        """What the controller is (Bluetooth version, chip, LE features) decides how to scan: extended scanning (Bluetooth 5 and
+        6 advertisements, LE Audio broadcasts) and the Coded PHY are used when it has them."""
+        try:
+            self.version = parse_local_version(self._cmd_sync(OGF_INFO, 0x0001) or b"")
+            feats = parse_le_features(self._cmd_sync(OGF_LE, 0x0003) or b"")
+        except OSError as e:
+            log.debug("%s: could not read the controller's capabilities: %s", self.name, e)
+            return
+        if feats is None:
+            return
+        self.caps = feats
+        if self.cfg.bt_extended_scan and "Ext. adv" in feats:
+            self.ext_scan = True
+        self.coded = self.ext_scan and "Coded PHY" in feats
+        v = self.version or {}
+        warning = None
+        if "Ext. adv" not in feats:
+            warning = (f"This adapter (Bluetooth {v.get('version') or '4.x'}) has no extended advertising: Bluetooth 5 and 6 "
+                       "advertisements, such as LE Audio broadcasts, cannot be seen. A Bluetooth 5.x/6.0 dongle can.")
+        status.update(self.name, bt_version=v.get("version"), chip=v.get("chip"), caps=feats,
+                      scan="extended" if self.ext_scan else None, warning=warning)
+        log.info("%s: Bluetooth %s (%s), LE features: %s", self.name, v.get("version") or "?", v.get("chip") or "unknown chip",
+                 ", ".join(feats) or "none")
+
     def _configure(self):
+        self._probe()
         # Make sure LE meta + inquiry events reach the host (superset of what BlueZ enables).
         self._cmd(OGF_HOST, 0x0001, struct.pack("<Q", 0x3DBFF807FFFBFFFF | 0x20001FFFFFFFFFFF))
         self._cmd(OGF_LE, 0x0001, struct.pack("<Q", 0x00000000000FFFFF))
@@ -228,7 +324,9 @@ class BluetoothSensor:
             # Bluetooth 5 extended scanning: once the host has used extended commands, controllers refuse
             # the legacy ones with "Command Disallowed" (0x0c).
             self._cmd(OGF_LE, 0x0042, struct.pack("<BBHH", 0, 0, 0, 0))
-            self._cmd(OGF_LE, 0x0041, struct.pack("<BBBBHH", 0, 0, 0x01, active, 0x0030, 0x0030))  # 1M PHY
+            phys = [0x01] + ([0x04] if self.coded else [])  # 1M, and the Coded PHY (long range) when the controller has it
+            self._cmd(OGF_LE, 0x0041, struct.pack("<BBB", 0, 0, sum(phys)) + b"".join(
+                struct.pack("<BHH", active, 0x0030, 0x0030) for _ in phys))
             self._cmd(OGF_LE, 0x0042, struct.pack("<BBHH", 1, 0, 0, 0))  # enable, no duplicate filtering
         else:
             self._cmd(OGF_LE, 0x000C, bytes([0, 0]))
@@ -323,13 +421,16 @@ class BluetoothSensor:
                 self.fp_seen[ev["mac"]] = (fp, now)
             else:
                 fp = None
+            broadcast = {"name": ad.get("broadcast_name"), "id": ad.get("broadcast_id"), **(ad.get("auracast") or {})}
             self.store.put({
                 "t": "bt", "kind": "ble", "ts": now, "mac": ev["mac"], "rssi": ev["rssi"],
-                "name": ad.get("name"), "randomized": randomized, "addr_random": label != "public",
+                "name": ad.get("name") or ad.get("broadcast_name"), "randomized": randomized, "addr_random": label != "public",
                 "vendor": bt_company(cid) if label != "public" and cid is not None else None,
                 "extra": {"addr_type": label, "company": bt_company(cid), "appearance": ad.get("appearance"),
                           "tx_power": ad.get("tx_power"), "uuids": ad.get("uuids"),
-                          "connectable": ev["connectable"]},
+                          "connectable": ev["connectable"], "phy": ev.get("phy") if ev.get("ext") else None,
+                          "auracast": {k: v for k, v in broadcast.items() if v is not None} or None,
+                          "esl": True if ad.get("esl") else None, "encrypted_ad": True if ad.get("encrypted_ad") else None},
                 "fp": {"ble": fp} if fp else None,
             })
             status.update(self.name, adverts=self.packets)
@@ -369,11 +470,28 @@ class BluetoothSensor:
                 self.store.put({"t": "bt_conn", "kind": "ble" if h[1] else "bt_classic", "ts": now,
                                 "mac": h[0], "connected": False, "peer": self.dev,
                                 "detail": f"reason 0x{ev['reason']:02x}"})
-        elif kind == "cmd" and ev["status"] == 0x0C and ev["opcode"] in (0x200B, 0x200C) and not self.ext_scan:
+        elif kind == "peerver":
+            h = self.handles.get(ev["handle"])
+            if h:
+                self.store.put({"t": "bt", "kind": "ble" if h[1] else "bt_classic", "ts": now, "mac": h[0], "rssi": None,
+                                "extra": {"bt_version": bt_version_label(ev["version"]), "chip": bt_company(ev["company"])}})
+        elif kind == "cmd" and ev["status"] == 0x0C and ev["opcode"] in (0x200B, 0x200C) and not self.ext_scan \
+                and self.mode_switches < 2:
             log.info("%s: legacy LE scan refused (controller uses extended advertising); switching to extended scan",
                      self.name)
             self.ext_scan = True
+            self.mode_switches += 1
             status.update(self.name, scan="extended")
+            self._start_le_scan()
+        elif kind == "cmd" and ev["status"] != 0 and ev["opcode"] == 0x2041 and self.ext_scan and self.coded:
+            log.info("%s: the controller refused scanning on the Coded PHY (0x%02x); scanning on 1M only", self.name, ev["status"])
+            self.coded = False
+            self._start_le_scan()
+        elif kind == "cmd" and ev["status"] != 0 and ev["opcode"] in (0x2041, 0x2042) and self.ext_scan and self.mode_switches < 2:
+            log.info("%s: extended LE scan refused (0x%02x); using legacy scan commands", self.name, ev["status"])
+            self.ext_scan = False
+            self.mode_switches += 1
+            status.update(self.name, scan=None)
             self._start_le_scan()
         elif kind == "cmd" and ev["status"] not in (0,):
             log.debug("%s: command 0x%04x failed with status 0x%02x", self.name, ev["opcode"], ev["status"])
