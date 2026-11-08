@@ -8,7 +8,7 @@ const KINDS = {
   lan: { label: 'LAN devices', short: 'LAN', color: '#a8b3c2' },
 };
 // Kinds of radios an admin has switched off (Settings → Modules): their menu entries, cards and statistics are hidden.
-let MODS = {};
+let MODS = {}, PRIVACY = {};
 const KIND_MOD = { ap: 'wifi', wifi_client: 'wifi', ble: 'bluetooth', bt_classic: 'bluetooth', lan: 'lan', zigbee: 'zigbee', lora: 'lora' };
 // Radios that are not devices with a MAC: counted from their own tables, shown on the overview next to the kinds above.
 const EXTRA_KINDS = {
@@ -20,11 +20,19 @@ const SENSOR_MOD = { wifi: 'wifi', bluetooth: 'bluetooth', ethernet: 'lan', zigb
 const modOn = m => MODS[m] !== false;
 const kindOn = k => modOn(KIND_MOD[k]);
 const kindEntries = () => Object.entries(KINDS).filter(([k]) => kindOn(k));
-function paintModules() { document.querySelectorAll('[data-mod]').forEach(e => { e.hidden = !modOn(e.dataset.mod); }); }
+function paintModules() {
+  document.querySelectorAll('[data-mod]').forEach(e => { e.hidden = !modOn(e.dataset.mod); });
+  const pill = document.getElementById('anon-pill');
+  if (pill) {
+    const what = [PRIVACY.macs ? 'MAC addresses' : '', PRIVACY.ssids ? 'SSIDs' : ''].filter(Boolean).join(' and ');
+    pill.hidden = !what;
+    pill.title = what ? `Anonymised view: ${what} are shown as pseudonyms (Settings → Privacy)` : '';
+  }
+}
 async function loadModules() {
   try {
     const r = await fetch('/api/modules');
-    if (r.ok) { MODS = {}; (await r.json()).modules.forEach(m => { MODS[m.id] = m.enabled; }); }
+    if (r.ok) { MODS = {}; const j = await r.json(); j.modules.forEach(m => { MODS[m.id] = m.enabled; }); PRIVACY = j.privacy || {}; }
   } catch { /* keep showing everything */ }
   paintModules();
 }

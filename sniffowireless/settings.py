@@ -24,6 +24,8 @@ DEFAULTS = {
     "appearance": {"name": "sniffowireless", "icon": "dot", "clock": "auto", "colors": {}, "icon_file": None, "icon_ver": 0},
     # Wi-Fi channel settings set from the web UI, for this server ("local") and per remote sensor id. See channels.py.
     "channels": {"local": {}, "sensors": {}},
+    # Anonymised view (display only): MAC addresses and / or SSIDs shown as pseudonyms to everyone. See anonymize.py.
+    "privacy": {"macs": False, "ssids": False, "secret": ""},
     # Kinds of radios whose menu entries, overview cards and statistics are hidden (display only). See modules.py.
     "modules": {"disabled": []},
     # Performance (admin): the database page cache and memory map; switch off on low-memory machines.

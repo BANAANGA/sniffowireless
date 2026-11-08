@@ -1,6 +1,7 @@
 """Which kinds of radios the web interface shows. An admin can switch off the ones this installation doesn't use:
 their menu entries, overview cards and statistics then disappear. Display only: capture itself is configured with
 environment variables and keeps running."""
+import secrets
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +27,11 @@ class ModulesBody(BaseModel):
     disabled: List[str]
 
 
+class PrivacyBody(BaseModel):
+    macs: bool
+    ssids: bool
+
+
 def disabled(ctx):
     return [m for m in ctx.settings.get("modules").get("disabled", []) if m in MODULES]
 
@@ -48,7 +54,9 @@ def routes(ctx):
 
     def view():
         off, used = set(disabled(ctx)), in_use(ctx)
-        return {"modules": [{"id": m, "label": label, "enabled": m not in off, "in_use": m in used} for m, label in MODULES.items()]}
+        p = ctx.settings.get("privacy")
+        return {"modules": [{"id": m, "label": label, "enabled": m not in off, "in_use": m in used} for m, label in MODULES.items()],
+                "privacy": {"macs": bool(p.get("macs")), "ssids": bool(p.get("ssids"))}}
 
     @r.get("/api/modules")
     def get_modules(_=Depends(current_user)):
@@ -61,5 +69,18 @@ def routes(ctx):
             raise HTTPException(400, f"Unknown module: {bad[0]}")
         ctx.settings.set("modules", {"disabled": sorted(set(body.disabled))})
         return view()
+
+    @r.get("/api/privacy")
+    def get_privacy(_=Depends(current_user)):
+        return view()["privacy"]
+
+    @r.put("/api/privacy")
+    def put_privacy(body: PrivacyBody, _=Depends(require_admin)):
+        p = ctx.settings.get("privacy")
+        p.update(macs=body.macs, ssids=body.ssids)
+        if (body.macs or body.ssids) and not p.get("secret"):
+            p["secret"] = secrets.token_hex(16)  # the key of the pseudonyms: kept, so they stay the same
+        ctx.settings.set("privacy", p)
+        return view()["privacy"]
 
     return r
