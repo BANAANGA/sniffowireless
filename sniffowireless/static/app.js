@@ -586,7 +586,7 @@ async function viewOverview(params) {
     document.getElementById('sensors').innerHTML = (list.length ? list.map(x => `<div class="sensor">
       <div><div><span class="state-dot ${sensorHealth(x)}" title="${HEALTH_TEXT[sensorHealth(x)]}"></span><b>${esc(x.name)}</b>
       ${x.mon && x.mon !== x.iface ? `<span class="faint mono"> → ${esc(x.mon)}</span>` : ''}</div>
-      ${x.state === 'offline' ? `<div class="muted">offline · no report for ${dur(x.quiet_for || 0)}</div>` : x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${Array.isArray(x.bands) ? ' · ' + x.bands.map(b => esc(b) + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>
+      ${x.state === 'offline' ? `<div class="muted">offline · no report for ${dur(x.quiet_for || 0)}</div>` : x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${Array.isArray(x.bands) ? ' · ' + x.bands.map(b => esc(b) + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}${x.bt_version ? ` · Bluetooth ${esc(x.bt_version)}${x.chip ? ' (' + esc(x.chip) + ')' : ''}` : ''}</div>${Array.isArray(x.caps) && x.caps.length ? `<div class="faint small-text">${x.caps.map(esc).join(' · ')}</div>` : ''}
       ${x.band_frames && Array.isArray(x.bands) ? `<div class="faint small-text">frames ${x.bands.map(b => `${esc(b)}G ${num((x.band_frames || {})[b] || 0)}`).join(' · ')}</div>` : ''}
       ${x.relabelled ? `<div class="faint small-text">${num(x.relabelled)} frames had a wrong band from the driver (corrected)</div>` : ''}`}
       ${x.warning ? `<div class="warn-text small-text">${esc(x.warning)}</div>` : ''}${x.note ? `<div class="faint small-text">${esc(x.note)}</div>` : ''}${isAdmin() && /^(wifi|bt|zigbee|lora):/.test(x.remote ? x.name.slice(x.remote.length + 1) : x.name) ? `<div><button class="btn small ghost" data-reset="${esc(x.remote || 'local')}|${esc(x.remote ? x.name.slice(x.remote.length + 1) : x.name)}" title="Reset this adapter">Reset…</button>${/^lora:/.test(x.remote ? x.name.slice(x.remote.length + 1) : x.name) ? ` <button class="btn small ghost" data-flash="${esc(x.remote || 'local')}|${esc(x.remote ? x.name.slice(x.remote.length + 1) : x.name)}" title="Write the newest sniffer firmware to this board">Update firmware…</button>` : ''}</div>` : ''}</div>
@@ -825,6 +825,11 @@ async function viewDevice(mac, params) {
     ex.appearance ? ['Appearance', esc(ex.appearance)] : null,
     ex.class ? ['Device class', esc(ex.class)] : null,
     ex.tx_power != null ? ['TX power', `${ex.tx_power} dBm`] : null,
+    ex.bt_version ? ['Bluetooth version', `${esc(ex.bt_version)}${ex.chip ? ` <span class="faint">(${esc(ex.chip)})</span>` : ''}`] : null,
+    ex.phy ? ['Radio (PHY)', esc(ex.phy) + (ex.phy === 'Coded' ? ' <span class="faint">(long range)</span>' : '')] : null,
+    ex.auracast ? ['LE Audio broadcast', esc([ex.auracast.name, ex.auracast.id ? 'ID ' + ex.auracast.id : '', ex.auracast.encrypted ? 'encrypted' : 'open', ex.auracast.quality ? ex.auracast.quality + ' quality' : ''].filter(Boolean).join(' · '))] : null,
+    ex.esl ? ['Electronic shelf label', 'yes'] : null,
+    ex.encrypted_ad ? ['Encrypted advertising data', 'yes <span class="faint">(Bluetooth 5.4)</span>'] : null,
     ex.uuids && ex.uuids.length ? ['Services', `<span class="mono">${esc(ex.uuids.join(', '))}</span>`] : null,
     ['Signal (last / best)', `${rssiBars(d.last_rssi)} <span class="faint">/ ${d.best_rssi ?? '—'}</span>`],
     ['Frames', num(d.packets)],

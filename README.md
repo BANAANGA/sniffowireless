@@ -232,6 +232,16 @@ sudo iw dev wlan1 set type monitor
 sudo ip link set wlan1 up
 ```
 
+### Bluetooth 5 and 6 adapters
+
+At start the sensor asks each adapter which Bluetooth version it implements (shown in the overview's *Sensors* panel, for example *Bluetooth 6.0 (Intel)*) and which LE features it has (2M PHY, Coded PHY, extended and periodic advertising, LE Audio, Channel Sounding). What that changes:
+
+- **Extended scanning.** A Bluetooth 5 or newer adapter is scanned with the extended LE commands, which is the only way to see extended advertisements: newer phones, trackers, and **LE Audio broadcasts (Auracast)**. With the Coded PHY (long range) in the feature list, that is scanned as well. An adapter without extended advertising (Bluetooth 4.x) still works, with a warning in the Sensors panel that Bluetooth 5/6 advertisements are invisible to it. `BT_EXTENDED_SCAN=0` goes back to the legacy commands; if a controller refuses a mode, the sensor falls back by itself.
+- **New advertisement types.** The device page shows LE Audio broadcasts (the broadcast name, ID, whether it is encrypted and its quality), electronic shelf labels, encrypted advertising data (Bluetooth 5.4) and the radio (PHY) a device advertised on. A broadcast's name is used as the device name when it has none.
+- **Peer versions.** For a device connected to the host's own Bluetooth stack, the Bluetooth version and chip maker it reports are shown on its device page.
+
+What a passive scanner cannot see: the headline Bluetooth 6.0 features (Channel Sounding distance measurement, connection subrating, monitoring advertisers) are exchanged inside connections or are not part of advertisements, so a device using them looks like any other device. The adapter listing tells you whether the *adapter* supports them, not whether the devices around it do.
+
 ### Bluetooth and the host's `bluetoothd`
 
 sniffowireless talks to the adapter over a raw HCI socket. It can run **alongside** the host's BlueZ daemon. It enables LE scanning and periodic inquiry and listens to all controller events, so devices the host connects to (headphones, keyboards) show up as Bluetooth connections. If you want sniffowireless to have the adapter to itself (best results on a dedicated dongle), stop BlueZ from using it: `sudo systemctl disable --now bluetooth`. Alternatively, give sniffowireless a second dongle (`BT_DEVICES=hci1`).
@@ -623,6 +633,7 @@ All settings are environment variables (put them in `.env`).
 | `ETH_PROMISC` | `1` | Put the Ethernet interface in promiscuous mode (needed on a mirror/SPAN port). |
 | `LAN_SESSION_TIMEOUT` | `900` | Seconds without traffic before a LAN device counts as offline. |
 | `BT_ACTIVE_SCAN` | `1` | Active LE scanning (sends scan requests, which gets device names). `0` is fully passive. |
+| `BT_EXTENDED_SCAN` | `1` | Use LE extended scanning (and the Coded PHY) when the adapter supports it, so Bluetooth 5 and 6 advertisements and LE Audio broadcasts are seen. `0` forces the legacy scan commands. |
 | `BT_INQUIRY` | `1` | Periodic Bluetooth Classic inquiry (finds *discoverable* classic devices). |
 | `BT_INQUIRY_INTERVAL` | `60` | Seconds between inquiries. |
 | `BT_RESOLVE_NAMES` | `1` | Ask newly found classic devices for their name. |
