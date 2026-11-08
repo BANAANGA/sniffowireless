@@ -1,7 +1,5 @@
 """HTTP API + static single-page UI."""
-import csv
 import hashlib
-import io
 import json
 import re
 import time
@@ -17,11 +15,10 @@ from . import (alerts, appearance, auth, backup, channels, dfs, handshake, healt
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user
 from .httpsec import SecurityMiddleware
-from .web_util import overlap_counts
+from .web_util import csv_response, overlap_counts
 
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
 ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
-CSV_FORMULA = ("=", "+", "-", "@", "\t", "\r")
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
@@ -638,16 +635,7 @@ def create_app(ctx):
                 "types": [r["type"] for r in rows("SELECT DISTINCT type FROM events ORDER BY type")]}
 
     # ------------------------------------------------------------------ export
-    def _csv(name, cols, data):
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(cols)
-        for r in data:
-            # Neutralise spreadsheet formulas: SSIDs / device names are chosen by strangers.
-            w.writerow(["'" + v if isinstance(v, str) and v.startswith(CSV_FORMULA) else v for v in
-                        (r.get(c) for c in cols)])
-        return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
-                                 headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    _csv = csv_response
 
     DEVICE_EXPORT_COLS = ["mac", "kind", "label", "group_name", "vendor", "brand", "model", "dev_type", "os", "wifi_gen",
                           "era", "fp_hash", "name", "ssid", "channel", "band", "freq", "enc", "bssid", "randomized",

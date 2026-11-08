@@ -660,3 +660,33 @@ def test_old_firmware_is_pointed_out_on_the_lora_page(ctx):
     d = c.get("/api/lora").json()
     assert d["firmware_latest"] == lora_mod.firmware_manifest()["version"] >= 2 and d["sensors"][0]["fw_version"] == 1
     assert c.get("/api/lora/firmware").json()["version"] == d["firmware_latest"]
+
+
+# ------------------------------------------------------------------ CSV exports
+def test_lora_and_zigbee_exports(ctx):
+    import csv as csvmod
+    import io as iomod
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.get("/api/export/lora-nodes.csv").status_code == 401
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    now = time.time()
+    ctx.store.process(frame(meshtastic(frm=0xE1), PROFILES["meshtastic-eu868"], now - 60))
+    ctx.store.process(frame(meshcore_advert(name=b"=HYPERLINK(x)"), PROFILES["meshcore-eu868"], now - 50))
+    ctx.store.process({"t": "zb_network", "ts": now, "mac": "-", "ext_pan": "00:12:4b:00:1e:a0:44:01", "pan": 0x1A62, "channel": 15, "permit_join": False,
+                       "stack_profile": 2, "update_id": 1, "lqi": 200, "rssi": -50, "routers": []})
+    ctx.store.process({"t": "zb_frames", "ts": now, "mac": "-", "undecoded": 0, "channels": {"15": 4}, "radios": [[0x1A62, "0x0001", 1 << 15, 4, 0, 0, 1, 1, -70, 150]]})
+    ctx.store.flush()
+    read = lambda url: list(csvmod.DictReader(iomod.StringIO(c.get(url).text)))
+    nodes = read("/api/export/lora-nodes.csv")
+    assert {n["addr"] for n in nodes} == {"!000000e1", "pk:00010203"} and "name" in nodes[0]
+    assert [n["name"] for n in nodes if n["protocol"] == "meshcore"] == ["'=HYPERLINK(x)"]   # not a formula in a spreadsheet
+    pk = read("/api/export/lora-packets.csv?hours=1")
+    assert len(pk) == 2 and {p["protocol"] for p in pk} == {"meshtastic", "meshcore"} and "hex" not in pk[0] and "info" not in pk[0]
+    assert read("/api/export/lora-packets.csv?hours=0.01") == []
+    assert [r["addr"] for r in read("/api/export/zigbee-radios.csv")] == ["0x0001"] and [r["pan"] for r in read("/api/export/zigbee-networks.csv")] == [str(0x1A62)]
+    assert c.get("/api/export/lora-nodes.csv").headers["content-disposition"] == 'attachment; filename="lora-nodes.csv"'

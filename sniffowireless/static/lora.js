@@ -16,7 +16,8 @@ addRoute('/lora', async (_, params) => {
   const sig = x => x.rssi != null ? `${Math.round(x.rssi)} dBm` : '—';
 
   app.innerHTML = `<div class="page-head"><div><h1>LoRa</h1><div class="sub">What was heard on the LoRa bands and which protocol it looks like. The radio hops between the profiles below, so a quiet profile can still be busy while the radio listens to another. Message contents stay hidden: you see addresses, frame types and signal.</div></div>
-    ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div>
+    <div class="row"><a class="btn small ghost" href="/api/export/lora-nodes.csv" download>Nodes (CSV)</a><a class="btn small ghost" href="/api/export/lora-packets.csv?hours=${hours}" download>Packets (CSV)</a>
+      ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div></div>
     ${!d.configured ? '<div class="callout">No LoRa receiver configured. Flash a Heltec WiFi LoRa 32 V3 with <code>firmware/lora-sniffer</code> and set <code>LORA_DEVICES</code> (see README → LoRa).</div>' : ''}
     ${d.configured && !total && !d.sensors.some(s => s.error) ? '<div class="empty">Nothing heard yet. LoRa networks are often sparse; check that the listening profiles match your region.</div>' : ''}
     ${d.sensors.map(s => `<div class="callout">${esc(s.iface || s.name)}: ${s.error ? `<span class="err">${esc(s.error)}</span>` : esc([s.state, s.firmware, s.profile ? 'on ' + s.profile : '', s.crc_errors ? s.crc_errors + ' bad frames' : ''].filter(Boolean).join(' · '))}${s.warning ? `<div class="warn-text small-text">${esc(s.warning)}</div>` : ''}${d.firmware_latest && s.fw_version != null && s.fw_version < d.firmware_latest ? `<div class="warn-text small-text">Its firmware (version ${s.fw_version}) is older than the version this server offers (${d.firmware_latest}). Update it in <a href="#/settings?tab=loraflasher">Settings → LoRa flasher</a>.</div>` : ''}</div>`).join('')}

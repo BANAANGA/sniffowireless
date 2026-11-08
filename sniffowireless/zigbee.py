@@ -16,6 +16,7 @@ from .auth import current_user
 from .zigbee_radio import ALL_CHANNELS, HINTS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect
 
 from .modules import cutoff_for
+from .web_util import csv_response
 
 log = logging.getLogger("sniffowireless.zigbee")
 
@@ -318,6 +319,16 @@ def _channels(mask):
 
 def routes(ctx):
     r = APIRouter()
+
+    @r.get("/api/export/zigbee-radios.csv")
+    def export_radios(_=Depends(current_user)):
+        cols = ["pan", "addr", "channels", "sent", "received", "encrypted", "hint", "types", "rssi", "lqi", "vendor", "first_seen", "last_seen"]
+        return csv_response("zigbee-radios.csv", cols, ctx.rows("SELECT * FROM zigbee_radios ORDER BY last_seen DESC LIMIT 100000"))
+
+    @r.get("/api/export/zigbee-networks.csv")
+    def export_networks(_=Depends(current_user)):
+        cols = ["ext_pan", "pan", "channel", "permit_join", "stack_profile", "update_id", "lqi", "rssi", "vendor", "first_seen", "last_seen", "sightings"]
+        return csv_response("zigbee-networks.csv", cols, ctx.rows("SELECT * FROM zigbee_networks ORDER BY last_seen DESC LIMIT 10000"))
 
     @r.get("/api/zigbee")
     def overview(hours: float = 24, _=Depends(current_user)):

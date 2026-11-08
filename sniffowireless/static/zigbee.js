@@ -12,7 +12,8 @@ addRoute('/zigbee', async (_, params) => {
   const signal = x => x.rssi != null ? `${x.rssi} dBm` : x.lqi != null ? `LQI ${x.lqi}` : '—';
 
   app.innerHTML = `<div class="page-head"><div><h1>Zigbee &amp; 802.15.4</h1><div class="sub">Networks found by scanning, and every radio heard by listening passively. Encrypted contents stay hidden: you see addresses, frame types and timing.</div></div>
-    ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div>
+    <div class="row"><a class="btn small ghost" href="/api/export/zigbee-radios.csv" download>Radios (CSV)</a><a class="btn small ghost" href="/api/export/zigbee-networks.csv" download>Networks (CSV)</a>
+      ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div></div>
     ${!z.configured ? '<div class="callout">No Zigbee stick configured. Plug in a coordinator stick and set <code>ZIGBEE_DEVICES</code> (see README → Zigbee &amp; 802.15.4).</div>' : ''}
     ${z.configured && !hasData && !z.sensors.some(s => s.error) ? '<div class="empty">Nothing heard yet. Scans run every few minutes; battery devices transmit only briefly.</div>' : ''}
     ${z.sensors.map(s => `<div class="callout">${esc(s.iface || s.name)}: ${s.error ? `<span class="err">${esc(s.error)}</span>` : esc([s.state, s.firmware, s.channel ? 'ch ' + s.channel : ''].filter(Boolean).join(' · '))}${s.warning ? `<div class="warn-text small-text">${esc(s.warning)}</div>` : ''}</div>`).join('')}

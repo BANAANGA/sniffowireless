@@ -22,6 +22,7 @@ from .auth import current_user, require_admin
 from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
 
 from .modules import cutoff_for
+from .web_util import csv_response
 
 log = logging.getLogger("sniffowireless.lora")
 
@@ -387,6 +388,17 @@ def firmware_manifest():
 
 def routes(ctx):
     r = APIRouter()
+
+    @r.get("/api/export/lora-nodes.csv")
+    def export_nodes(_=Depends(current_user)):
+        cols = ["protocol", "addr", "name", "kind", "packets", "rssi", "best_rssi", "snr", "profile", "first_seen", "last_seen"]
+        return csv_response("lora-nodes.csv", cols, ctx.rows("SELECT * FROM lora_nodes ORDER BY last_seen DESC LIMIT 100000"))
+
+    @r.get("/api/export/lora-packets.csv")
+    def export_packets(hours: float = 24, _=Depends(current_user)):
+        cols = ["ts", "protocol", "kind", "src", "dst", "hops", "confidence", "profile", "freq", "bw", "sf", "sync", "rssi", "snr", "bytes", "sensor"]
+        return csv_response("lora-packets.csv", cols, ctx.rows("SELECT * FROM lora_packets WHERE ts >= ? ORDER BY id DESC LIMIT 200000",
+                                                             (time.time() - max(1 / 60, min(hours, 24 * 365)) * 3600,)))
 
     @r.get("/api/lora/firmware")
     def firmware(_=Depends(require_admin)):
