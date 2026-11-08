@@ -19,6 +19,7 @@ from .web_util import csv_response, overlap_counts
 
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
 ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
+QRCODE_JS_CDN = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
@@ -699,6 +700,13 @@ def create_app(ctx):
         # pinned version, so a week is safe; the browser keeps its copy instead of re-fetching 200 kB per visit
         return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
                 if f.exists() else RedirectResponse(CHART_JS_CDN))
+
+    @app.get("/vendor/qrcode.js")
+    def qrcode_js():
+        # for the QR code of the two-factor setup; bundled at build time, the pinned CDN copy as fallback
+        f = vendor_dir / "qrcode.js"
+        return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
+                if f.exists() else RedirectResponse(QRCODE_JS_CDN))
 
     @app.get("/vendor/esptool.bundle.js")
     def esptool_js():

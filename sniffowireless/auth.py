@@ -8,6 +8,7 @@
 """
 import hashlib
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -19,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from . import totp
 from .sanitize import clean_str
 
 log = logging.getLogger("sniffowireless.auth")
@@ -84,6 +86,13 @@ class Auth:
         self.failures = defaultdict(deque)  # "ip:..." / "user:..." -> timestamps of failed logins
         with closing(self.connect()) as c:
             c.executescript(SCHEMA)
+            have = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+            for col, ddl in (("totp_secret", "TEXT"), ("totp_last", "INTEGER DEFAULT 0"), ("recovery", "TEXT")):  # two-factor login
+                if col not in have:
+                    c.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+            if cfg.reset_2fa_user:
+                n = c.execute("UPDATE users SET totp_secret=NULL, totp_last=0, recovery=NULL WHERE username=?", (cfg.reset_2fa_user,)).rowcount
+                log.warning("RESET_2FA_USER: two-factor login %s for %r", "removed" if n else "not removed: no such user", cfg.reset_2fa_user)
             if cfg.web_user and cfg.web_password:
                 row = c.execute("SELECT id FROM users WHERE username=?", (cfg.web_user,)).fetchone()
                 h = hash_password(cfg.web_password)
@@ -122,17 +131,44 @@ class Auth:
         for key in keys:
             self.failures[key].append(time.time())
 
-    def login(self, username, password, ip, user_agent=""):
+    @staticmethod
+    def recovery_hash(code):
+        return hashlib.sha256(re.sub(r"[\s-]", "", code).lower().encode()).hexdigest()
+
+    def check_second_factor(self, c, uid, secret, last, recovery, code, keys=()):
+        """Accept a current authenticator code (once) or an unused recovery code; anything else counts as a failed attempt."""
+        plain = re.sub(r"[\s-]", "", code or "").lower()
+        step = totp.verify(secret, plain, last or 0)
+        if step:
+            c.execute("UPDATE users SET totp_last=? WHERE id=?", (step, uid))
+            return True
+        codes = json.loads(recovery or "[]")
+        h = self.recovery_hash(plain)
+        if len(plain) == 10 and h in codes:
+            codes.remove(h)
+            c.execute("UPDATE users SET recovery=? WHERE id=?", (json.dumps(codes), uid))
+            log.warning("A recovery code was used for user id %s (%d left)", uid, len(codes))
+            return True
+        self.failed(*keys)
+        return False
+
+    def login(self, username, password, ip, user_agent="", code=None):
         now = time.time()
         keys = (f"ip:{ip}", f"user:{username.lower()}")
         self.throttle(*keys)
         with closing(self.connect()) as c:
-            row = c.execute("SELECT id, username, pw_hash, role FROM users WHERE username=?", (username,)).fetchone()
+            row = c.execute("SELECT id, username, pw_hash, role, totp_secret, totp_last, recovery FROM users WHERE username=?", (username,)).fetchone()
             ok = verify_password(password, row[2] if row else _DUMMY_HASH)
             if not row or not ok:
                 self.failed(*keys)
                 log.warning("Failed login for %r from %s", username[:64], ip)
                 raise HTTPException(401, "Invalid username or password")
+            if row[4]:  # two-factor login: the password was right, now the code
+                if not (code or "").strip():
+                    raise HTTPException(401, {"code": "totp_required", "message": "Enter the code from your authenticator app"})
+                if not self.check_second_factor(c, row[0], row[4], row[5], row[6], code, keys):
+                    log.warning("Failed two-factor code for %r from %s", username[:64], ip)
+                    raise HTTPException(401, {"code": "totp_invalid", "message": "That code is not right (or was used already)"})
             for k in keys:
                 self.failures.pop(k, None)
             token = secrets.token_urlsafe(32)
@@ -233,10 +269,26 @@ def same_origin(origin, request):
 class Credentials(BaseModel):
     username: str = Field(max_length=64)
     password: str = Field(max_length=1024)
+    code: str = Field("", max_length=32)   # the two-factor code, when the account has one
 
 
-class SetupRequest(Credentials):
+class PasswordOnly(BaseModel):
+    password: str = Field(max_length=1024)
+
+
+class CodeOnly(BaseModel):
     code: str = Field(max_length=32)
+
+
+class DisableTwoFactor(BaseModel):
+    password: str = Field(max_length=1024)
+    code: str = Field(max_length=32)
+
+
+class SetupRequest(BaseModel):
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=1024)
+    code: str = Field(max_length=32)  # the setup code from the log
 
 
 class NewUser(BaseModel):
@@ -286,7 +338,7 @@ def routes(ctx):
     @r.post("/api/auth/login")
     def login(body: Credentials, request: Request, response: Response):
         token, user = auth.login(body.username.strip(), body.password, request.client.host if request.client else "?",
-                                 request.headers.get("user-agent", ""))
+                                 request.headers.get("user-agent", ""), body.code)
         set_cookie(request, response, token)
         return {"user": user.dict()}
 
@@ -333,10 +385,88 @@ def routes(ctx):
             c.execute("DELETE FROM auth_sessions WHERE user_id=?", (user.id,))
         return {"ok": True}
 
+    # ------------------------------------------------------------ two-factor login (own account)
+    pending = {}  # user id -> (secret waiting for its first code, valid until)
+
+    def own_row(c, user):
+        row = c.execute("SELECT pw_hash, totp_secret, totp_last, recovery FROM users WHERE id=?", (user.id,)).fetchone()
+        if not row:
+            raise HTTPException(400, "This account cannot use two-factor login")
+        return row
+
+    def new_recovery_codes():
+        codes = [secrets.token_hex(5) for _ in range(10)]
+        return codes, [Auth.recovery_hash(x) for x in codes]
+
+    @r.get("/api/me/2fa")
+    def two_factor_state(user=Depends(current_user)):
+        with closing(ctx.wdb()) as c:
+            row = own_row(c, user)
+        return {"enabled": bool(row[1]), "recovery_left": len(json.loads(row[3] or "[]")) if row[1] else 0}
+
+    @r.post("/api/me/2fa/begin")
+    def two_factor_begin(body: PasswordOnly, user=Depends(current_user)):
+        with closing(ctx.wdb()) as c:
+            row = own_row(c, user)
+        if row[1]:
+            raise HTTPException(409, "Two-factor login is already on")
+        auth.throttle(f"user:{user.username.lower()}")
+        if not verify_password(body.password, row[0]):
+            auth.failed(f"user:{user.username.lower()}")
+            raise HTTPException(403, "Password is wrong")
+        secret = totp.new_secret()
+        pending[user.id] = (secret, time.time() + 600)
+        return {"secret": secret, "uri": totp.uri(secret, user.username)}
+
+    @r.post("/api/me/2fa/enable")
+    def two_factor_enable(body: CodeOnly, request: Request, user=Depends(current_user)):
+        secret, until = pending.get(user.id, (None, 0))
+        if not secret or until < time.time():
+            raise HTTPException(400, "Start again: the setup took too long")
+        auth.throttle(f"user:{user.username.lower()}")
+        step = totp.verify(secret, re.sub(r"\s", "", body.code))
+        if not step:
+            auth.failed(f"user:{user.username.lower()}")
+            raise HTTPException(400, "That code is not right. Check the clock of your phone and try the next one")
+        codes, hashed = new_recovery_codes()
+        with closing(ctx.wdb()) as c:
+            c.execute("UPDATE users SET totp_secret=?, totp_last=?, recovery=? WHERE id=?", (secret, step, json.dumps(hashed), user.id))
+            keep = request.cookies.get(COOKIE)
+            c.execute("DELETE FROM auth_sessions WHERE user_id=? AND token_hash != ?", (user.id, _sha(keep) if keep else ""))  # other sessions skipped the code
+        pending.pop(user.id, None)
+        log.info("Two-factor login turned on for %r", user.username)
+        return {"recovery_codes": [f"{x[:5]}-{x[5:]}" for x in codes]}
+
+    @r.post("/api/me/2fa/disable")
+    def two_factor_disable(body: DisableTwoFactor, user=Depends(current_user)):
+        keys = (f"user:{user.username.lower()}",)
+        auth.throttle(*keys)
+        with closing(ctx.wdb()) as c:
+            row = own_row(c, user)
+            if not row[1]:
+                raise HTTPException(409, "Two-factor login is not on")
+            if not verify_password(body.password, row[0]):
+                auth.failed(*keys)
+                raise HTTPException(403, "Password is wrong")
+            if not auth.check_second_factor(c, user.id, row[1], row[2], row[3], body.code, keys):
+                raise HTTPException(403, "That code is not right")
+            c.execute("UPDATE users SET totp_secret=NULL, totp_last=0, recovery=NULL WHERE id=?", (user.id,))
+        log.info("Two-factor login turned off for %r", user.username)
+        return {"ok": True}
+
     # ------------------------------------------------------------ users (admin)
     @r.get("/api/users")
     def users(_=Depends(require_admin)):
-        return ctx.rows("SELECT id, username, role, created, last_login, from_env FROM users ORDER BY username")
+        return ctx.rows("SELECT id, username, role, created, last_login, from_env, totp_secret IS NOT NULL AND totp_secret != '' AS totp "
+                        "FROM users ORDER BY username")
+
+    @r.delete("/api/users/{uid}/2fa")
+    def reset_two_factor(uid: int, _=Depends(require_admin)):
+        """For someone who lost their phone (and recovery codes): they sign in with their password again, and turn it back on."""
+        with closing(ctx.wdb()) as c:
+            c.execute("UPDATE users SET totp_secret=NULL, totp_last=0, recovery=NULL WHERE id=?", (uid,))
+            c.execute("DELETE FROM auth_sessions WHERE user_id=?", (uid,))
+        return {"ok": True}
 
     @r.post("/api/users")
     def add_user(body: NewUser, _=Depends(require_admin)):

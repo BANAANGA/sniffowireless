@@ -171,6 +171,7 @@ class Config:
     web_port: int = 8080
     web_user: str = ""
     web_password: str = ""
+    reset_2fa_user: str = ""   # RESET_2FA_USER: remove this user's two-factor login at startup (lost phone)
     auth_disabled: bool = False
     allowed_hosts: list = field(default_factory=list)
     trusted_proxies: str = "127.0.0.1"
@@ -239,6 +240,7 @@ class Config:
             web_port=_int("WEB_PORT", 8080),
             web_user=_env("WEB_USER"),
             web_password=_env("WEB_PASSWORD"),
+            reset_2fa_user=_env("RESET_2FA_USER"),
             auth_disabled=_bool("AUTH_DISABLED", False),
             allowed_hosts=_list("ALLOWED_HOSTS"),
             trusted_proxies=_env("TRUSTED_PROXIES", "127.0.0.1"),

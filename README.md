@@ -186,6 +186,8 @@ iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -A8 "Supported in
 # must list:  * monitor
 ```
 
+An adapter that stopped capturing can be reset from the web interface: admins see a **Reset…** button per interface in the overview's *Sensors* panel (also for remote sensors, which do it with their next upload). Wi-Fi is brought down and up again, Bluetooth gets an HCI reset, Zigbee and LoRa sticks are reconnected, and *Also reset the USB device* does what unplugging and replugging would (needs the container to see `/dev/bus/usb`, which `privileged` does).
+
 If the interface is missing, the adapter usually needs firmware. On Debian/Ubuntu/Raspberry Pi OS install `firmware-misc-nonfree` (MediaTek), `firmware-atheros` or `firmware-realtek`. On Arch install `linux-firmware`. Then replug the adapter.
 
 ### 2. Keep NetworkManager / wpa_supplicant away from it
@@ -557,6 +559,7 @@ The web UI and API need a login.
   docker compose logs sniffowireless | grep "setup code"
   ```
 - **With `WEB_USER` and `WEB_PASSWORD`:** that account is created (or reset) as an admin on every start, and no setup page is shown. Its password can only be changed through the environment.
+- **Two-factor login:** under **Settings → Account** anyone can add a code from an authenticator app (any TOTP app) to their password: scan the QR code (or type the key), confirm with a code, and keep the ten **recovery codes** shown once (each works once). Sign-in then asks for the code after the password; wrong codes count toward the same lockout as wrong passwords, and a code works only once. Turning it on signs your other sessions out; turning it off asks for the password and a code. API tokens and sensors are not affected. **Lost phone and recovery codes:** an admin removes it under **Settings → Users → Reset 2FA**; if it is the only admin, start the container once with `RESET_2FA_USER=<username>` (then remove the variable again).
 - **Roles:** *admins* can change settings, labels, groups, alert rules and the ignore list. *Viewers* can only look. Add users under **Settings → Users**.
 - **API tokens** (Settings → API tokens) are sent as `Authorization: Bearer <token>`:
   - `metrics`: only `/metrics`
@@ -633,6 +636,7 @@ All settings are environment variables (put them in `.env`).
 | `IGNORE_MACS` | – | Comma-separated addresses to ignore completely (the admin can also maintain an ignore list in the UI). |
 | `WEB_PORT` | `8080` | HTTP port (on the host, because of host networking). |
 | `WEB_HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` behind a reverse proxy. |
+| `RESET_2FA_USER` | – | Remove this user's two-factor login at start (lost phone). Remove the variable afterwards. |
 | `WEB_USER` / `WEB_PASSWORD` | – | Admin account created/reset on start. If unset, create it in the browser with the setup code from the log. |
 | `AUTH_DISABLED` | `0` | `1` disables login completely (trusted networks only). |
 | `ALLOWED_HOSTS` | – | Comma-separated host names/IPs the UI may be reached as (DNS-rebinding protection). Empty = any. |
@@ -742,7 +746,7 @@ On a phone the sidebar becomes a top bar with search and a menu button, cards si
 
 ### Appearance
 
-Admins can hide what an installation doesn't use under **Settings → Modules**: Wi-Fi, Bluetooth, Ethernet / LAN, Zigbee and LoRa. A hidden kind disappears from the menu, the overview (cards, charts, sensor list, discovery panels) and the statistics. Each row says whether anything of that kind is configured or has been seen, and *Hide the unused* switches off all that aren't in use. This only changes what is shown: nothing is deleted and capture still follows the environment variables, so switching a kind back on brings everything back. The overview also lists the latest discovered **Zigbee** networks and radios and **LoRa** nodes.
+Admins can hide what an installation doesn't use under **Settings → Modules**: Wi-Fi, Bluetooth, Ethernet / LAN, Zigbee and LoRa. A hidden kind disappears from the menu, the overview (cards, charts, sensor list, discovery panels) and the statistics. Each row says whether anything of that kind is configured or has been seen, and *Hide the unused* switches off all that aren't in use. This only changes what is shown: nothing is deleted and capture still follows the environment variables, so switching a kind back on brings everything back. LAN, Zigbee and LoRa can also **keep their data for their own number of days** (an empty field follows `RETENTION_DAYS`): LoRa packets pile up fast, so a week is often enough there. The overview also lists the latest discovered **Zigbee** networks and radios and **LoRa** nodes.
 
 **Clear data.** Under **Settings → Clear data** an admin can delete what is stored for one kind of radio (Wi-Fi, Bluetooth, Ethernet / LAN, Zigbee or LoRa), or just its events and alert history, or the in-memory application log. The page shows what each button would delete. Clearing a module's entries removes its devices with their sessions, signal history, probes and events, and its own tables (channel survey, DFS and interference history, security findings, LAN traffic / DNS / flows, Zigbee and LoRa data). Labels, notes, groups and watch flags, alert rules, notification channels, settings, users, sensors and downloaded handshake captures are kept, and capture goes on, so new data appears as it is heard. It cannot be undone: make a backup first.
 
@@ -1009,6 +1013,8 @@ Each packet carries a confidence (*sure*, *likely*, *a guess*). A LoRa receiver 
 
 Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `LORA_DEVICES` too; see the example under [Multiple sensors & the map](#multiple-sensors--the-map).
 
+**Names and watches.** On the LoRa and Zigbee pages an admin can give a node or radio a name (the ☆ button) and **watch** it: when it has not been heard for the number of minutes chosen (default 60), the event *Watched LoRa node / Zigbee radio went silent* is raised, and *is back* when it returns. A rule for both is created (without notification channels: add one under Alerts → Rules). The radio hops between profiles and hears a node only part of the time, so choose a time well above how often the node transmits. A node never heard raises nothing. **Exports:** the LoRa and Zigbee pages have CSV buttons (nodes and packets / radios and networks, no message contents).
+
 **Channel use.** For each listening profile the LoRa page shows the airtime of the frames heard and an estimate of how busy the channel is: airtime heard divided by the time the radio listened on that profile (a hopping radio listens to each profile `1/N` of the time, so the figure is an estimate, and other senders you can't hear add to it). Airtime is calculated from the frame size, spreading factor and bandwidth (Semtech's formula) with the coding rate of the profile and the preamble Meshtastic and MeshCore send (16).
 
 **Firmware version.** The board reports its firmware version; the LoRa page says when it is older than the version this server ships, and *Settings → LoRa flasher* updates it. Boards flashed before this existed count as version 1.
@@ -1116,7 +1122,7 @@ scrape_configs:
     static_configs: [{ targets: ["sniffowireless-host:8080"] }]
 ```
 
-`contrib/monitoring/` holds a ready-to-run Prometheus + Grafana stack with a provisioned **sniffowireless** dashboard:
+`contrib/monitoring/` holds a ready-to-run Prometheus + Grafana stack with a provisioned **sniffowireless** dashboard (including LoRa nodes, frames and airtime, and Zigbee radios and networks):
 
 ```bash
 echo -n "sniffowireless_<your metrics token>" > contrib/monitoring/sniffowireless_token

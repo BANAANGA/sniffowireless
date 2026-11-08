@@ -15,7 +15,9 @@ RUN mkdir -p /app/data /app/vendor \
  && (curl -fsSL --retry 3 https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js -o /app/vendor/chart.umd.min.js \
      || echo "WARNING: could not download Chart.js; the UI will load it from the CDN") \
  && (curl -fsSL --retry 3 https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js -o /app/vendor/esptool.bundle.js \
-     || echo "WARNING: could not download esptool-js; the LoRa flasher will load it from the CDN")
+     || echo "WARNING: could not download esptool-js; the LoRa flasher will load it from the CDN") \
+ && (curl -fsSL --retry 3 https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js -o /app/vendor/qrcode.js \
+     || echo "WARNING: could not download qrcode-generator; the two-factor setup will load it from the CDN")
 
 COPY sniffowireless /app/sniffowireless
 

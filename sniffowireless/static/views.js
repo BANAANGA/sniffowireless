@@ -529,9 +529,11 @@ const SETTINGS_VIEWS = {
       <label class="field">New password<input type="password" name="password" autocomplete="new-password" minlength="10" required></label>
       <label class="field">Repeat new password<input type="password" name="password2" autocomplete="new-password" required></label>
       <button class="btn primary">Change password</button> <span class="faint small-text">You'll be signed out everywhere.</span></form></div></section>
+      <section class="panel" style="margin-top:16px" id="tfa"></section>
       <section class="panel" style="margin-top:16px"><header><h2>Display</h2></header><div class="body">
       <label class="field form-narrow">Time format on this browser<select id="my-clock"></select></label>
       <p class="faint small-text" style="margin:0">Only for this browser. Notifications and reports use the default set by an admin under Appearance.</p></div></section>`;
+    twoFactorPanel(el.querySelector('#tfa'));
     const clockSel = el.querySelector('#my-clock');
     let mine = '';
     try { mine = localStorage.getItem('sniffowireless.clock') || ''; } catch { /* private mode */ }
@@ -551,15 +553,16 @@ const SETTINGS_VIEWS = {
   async users(el) {
     const us = await api('/api/users');
     el.innerHTML = `<section class="panel"><header><h2>Users</h2><button class="btn primary" id="add-user">Add user</button></header><div class="body flush">${tableHtml('<th>User</th><th>Role</th><th class="num">Last login</th><th></th>',
-      us.map(u => `<tr><td><b>${esc(u.username)}</b>${u.from_env ? ' <span class="tag">from WEB_USER</span>' : ''}${u.username === ME.username ? ' <span class="faint">(you)</span>' : ''}</td>
+      us.map(u => `<tr><td><b>${esc(u.username)}</b>${u.from_env ? ' <span class="tag">from WEB_USER</span>' : ''}${u.totp ? ' <span class="tag on" title="Signs in with an authenticator code">2FA</span>' : ''}${u.username === ME.username ? ' <span class="faint">(you)</span>' : ''}</td>
         <td>${u.username === ME.username ? esc(u.role) : `<select data-role="${u.id}">${['admin', 'viewer'].map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select>`}</td>
-        <td class="num muted">${u.last_login ? ago(u.last_login) : 'never'}</td><td class="num">${u.username !== ME.username ? `<button class="btn small danger" data-del="${u.id}">Delete</button>` : ''}</td></tr>`).join(''))}
+        <td class="num muted">${u.last_login ? ago(u.last_login) : 'never'}</td><td class="num">${u.totp && u.username !== ME.username ? `<button class="btn small" data-no2fa="${u.id}" title="For someone who lost their phone">Reset 2FA</button> ` : ''}${u.username !== ME.username ? `<button class="btn small danger" data-del="${u.id}">Delete</button>` : ''}</td></tr>`).join(''))}
       </div></section><p class="faint small-text">Admins can change settings, labels, alert rules and the ignore list. Viewers can only look.</p>`;
     el.querySelector('#add-user').onclick = () => openModal('Add user', `<label class="field">Username<input name="username" required autocomplete="off"></label>
       <label class="field">Password<input type="password" name="password" minlength="10" required autocomplete="new-password"></label>
       <label class="field">Role<select name="role"><option value="viewer">Viewer (read-only)</option><option value="admin">Admin</option></select></label>`,
     async f => { await send('POST', '/api/users', { username: fv(f, 'username'), password: f.elements.password.value, role: fv(f, 'role') }); SETTINGS_VIEWS.users(el); });
     el.querySelectorAll('[data-role]').forEach(s => s.onchange = async () => { await send('POST', `/api/users/${s.dataset.role}/role`, { role: s.value }); toast('Role changed'); });
+    el.querySelectorAll('[data-no2fa]').forEach(b => b.onclick = async () => { if (confirm('Remove the two-factor login of this user? They are signed out and can turn it on again.')) { try { await send('DELETE', `/api/users/${b.dataset.no2fa}/2fa`); toast('Two-factor login removed'); SETTINGS_VIEWS.users(el); } catch (e) { toast(e.message, true); } } });
     el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (confirm('Delete this user?')) { try { await send('DELETE', `/api/users/${b.dataset.del}`); SETTINGS_VIEWS.users(el); } catch (e) { toast(e.message, true); } } });
   },
   // networks: see investigations.js (shares the SSID picker)
