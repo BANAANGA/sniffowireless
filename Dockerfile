@@ -1,12 +1,16 @@
 FROM python:3.12-slim
 
+# apt-get upgrade pulls in Debian security fixes (zlib1g: CVE-2026-76844, CVE-2026-85091, CVE-2026-27171) that the base image
+# has not picked up yet. pip is upgraded for its own advisories (pip is only used at build time, but it ships in the image).
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends iw iproute2 wireless-tools rfkill usbutils tcpdump curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade "pip>=26.1.2" \
+ && pip install --no-cache-dir -r requirements.txt
 
 # OUI vendor database + charting library, fetched at build time so the UI works offline.
 RUN mkdir -p /app/data /app/vendor \
