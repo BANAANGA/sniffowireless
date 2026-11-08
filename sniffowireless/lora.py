@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from . import status
+from . import adapters, status
 from .auth import current_user, require_admin
 from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
 
@@ -114,6 +114,8 @@ class LoraSensor:
         self.stop = None
         self.packets = 0
         self.profile = None
+        self.link, self.reset_requested = None, threading.Event()
+        adapters.REGISTRY[self.name] = self
         status.register(self.name, type="lora", iface=device, profiles=[p.name for p in cfg.lora_profiles])
 
     def start(self, stop):
@@ -124,7 +126,7 @@ class LoraSensor:
         while not self.stop.is_set():
             link = None
             try:
-                link = self.link_factory(self.device)
+                link = self.link = self.link_factory(self.device)
                 self.run(link)
             except Exception as e:  # serial errors depend on the platform; a replug must not end the thread
                 log.warning("%s: %s", self.name, e)
@@ -135,7 +137,28 @@ class LoraSensor:
                         link.close()
                     except Exception:
                         pass
-            self.stop.wait(RETRY_INTERVAL)
+            self._retry_wait()
+
+    def reset(self, usb=False):
+        """Close the serial link so the loop opens it (and runs the handshake) again at once; optionally reset the USB device too."""
+        steps = ["serial link closed, reconnecting"]
+        self.reset_requested.set()
+        link = self.link
+        if link is not None:
+            try:
+                link.close()
+            except Exception:
+                pass
+        if usb:
+            steps.insert(0, adapters.usb_reset("/sys/class/tty/" + os.path.basename(os.path.realpath(self.device)) + "/device"))
+        return steps
+
+    def _retry_wait(self):
+        """Between attempts: the usual pause, cut short by a reset request."""
+        end = time.monotonic() + RETRY_INTERVAL
+        while not self.stop.is_set() and not self.reset_requested.is_set() and time.monotonic() < end:
+            self.stop.wait(1)
+        self.reset_requested.clear()
 
     # ------------------------------------------------------------------ talking to the sniffer
     def handshake(self, link):

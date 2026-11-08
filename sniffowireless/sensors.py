@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import sanitize, status, sysinfo, version
+from . import adapters, sanitize, status, sysinfo, version
 from .sanitize import Name
 from .auth import current_user, require_admin
 
@@ -66,14 +66,15 @@ class Forwarder:
         return s
 
     def _handle_reply(self, reply):
-        """The server's answer to a batch may carry settings for this sensor (channels set in the web UI)."""
-        if not self.on_channel_config:
-            return
+        """The server's answer to a batch may carry settings for this sensor (channels set in the web UI) and requests (resets)."""
         try:
-            conf = json.loads(reply).get("channel_config")
+            parsed = json.loads(reply)
+            conf, cmds = parsed.get("channel_config"), parsed.get("commands")
         except (ValueError, AttributeError):
             return
-        if conf:
+        if isinstance(cmds, list) and cmds:
+            adapters.run_commands(cmds)
+        if conf and self.on_channel_config:
             try:
                 self.on_channel_config(conf)
             except Exception:
@@ -258,6 +259,9 @@ def routes(ctx):
                     (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts,
                                       "version": sanitize.remote_version(body.get("version"))}), sid))
         reply = {"accepted": n, "rejected": rejected}
+        cmds = adapters.take(sid)
+        if cmds:  # an admin asked for an adapter of this sensor to be reset
+            reply["commands"] = cmds
         chan = (ctx.settings.get("channels")["sensors"] or {}).get(sid)
         if chan and chan.get("rev"):  # settings made in the web UI for this sensor: it applies them when the revision is new
             reply["channel_config"] = {k: chan.get(k) for k in ("rev", "channels", "per_iface", "regdomain", "hop_interval")}

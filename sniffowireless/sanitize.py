@@ -246,7 +246,7 @@ def remote_observation(o, now):
 
 
 SENSOR_STATUS = {"name": 64, "state": 32, "error": 200, "type": 32, "iface": 32, "mon": 32, "channel": 16,
-                 "band": 8, "scan": 16, "firmware": 64, "warning": 300, "regdomain": 8}
+                 "band": 8, "scan": 16, "firmware": 64, "warning": 300, "regdomain": 8, "note": 160, "profile": 48}
 
 
 def remote_version(v):
@@ -282,7 +282,7 @@ def remote_status(s):
     if not isinstance(s, dict) or not clean_str(s.get("name"), 64):
         return None
     out = {k: clean_str(s.get(k), n) for k, n in SENSOR_STATUS.items() if s.get(k) is not None}
-    for k in ("packets", "adverts", "inquiries"):
+    for k in ("packets", "adverts", "inquiries", "crc_errors", "fw_version"):
         if s.get(k) is not None:
             out[k] = clean_num(s.get(k), 0, 10 ** 15, True)
     if s.get("pps") is not None:
