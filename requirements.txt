@@ -1,5 +1,6 @@
 scapy==2.6.1
-fastapi==0.115.6
+fastapi==0.162.2
+starlette==1.10.0   # CVE-2026-48710 is fixed in 1.0.1; 1.10.0 is what the tests ran on
 uvicorn==0.34.0
 paho-mqtt==2.1.0
 pyserial==3.5
