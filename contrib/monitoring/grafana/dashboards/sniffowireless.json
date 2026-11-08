@@ -769,6 +769,281 @@
      "mode": "multi"
     }
    }
+  },
+  {
+   "id": 13,
+   "title": "LoRa nodes active",
+   "type": "stat",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 35,
+    "w": 6,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (protocol) (sniffowireless_lora_nodes_active)",
+     "legendFormat": "{{protocol}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {}
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 14,
+   "title": "Zigbee",
+   "type": "stat",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 35,
+    "w": 6,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sniffowireless_zigbee_radios_active",
+     "legendFormat": "radios active",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    },
+    {
+     "refId": "B",
+     "expr": "sniffowireless_zigbee_networks",
+     "legendFormat": "networks",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {}
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 15,
+   "title": "LoRa frames heard (last hour)",
+   "type": "timeseries",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 35,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (protocol) (sniffowireless_lora_packets_1h)",
+     "legendFormat": "{{protocol}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 8,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 16,
+   "title": "LoRa airtime heard (seconds in the last hour)",
+   "type": "timeseries",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 43,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (protocol) (sniffowireless_lora_airtime_seconds_1h)",
+     "legendFormat": "{{protocol}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 8,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 17,
+   "title": "Zigbee radios and networks",
+   "type": "timeseries",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 43,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sniffowireless_zigbee_radios_active",
+     "legendFormat": "radios active",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    },
+    {
+     "refId": "B",
+     "expr": "sniffowireless_zigbee_radios_total",
+     "legendFormat": "radios known",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    },
+    {
+     "refId": "C",
+     "expr": "sniffowireless_zigbee_networks",
+     "legendFormat": "networks",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     }
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 8,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
   }
  ],
  "editable": true

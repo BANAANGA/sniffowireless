@@ -570,7 +570,7 @@ async function viewOverview(params) {
     const l = await api('/api/lora?hours=168');
     const nodes = l.nodes.slice().sort((a, b) => (b.first_seen || 0) - (a.first_seen || 0)).slice(0, 12);
     document.getElementById('lora-disc').innerHTML = nodes.length ? `<table><thead><tr><th>Protocol</th><th>Address</th><th>Name</th><th>Type</th><th class="num">Packets</th><th class="num">Signal</th><th class="num">Discovered</th></tr></thead><tbody>
-      ${nodes.map(n => `<tr class="link" data-href="#/lora"><td>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${esc(n.name || '—')}</td><td class="muted">${esc(n.kind || '—')}</td><td class="num">${num(n.packets)}</td><td class="num">${n.rssi != null ? Math.round(n.rssi) + ' dBm' : '—'}</td><td class="num muted" title="${esc(dt(n.first_seen))}">${ago(n.first_seen)}</td></tr>`).join('')}</tbody></table>`
+      ${nodes.map(n => `<tr class="link" data-href="#/lora"><td>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${esc(n.given_name || n.name || '—')}</td><td class="muted">${esc(n.kind || '—')}</td><td class="num">${num(n.packets)}</td><td class="num">${n.rssi != null ? Math.round(n.rssi) + ' dBm' : '—'}</td><td class="num muted" title="${esc(dt(n.first_seen))}">${ago(n.first_seen)}</td></tr>`).join('')}</tbody></table>`
       : `<div class="empty">${l.configured ? 'Nothing heard yet' : 'No LoRa receiver configured'}</div>`;
     linkRows(document.getElementById('lora-disc'));
   }
@@ -589,10 +589,11 @@ async function viewOverview(params) {
       ${x.state === 'offline' ? `<div class="muted">offline · no report for ${dur(x.quiet_for || 0)}</div>` : x.error ? `<div class="err">${esc(x.error)}</div>` : `<div class="muted">${esc(x.state)}${x.channel ? ' · ch ' + esc(x.channel) : ''}${Array.isArray(x.bands) ? ' · ' + x.bands.map(b => esc(b) + 'G').join('/') : ''}${x.adverts != null ? ' · ' + num(x.adverts) + ' adverts' : ''}</div>
       ${x.band_frames && Array.isArray(x.bands) ? `<div class="faint small-text">frames ${x.bands.map(b => `${esc(b)}G ${num((x.band_frames || {})[b] || 0)}`).join(' · ')}</div>` : ''}
       ${x.relabelled ? `<div class="faint small-text">${num(x.relabelled)} frames had a wrong band from the driver (corrected)</div>` : ''}`}
-      ${x.warning ? `<div class="warn-text small-text">${esc(x.warning)}</div>` : ''}</div>
+      ${x.warning ? `<div class="warn-text small-text">${esc(x.warning)}</div>` : ''}${x.note ? `<div class="faint small-text">${esc(x.note)}</div>` : ''}${isAdmin() && /^(wifi|bt|zigbee|lora):/.test(x.remote ? x.name.slice(x.remote.length + 1) : x.name) ? `<div><button class="btn small ghost" data-reset="${esc(x.remote || 'local')}|${esc(x.remote ? x.name.slice(x.remote.length + 1) : x.name)}" title="Reset this adapter">Reset…</button></div>` : ''}</div>
       <div class="muted mono" style="text-align:right">${(Number(x.pps) || 0).toFixed(1)} pkt/s<br>${num(x.packets)} total</div></div>`).join('')
       : `<div class="empty">${s.demo ? 'Demo mode — synthetic data' : 'No sensors configured'}</div>`)
       + `<div class="sensor muted"><span>Queue ${num(s.store.queue)} · dropped ${num(s.store.dropped)}</span><span>${num(s.store.open_presence)} present</span></div>`;
+    document.querySelectorAll('#sensors button[data-reset]').forEach(b => b.onclick = () => resetAdapter(...b.dataset.reset.split('|')));
     renderIfaceChart(list);
   }
   function renderIfaceChart(list) {

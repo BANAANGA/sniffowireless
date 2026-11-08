@@ -1,7 +1,5 @@
 """HTTP API + static single-page UI."""
-import csv
 import hashlib
-import io
 import json
 import re
 import time
@@ -12,16 +10,16 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
-               matching, metrics, modules, mqtt, purge, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+from . import (adapters, alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
+               matching, metrics, modules, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user
 from .httpsec import SecurityMiddleware
-from .web_util import overlap_counts
+from .web_util import csv_response, overlap_counts
 
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
 ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
-CSV_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+QRCODE_JS_CDN = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
@@ -638,16 +636,7 @@ def create_app(ctx):
                 "types": [r["type"] for r in rows("SELECT DISTINCT type FROM events ORDER BY type")]}
 
     # ------------------------------------------------------------------ export
-    def _csv(name, cols, data):
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(cols)
-        for r in data:
-            # Neutralise spreadsheet formulas: SSIDs / device names are chosen by strangers.
-            w.writerow(["'" + v if isinstance(v, str) and v.startswith(CSV_FORMULA) else v for v in
-                        (r.get(c) for c in cols)])
-        return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
-                                 headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    _csv = csv_response
 
     DEVICE_EXPORT_COLS = ["mac", "kind", "label", "group_name", "vendor", "brand", "model", "dev_type", "os", "wifi_gen",
                           "era", "fp_hash", "name", "ssid", "channel", "band", "freq", "enc", "bssid", "randomized",
@@ -682,7 +671,7 @@ def create_app(ctx):
     # ------------------------------------------------------------------ static
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
-    for mod in (auth, appearance, modules, purge, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
+    for mod in (auth, appearance, modules, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
                 trackers, backup, search, logs, matching, handshake, channels):
         app.include_router(mod.routes(ctx))
 
@@ -711,6 +700,13 @@ def create_app(ctx):
         # pinned version, so a week is safe; the browser keeps its copy instead of re-fetching 200 kB per visit
         return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
                 if f.exists() else RedirectResponse(CHART_JS_CDN))
+
+    @app.get("/vendor/qrcode.js")
+    def qrcode_js():
+        # for the QR code of the two-factor setup; bundled at build time, the pinned CDN copy as fallback
+        f = vendor_dir / "qrcode.js"
+        return (FileResponse(f, media_type="text/javascript", headers={"Cache-Control": "public, max-age=604800"})
+                if f.exists() else RedirectResponse(QRCODE_JS_CDN))
 
     @app.get("/vendor/esptool.bundle.js")
     def esptool_js():

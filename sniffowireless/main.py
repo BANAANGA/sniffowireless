@@ -114,8 +114,10 @@ def build(cfg):
     ctx.dfs = DfsMonitor(ctx)
     ctx.zigbee = ZigbeeMonitor(ctx)
     ctx.lora = LoraMonitor(ctx)
+    from .radiowatch import RadioWatch
+    ctx.radiowatch = RadioWatch(ctx)
     store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
-                    ctx.zigbee, ctx.lora]
+                    ctx.zigbee, ctx.lora, ctx.radiowatch]
     store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
     apply_ignore(ctx)
     apply_meta(ctx)

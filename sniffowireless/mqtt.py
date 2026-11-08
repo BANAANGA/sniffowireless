@@ -20,7 +20,8 @@ import time
 
 log = logging.getLogger("sniffowireless.mqtt")
 
-RADIO_EVENTS = ("lora_new_node", "lora_flood", "lora_join_flood", "lora_fcnt_reset", "zigbee_new_network", "zigbee_permit_join")
+RADIO_EVENTS = ("lora_new_node", "lora_flood", "lora_join_flood", "lora_fcnt_reset", "zigbee_new_network", "zigbee_permit_join",
+                "watched_silent", "watched_back")
 
 
 def _mac_topic(mac):

@@ -19,6 +19,9 @@
   <label class="field">Username<input name="username" autocomplete="username" required autofocus></label>
   <label class="field">Password<input name="password" type="password" autocomplete="current-password" required></label>
   <label class="field" id="pw2-field" hidden>Repeat password<input name="password2" type="password" autocomplete="new-password"></label>
+  <label class="field" id="otp-field" hidden>Authentication code
+    <input name="otp" inputmode="text" autocomplete="one-time-code" placeholder="6 digits, or a recovery code" maxlength="32">
+    <span class="faint small-text">From your authenticator app. Lost it? Use one of your recovery codes.</span></label>
   <div class="modal-err" id="err"></div>
   <button class="btn primary" id="submit">Sign in</button>
 </form>

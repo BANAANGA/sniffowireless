@@ -2,7 +2,8 @@
 their menu entries, overview cards and statistics then disappear. Display only: capture itself is configured with
 environment variables and keeps running."""
 import secrets
-from typing import List
+import time
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -25,11 +26,21 @@ PROBES = {
 
 class ModulesBody(BaseModel):
     disabled: List[str]
+    retention: Optional[Dict[str, int]] = None  # days per module, 0 = the general RETENTION_DAYS
 
 
 class PrivacyBody(BaseModel):
     macs: bool
     ssids: bool
+
+
+RETENTION_MODULES = ("lan", "zigbee", "lora")  # the modules with tables of their own: the rest follows RETENTION_DAYS
+
+
+def cutoff_for(ctx, module, default):
+    """The time before which a module's own tables are pruned: its own retention if the admin set one, else `default`."""
+    days = ((ctx.settings.get("modules") or {}).get("retention") or {}).get(module)
+    return time.time() - days * 86400 if days else default
 
 
 def disabled(ctx):
@@ -55,7 +66,11 @@ def routes(ctx):
     def view():
         off, used = set(disabled(ctx)), in_use(ctx)
         p = ctx.settings.get("privacy")
-        return {"modules": [{"id": m, "label": label, "enabled": m not in off, "in_use": m in used} for m, label in MODULES.items()],
+        keep = ctx.settings.get("modules").get("retention") or {}
+        return {"modules": [{"id": m, "label": label, "enabled": m not in off, "in_use": m in used,
+                             "retention": keep.get(m) if m in RETENTION_MODULES else None, "has_retention": m in RETENTION_MODULES}
+                            for m, label in MODULES.items()],
+                "default_retention": ctx.cfg.retention_days,
                 "privacy": {"macs": bool(p.get("macs")), "ssids": bool(p.get("ssids"))}}
 
     @r.get("/api/modules")
@@ -67,7 +82,15 @@ def routes(ctx):
         bad = [m for m in body.disabled if m not in MODULES]
         if bad:
             raise HTTPException(400, f"Unknown module: {bad[0]}")
-        ctx.settings.set("modules", {"disabled": sorted(set(body.disabled))})
+        keep = dict(ctx.settings.get("modules").get("retention") or {})
+        if body.retention is not None:
+            for m, days in body.retention.items():
+                if m not in RETENTION_MODULES:
+                    raise HTTPException(400, f"{m} has no retention of its own")
+                if not 0 <= days <= 3650:
+                    raise HTTPException(400, "Retention is 1 to 3650 days (0 for the default)")
+            keep = {m: d for m, d in {**keep, **body.retention}.items() if d}
+        ctx.settings.set("modules", {"disabled": sorted(set(body.disabled)), "retention": keep})
         return view()
 
     @r.get("/api/privacy")

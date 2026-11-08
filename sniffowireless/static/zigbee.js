@@ -12,7 +12,8 @@ addRoute('/zigbee', async (_, params) => {
   const signal = x => x.rssi != null ? `${x.rssi} dBm` : x.lqi != null ? `LQI ${x.lqi}` : '—';
 
   app.innerHTML = `<div class="page-head"><div><h1>Zigbee &amp; 802.15.4</h1><div class="sub">Networks found by scanning, and every radio heard by listening passively. Encrypted contents stay hidden: you see addresses, frame types and timing.</div></div>
-    ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div>
+    <div class="row"><a class="btn small ghost" href="/api/export/zigbee-radios.csv" download>Radios (CSV)</a><a class="btn small ghost" href="/api/export/zigbee-networks.csv" download>Networks (CSV)</a>
+      ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div></div>
     ${!z.configured ? '<div class="callout">No Zigbee stick configured. Plug in a coordinator stick and set <code>ZIGBEE_DEVICES</code> (see README → Zigbee &amp; 802.15.4).</div>' : ''}
     ${z.configured && !hasData && !z.sensors.some(s => s.error) ? '<div class="empty">Nothing heard yet. Scans run every few minutes; battery devices transmit only briefly.</div>' : ''}
     ${z.sensors.map(s => `<div class="callout">${esc(s.iface || s.name)}: ${s.error ? `<span class="err">${esc(s.error)}</span>` : esc([s.state, s.firmware, s.channel ? 'ch ' + s.channel : ''].filter(Boolean).join(' · '))}${s.warning ? `<div class="warn-text small-text">${esc(s.warning)}</div>` : ''}</div>`).join('')}
@@ -26,9 +27,11 @@ addRoute('/zigbee', async (_, params) => {
         'No networks found yet')}</div></section>
       ${energy.length ? `<section class="panel"><header><h2>Channel interference</h2><span class="faint">strongest signal, lower is better</span></header><div class="body"><ul class="bars-list">${energy.map(c => `<li><div><div class="name">Channel ${c.channel}</div><div class="track"><i style="width:${Math.max(0, Math.min(100, (c.rssi + 100) / 70 * 100))}%;background:${KINDS.ap.color}"></i></div></div><div class="n">${c.rssi} dBm</div></li>`).join('')}</ul></div></section>` : ''}
       <section class="panel ${energy.length ? 'span-2' : 'span-3'}"><header><h2>Radios heard</h2><span class="faint">protocol labels are guesses from unencrypted fields, not proof</span></header><div class="body flush">${tableHtml(
-        '<th>Address</th><th>PAN</th><th>Protocol</th><th class="num">Channels</th><th class="num">Sent</th><th class="num">Received</th><th class="num">Encrypted</th><th class="num">Signal</th><th class="num">Last seen</th>',
-        z.radios.map(r => `<tr><td class="mono">${esc(r.addr)}${r.vendor ? ` <span class="muted">${esc(r.vendor)}?</span>` : ''}</td><td class="mono faint">${pan(r.pan)}</td><td class="muted trunc" title="${esc(r.types.join(', '))}">${esc(r.hint_label)}</td><td class="num">${r.channels.join(', ')}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.received)}</td><td class="num">${num(r.encrypted)}</td><td class="num">${r.sent ? esc(signal(r)) : '<span class="faint" title="Only ever seen as a destination">—</span>'}</td><td class="num">${ago(r.last_seen)}</td></tr>`).join(''),
+        '<th>Address</th><th>PAN</th><th>Protocol</th><th class="num">Channels</th><th class="num">Sent</th><th class="num">Received</th><th class="num">Encrypted</th><th class="num">Signal</th><th class="num">Last seen</th><th></th>',
+        z.radios.map(r => `<tr><td class="mono">${r.given_name ? `<b style="font-family:inherit">${esc(r.given_name)}</b> ` : ''}${esc(r.addr)}${r.vendor ? ` <span class="muted">${esc(r.vendor)}?</span>` : ''}${watchTag(r)}</td><td class="mono faint">${pan(r.pan)}</td><td class="muted trunc" title="${esc(r.types.join(', '))}">${esc(r.hint_label)}</td><td class="num">${r.channels.join(', ')}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.received)}</td><td class="num">${num(r.encrypted)}</td><td class="num">${r.sent ? esc(signal(r)) : '<span class="faint" title="Only ever seen as a destination">—</span>'}</td><td class="num">${ago(r.last_seen)}</td><td class="num">${isAdmin() ? `<button class="btn small ghost" data-watch="${r.pan == null ? -1 : r.pan}|${esc(r.addr)}" title="Name or watch this radio">${r.watch ? '★' : '☆'}</button>` : ''}</td></tr>`).join(''),
         'No radios heard yet')}</div></section>
     </div>`;
   onSeg(app, 'hours', v => { location.hash = hrefWith('/zigbee', { hours: v }); });
+  app.querySelectorAll('button[data-watch]').forEach(b => b.onclick = () => { const [pan, addr] = b.dataset.watch.split('|'); const r = z.radios.find(x => String(x.pan == null ? -1 : x.pan) === pan && x.addr === addr);
+    editRadio('zigbee', pan, addr, { label: r.given_name, watch: r.watch, silent: r.silent_min }, () => route()); });
 });

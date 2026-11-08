@@ -17,9 +17,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from . import status
+from . import adapters, status
 from .auth import current_user, require_admin
 from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
+
+from .modules import cutoff_for
+from .radiowatch import watch_map
+from .web_util import csv_response
 
 log = logging.getLogger("sniffowireless.lora")
 
@@ -110,6 +114,8 @@ class LoraSensor:
         self.stop = None
         self.packets = 0
         self.profile = None
+        self.link, self.reset_requested = None, threading.Event()
+        adapters.REGISTRY[self.name] = self
         status.register(self.name, type="lora", iface=device, profiles=[p.name for p in cfg.lora_profiles])
 
     def start(self, stop):
@@ -120,7 +126,7 @@ class LoraSensor:
         while not self.stop.is_set():
             link = None
             try:
-                link = self.link_factory(self.device)
+                link = self.link = self.link_factory(self.device)
                 self.run(link)
             except Exception as e:  # serial errors depend on the platform; a replug must not end the thread
                 log.warning("%s: %s", self.name, e)
@@ -131,7 +137,28 @@ class LoraSensor:
                         link.close()
                     except Exception:
                         pass
-            self.stop.wait(RETRY_INTERVAL)
+            self._retry_wait()
+
+    def reset(self, usb=False):
+        """Close the serial link so the loop opens it (and runs the handshake) again at once; optionally reset the USB device too."""
+        steps = ["serial link closed, reconnecting"]
+        self.reset_requested.set()
+        link = self.link
+        if link is not None:
+            try:
+                link.close()
+            except Exception:
+                pass
+        if usb:
+            steps.insert(0, adapters.usb_reset("/sys/class/tty/" + os.path.basename(os.path.realpath(self.device)) + "/device"))
+        return steps
+
+    def _retry_wait(self):
+        """Between attempts: the usual pause, cut short by a reset request."""
+        end = time.monotonic() + RETRY_INTERVAL
+        while not self.stop.is_set() and not self.reset_requested.is_set() and time.monotonic() < end:
+            self.stop.wait(1)
+        self.reset_requested.clear()
 
     # ------------------------------------------------------------------ talking to the sniffer
     def handshake(self, link):
@@ -363,6 +390,7 @@ class LoraMonitor:
         self.seen = set()
 
     def prune(self, store, c, cutoff):
+        cutoff = cutoff_for(self.ctx, "lora", cutoff)
         c.execute("DELETE FROM lora_packets WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM lora_nodes WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM lora_stats WHERE minute < ?", (cutoff,))
@@ -384,6 +412,17 @@ def firmware_manifest():
 
 def routes(ctx):
     r = APIRouter()
+
+    @r.get("/api/export/lora-nodes.csv")
+    def export_nodes(_=Depends(current_user)):
+        cols = ["protocol", "addr", "name", "kind", "packets", "rssi", "best_rssi", "snr", "profile", "first_seen", "last_seen"]
+        return csv_response("lora-nodes.csv", cols, ctx.rows("SELECT * FROM lora_nodes ORDER BY last_seen DESC LIMIT 100000"))
+
+    @r.get("/api/export/lora-packets.csv")
+    def export_packets(hours: float = 24, _=Depends(current_user)):
+        cols = ["ts", "protocol", "kind", "src", "dst", "hops", "confidence", "profile", "freq", "bw", "sf", "sync", "rssi", "snr", "bytes", "sensor"]
+        return csv_response("lora-packets.csv", cols, ctx.rows("SELECT * FROM lora_packets WHERE ts >= ? ORDER BY id DESC LIMIT 200000",
+                                                             (time.time() - max(1 / 60, min(hours, 24 * 365)) * 3600,)))
 
     @r.get("/api/lora/firmware")
     def firmware(_=Depends(require_admin)):
@@ -417,8 +456,11 @@ def routes(ctx):
         start = int(since // bucket * bucket)
         ts = list(range(start, int(now), bucket))
         nodes = ctx.rows("SELECT * FROM lora_nodes WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT 300", (since,))
+        watched = watch_map(ctx, "lora")
         for n in nodes:
             n["label"] = PROTOCOLS.get(n["protocol"], n["protocol"])
+            w = watched.get((n["protocol"], n["addr"]))
+            n["given_name"], n["watch"], n["silent_min"], n["watch_state"] = (w["label"], bool(w["watch"]), w["silent_min"], w["state"]) if w else (None, False, 60, None)
         recent = ctx.rows("SELECT * FROM lora_packets WHERE ts >= ? ORDER BY id DESC LIMIT 100", (since,))
         for p in recent:
             p["label"] = PROTOCOLS.get(p["protocol"], p["protocol"])

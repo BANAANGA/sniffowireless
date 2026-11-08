@@ -22,10 +22,15 @@ f.onsubmit = async e => {
   if (setup && f.password.value !== f.password2.value) { $('err').textContent = 'Passwords do not match'; return; }
   const body = { username: f.username.value.trim(), password: f.password.value };
   if (setup) body.code = f.code.value.trim();
+  else if (!$('otp-field').hidden) body.code = f.otp.value.trim();
   $('submit').disabled = true;
   const r = await fetch(setup ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   $('submit').disabled = false;
   if (r.ok) { location.href = '/'; return; }
   const d = (await r.json().catch(() => ({}))).detail;
-  $('err').textContent = Array.isArray(d) ? d.map(x => x.msg).join('; ') : d || 'Sign-in failed';
+  if (d && d.code === 'totp_required') {  // right password, and the account asks for a second factor
+    $('otp-field').hidden = false; f.otp.focus(); $('err').textContent = ''; return;
+  }
+  $('err').textContent = d && d.message ? d.message : Array.isArray(d) ? d.map(x => x.msg).join('; ') : d || 'Sign-in failed';
+  if (d && d.code === 'totp_invalid') { f.otp.value = ''; f.otp.focus(); }
 };

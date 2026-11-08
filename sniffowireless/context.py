@@ -10,7 +10,7 @@ class Ctx:
         self.cfg, self.store, self.settings = cfg, store, settings
         self.auth = self.alerts = self.security = self.survey = self.location = self.reports = self.lan = None
         self.interference = self.trackers = self.backups = self.investigate = self.dfs = self.handshake = None
-        self.mqtt = self.zigbee = self.wifi = self.lora = None
+        self.mqtt = self.zigbee = self.wifi = self.lora = self.radiowatch = None
 
     def db(self):
         return connect(self.cfg.db_path, readonly=True)

@@ -11,9 +11,13 @@ import time
 
 from fastapi import APIRouter, Depends
 
-from . import status
+from . import adapters, status
 from .auth import current_user
 from .zigbee_radio import ALL_CHANNELS, HINTS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect
+
+from .modules import cutoff_for
+from .radiowatch import watch_map
+from .web_util import csv_response
 
 log = logging.getLogger("sniffowireless.zigbee")
 
@@ -72,6 +76,8 @@ class ZigbeeSensor:
         self.stop = None
         self.no_capture = False
         self.packets = 0
+        self.link, self.reset_requested = None, threading.Event()
+        adapters.REGISTRY[self.name] = self
         status.register(self.name, type="zigbee", iface=device)
 
     def start(self, stop):
@@ -82,7 +88,7 @@ class ZigbeeSensor:
         while not self.stop.is_set():
             link = None
             try:
-                link = self.link_factory(self.device)
+                link = self.link = self.link_factory(self.device)
                 self.run(link)
             except Exception as e:  # serial errors depend on the platform; a replug must not end the thread
                 log.warning("%s: %s", self.name, e)
@@ -93,7 +99,28 @@ class ZigbeeSensor:
                         link.close()
                     except Exception:
                         pass
-            self.stop.wait(RETRY_INTERVAL)
+            self._retry_wait()
+
+    def reset(self, usb=False):
+        """Close the serial link so the loop opens it (and runs the handshake) again at once; optionally reset the USB device too."""
+        steps = ["serial link closed, reconnecting"]
+        self.reset_requested.set()
+        link = self.link
+        if link is not None:
+            try:
+                link.close()
+            except Exception:
+                pass
+        if usb:
+            steps.insert(0, adapters.usb_reset("/sys/class/tty/" + os.path.basename(os.path.realpath(self.device)) + "/device"))
+        return steps
+
+    def _retry_wait(self):
+        """Between attempts: the usual pause, cut short by a reset request."""
+        end = time.monotonic() + RETRY_INTERVAL
+        while not self.stop.is_set() and not self.reset_requested.is_set() and time.monotonic() < end:
+            self.stop.wait(1)
+        self.reset_requested.clear()
 
     def run(self, link):
         family, next_scan = None, 0.0
@@ -302,6 +329,7 @@ class ZigbeeMonitor:
         self.pending = False
 
     def prune(self, store, c, cutoff):
+        cutoff = cutoff_for(self.ctx, "zigbee", cutoff)
         c.execute("DELETE FROM zigbee_networks WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM zigbee_radios WHERE last_seen < ?", (cutoff,))
         c.execute("DELETE FROM zigbee_channels WHERE minute < ?", (cutoff,))
@@ -316,6 +344,16 @@ def _channels(mask):
 def routes(ctx):
     r = APIRouter()
 
+    @r.get("/api/export/zigbee-radios.csv")
+    def export_radios(_=Depends(current_user)):
+        cols = ["pan", "addr", "channels", "sent", "received", "encrypted", "hint", "types", "rssi", "lqi", "vendor", "first_seen", "last_seen"]
+        return csv_response("zigbee-radios.csv", cols, ctx.rows("SELECT * FROM zigbee_radios ORDER BY last_seen DESC LIMIT 100000"))
+
+    @r.get("/api/export/zigbee-networks.csv")
+    def export_networks(_=Depends(current_user)):
+        cols = ["ext_pan", "pan", "channel", "permit_join", "stack_profile", "update_id", "lqi", "rssi", "vendor", "first_seen", "last_seen", "sightings"]
+        return csv_response("zigbee-networks.csv", cols, ctx.rows("SELECT * FROM zigbee_networks ORDER BY last_seen DESC LIMIT 10000"))
+
     @r.get("/api/zigbee")
     def overview(hours: float = 24, _=Depends(current_user)):
         now = time.time()
@@ -326,7 +364,10 @@ def routes(ctx):
             n["routers"] = json.loads(n["routers"] or "[]")
             n["permit_join"] = bool(n["permit_join"])
         radios = ctx.rows("SELECT * FROM zigbee_radios WHERE last_seen >= ? ORDER BY sent+received DESC LIMIT 500", (since,))
+        watched = watch_map(ctx, "zigbee")
         for d in radios:
+            w = watched.get((str(d["pan"]), d["addr"]))
+            d["given_name"], d["watch"], d["silent_min"], d["watch_state"] = (w["label"], bool(w["watch"]), w["silent_min"], w["state"]) if w else (None, False, 60, None)
             d["pan"] = None if d["pan"] < 0 else d["pan"]
             d["channels"] = _channels(d["channels"])
             d["types"] = [name for i, name in enumerate(TYPE_NAMES) if d["types"] >> i & 1]
