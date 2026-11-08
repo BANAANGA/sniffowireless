@@ -191,3 +191,83 @@ def test_apply_without_adapters_only_keeps_the_settings(monkeypatch):
     ctl = WifiControl(Config(), sink=None)
     ctl.apply({"channels": "6ghz", "regdomain": "nl"}, rev=1)
     assert ctl.rev == 1 and ctl.override["channels"] == "6ghz" and calls == []
+
+
+# ---- the sensor keeps one connection open to the server instead of reconnecting for every batch
+def _ingest_server(status=200, close_after=None):
+    import http.server, threading
+
+    seen = {"conns": 0, "posts": 0, "bodies": []}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            seen["conns"] += 1
+            self.n = 0
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            seen["posts"] += 1
+            seen["bodies"].append((self.path, self.headers["Authorization"], body))
+            self.n += 1
+            out = b'{"ok": true}'
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(out)))
+            if close_after and self.n >= close_after:
+                self.send_header("Connection", "close")
+                self.close_connection = True
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+def test_forwarder_reuses_one_connection(monkeypatch):
+    for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    srv, seen = _ingest_server()
+    try:
+        f = Forwarder(Config(server_url=f"http://127.0.0.1:{srv.server_port}/", sensor_token="tok"))
+        for _ in range(5):
+            assert f._post(b"x") == b'{"ok": true}'
+        assert seen["posts"] == 5 and seen["conns"] == 1
+        assert seen["bodies"][0][:2] == ("/api/ingest", "Bearer tok")
+    finally:
+        f._close()
+        srv.shutdown()
+
+
+def test_forwarder_reconnects_when_the_server_closes_the_connection(monkeypatch):
+    for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    srv, seen = _ingest_server(close_after=2)
+    try:
+        f = Forwarder(Config(server_url=f"http://127.0.0.1:{srv.server_port}", sensor_token="t"))
+        for _ in range(5):
+            f._post(b"x")
+        assert seen["posts"] == 5 and seen["conns"] == 3
+    finally:
+        f._close()
+        srv.shutdown()
+
+
+def test_forwarder_raises_on_http_errors_and_unreachable_server(monkeypatch):
+    for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    srv, seen = _ingest_server(status=401)
+    try:
+        f = Forwarder(Config(server_url=f"http://127.0.0.1:{srv.server_port}", sensor_token="t"))
+        with pytest.raises(OSError, match="401"):
+            f._post(b"x")
+        assert f._conn is None and seen["posts"] == 1  # an error answer is not retried
+    finally:
+        srv.shutdown()
+    with pytest.raises(OSError):
+        f._post(b"x")  # nothing is listening any more
