@@ -640,8 +640,12 @@ const SETTINGS_VIEWS = {
     };
     el.innerHTML = `<section class="panel"><header><h2>Sensors</h2><button class="btn primary" id="add-sensor">Add remote sensor</button></header><div class="body flush">${tableHtml(
       '<th>Sensor</th><th>Version</th><th>Room</th><th>Status</th><th>Load · memory</th><th class="num">Last report</th><th>On map</th><th></th>',
-      ss.map(s => { const st = (s.info && s.info.status) || []; return `<tr><td><b>${esc(s.name)}</b> <span class="mono faint">${esc(s.id)}</span></td><td>${verCell(s)}</td><td>${esc(s.room || '—')}</td>
-        <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'}<div class="faint small-text" style="white-space:normal;max-width:260px">${st.map(x => `${esc(x.name)} ${num(x.pps)} pkt/s`).join(', ')}</div></td>
+      ss.map(s => { const st = (s.info && s.info.status) || [];
+        // LoRa boards of this sensor, each with a way to write the newest sniffer firmware to it (admins; see adapters.js)
+        const boards = isAdmin() ? (stat.sensors || []).filter(x => (x.remote || 'local') === s.id).map(x => ({ x, name: x.remote ? x.name.slice(x.remote.length + 1) : x.name })).filter(b => /^lora:/.test(b.name)) : [];
+        return `<tr><td><b>${esc(s.name)}</b> <span class="mono faint">${esc(s.id)}</span></td><td>${verCell(s)}</td><td>${esc(s.room || '—')}</td>
+        <td>${s.online ? '<span class="tag on">online</span>' : '<span class="tag bad">offline</span>'}<div class="faint small-text" style="white-space:normal;max-width:260px">${st.map(x => `${esc(x.name)} ${num(x.pps)} pkt/s`).join(', ')}</div>
+          ${boards.map(b => `<div class="small-text" style="margin-top:4px"><span class="mono">${esc(b.name)}</span>${b.x.fw_version ? ` <span class="faint">firmware v${esc(String(b.x.fw_version))}</span>` : ''} <button class="btn small ghost" data-flash="${esc(s.id)}|${esc(b.name)}" title="Write the newest sniffer firmware to this board">Update firmware…</button></div>`).join('')}</td>
         <td>${sysCell(s)}</td>
         <td class="num muted">${s.id === 'local' ? '—' : ago(s.last_seen)}</td><td>${s.x != null ? 'placed' : '<span class="faint">not placed</span>'}</td>
         <td class="num"><button class="btn small" data-edit="${esc(s.id)}">Edit</button>${s.id !== 'local' ? ` <button class="btn small danger" data-del="${esc(s.id)}">Remove</button>` : ''}</td></tr>`; }).join(''))}</div></section>
@@ -671,6 +675,7 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
       openModal(`Edit sensor ${s.id}`, `<label class="field">Name<input name="name" value="${esc(s.name)}"></label><label class="field">Room<input name="room" value="${esc(s.room || '')}"></label>
         <label class="check"><input type="checkbox" name="clear"> Remove from map</label>`,
       async f => { await send('PUT', `/api/sensors/${enc(s.id)}`, { name: fv(f, 'name'), room: fv(f, 'room'), clear_position: fv(f, 'clear') }); SETTINGS_VIEWS.sensors(el); }); });
+    el.querySelectorAll('[data-flash]').forEach(b => b.onclick = () => flashLora(...b.dataset.flash.split('|')));
     el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (confirm('Remove this sensor and revoke its token?')) { await send('DELETE', `/api/sensors/${enc(b.dataset.del)}`); SETTINGS_VIEWS.sensors(el); } });
   },
   async notify(el) {
