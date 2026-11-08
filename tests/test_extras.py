@@ -253,7 +253,7 @@ def test_config_restore_only_chosen_sections(ctx, tmp_path):
     counts = {s["id"]: s["count"] for s in config_sections(data)}
     assert counts["labels"] == 1 and counts["groups"] == 1 and counts["settings"] >= 1 and counts["notifiers"] == 1
     other = build(Config(db_path=str(tmp_path / "o.db"), data_dir=str(tmp_path / "o")))
-    assert import_config(other, data, {"labels"}) == {"device_meta": 1}
+    assert import_config(other, data, {"labels"}) == {"device_meta": 1, "radio_watch": 0}
     assert other.one("SELECT label, group_id FROM device_meta") == {"label": "Sam phone", "group_id": None}  # its group wasn't restored
     assert not other.rows("SELECT 1 FROM groups") and not other.rows("SELECT 1 FROM notifiers")
     assert other.settings.get("networks")["ssids"] == []

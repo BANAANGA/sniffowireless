@@ -570,7 +570,7 @@ async function viewOverview(params) {
     const l = await api('/api/lora?hours=168');
     const nodes = l.nodes.slice().sort((a, b) => (b.first_seen || 0) - (a.first_seen || 0)).slice(0, 12);
     document.getElementById('lora-disc').innerHTML = nodes.length ? `<table><thead><tr><th>Protocol</th><th>Address</th><th>Name</th><th>Type</th><th class="num">Packets</th><th class="num">Signal</th><th class="num">Discovered</th></tr></thead><tbody>
-      ${nodes.map(n => `<tr class="link" data-href="#/lora"><td>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${esc(n.name || '—')}</td><td class="muted">${esc(n.kind || '—')}</td><td class="num">${num(n.packets)}</td><td class="num">${n.rssi != null ? Math.round(n.rssi) + ' dBm' : '—'}</td><td class="num muted" title="${esc(dt(n.first_seen))}">${ago(n.first_seen)}</td></tr>`).join('')}</tbody></table>`
+      ${nodes.map(n => `<tr class="link" data-href="#/lora"><td>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${esc(n.given_name || n.name || '—')}</td><td class="muted">${esc(n.kind || '—')}</td><td class="num">${num(n.packets)}</td><td class="num">${n.rssi != null ? Math.round(n.rssi) + ' dBm' : '—'}</td><td class="num muted" title="${esc(dt(n.first_seen))}">${ago(n.first_seen)}</td></tr>`).join('')}</tbody></table>`
       : `<div class="empty">${l.configured ? 'Nothing heard yet' : 'No LoRa receiver configured'}</div>`;
     linkRows(document.getElementById('lora-disc'));
   }

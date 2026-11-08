@@ -22,6 +22,7 @@ from .auth import current_user, require_admin
 from .lora_protocols import AIR_PREAMBLE, PROFILES, PROTOCOLS, airtime_ms, classify
 
 from .modules import cutoff_for
+from .radiowatch import watch_map
 from .web_util import csv_response
 
 log = logging.getLogger("sniffowireless.lora")
@@ -432,8 +433,11 @@ def routes(ctx):
         start = int(since // bucket * bucket)
         ts = list(range(start, int(now), bucket))
         nodes = ctx.rows("SELECT * FROM lora_nodes WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT 300", (since,))
+        watched = watch_map(ctx, "lora")
         for n in nodes:
             n["label"] = PROTOCOLS.get(n["protocol"], n["protocol"])
+            w = watched.get((n["protocol"], n["addr"]))
+            n["given_name"], n["watch"], n["silent_min"], n["watch_state"] = (w["label"], bool(w["watch"]), w["silent_min"], w["state"]) if w else (None, False, 60, None)
         recent = ctx.rows("SELECT * FROM lora_packets WHERE ts >= ? ORDER BY id DESC LIMIT 100", (since,))
         for p in recent:
             p["label"] = PROTOCOLS.get(p["protocol"], p["protocol"])

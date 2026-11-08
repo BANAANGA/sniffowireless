@@ -39,7 +39,7 @@ from .settings import DEFAULTS
 log = logging.getLogger("sniffowireless.backup")
 
 FORMAT = "sniffowireless-config"
-CONFIG_TABLES = ["device_meta", "groups", "alert_rules", "notifiers", "sensors"]  # settings (incl. investigate) too
+CONFIG_TABLES = ["device_meta", "radio_watch", "groups", "alert_rules", "notifiers", "sensors"]  # settings (incl. investigate) too
 STAGED = "restore-pending.tar.gz"
 STAGED_SECTIONS = "restore-pending.json"  # which sections of the staged backup to restore; absent = everything
 UPLOAD = "restore-upload.tar.gz"          # an uploaded backup waiting for the user to choose what to restore
@@ -56,8 +56,8 @@ NAME_RX = re.compile(r"^sniffowireless-\d{8}-\d{6}\.tar\.gz$")
 SECTIONS = [
     {"id": "settings", "label": "Settings", "tables": ["settings"], "config": ["settings"],
      "hint": "My networks, ignore list, detection thresholds, MQTT, appearance, backup schedule"},
-    {"id": "labels", "label": "Device labels & links", "tables": ["device_meta", "device_links"], "config": ["device_meta"],
-     "hint": "Names, notes, known and watched flags, confirmed Bluetooth–Wi-Fi links (group membership needs Groups too)"},
+    {"id": "labels", "label": "Device labels & links", "tables": ["device_meta", "device_links", "radio_watch"], "config": ["device_meta", "radio_watch"],
+     "hint": "Names, notes, known and watched flags, confirmed Bluetooth–Wi-Fi links, names and watches of LoRa nodes and Zigbee radios (group membership needs Groups too)"},
     {"id": "groups", "label": "Groups", "tables": ["groups"], "config": ["groups"],
      "hint": "People and things made of several devices"},
     {"id": "alerts", "label": "Alert rules", "tables": ["alert_rules"], "config": ["alert_rules"],
@@ -175,7 +175,7 @@ def config_sections(data):
     tables = data.get("tables") or {}
     counts = {"settings": sum(1 for k in (data.get("settings") or {}) if k in DEFAULTS)}
     for t, sid in CONFIG_TABLE_SECTION.items():
-        counts[sid] = len(tables.get(t) or [])
+        counts[sid] = counts.get(sid, 0) + len(tables.get(t) or [])
     return [x for x in _sections_info(counts) if x["id"] == "settings" or x["id"] in CONFIG_TABLE_SECTION.values()]
 
 

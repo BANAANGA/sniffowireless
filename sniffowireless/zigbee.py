@@ -16,6 +16,7 @@ from .auth import current_user
 from .zigbee_radio import ALL_CHANNELS, HINTS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect
 
 from .modules import cutoff_for
+from .radiowatch import watch_map
 from .web_util import csv_response
 
 log = logging.getLogger("sniffowireless.zigbee")
@@ -340,7 +341,10 @@ def routes(ctx):
             n["routers"] = json.loads(n["routers"] or "[]")
             n["permit_join"] = bool(n["permit_join"])
         radios = ctx.rows("SELECT * FROM zigbee_radios WHERE last_seen >= ? ORDER BY sent+received DESC LIMIT 500", (since,))
+        watched = watch_map(ctx, "zigbee")
         for d in radios:
+            w = watched.get((str(d["pan"]), d["addr"]))
+            d["given_name"], d["watch"], d["silent_min"], d["watch_state"] = (w["label"], bool(w["watch"]), w["silent_min"], w["state"]) if w else (None, False, 60, None)
             d["pan"] = None if d["pan"] < 0 else d["pan"]
             d["channels"] = _channels(d["channels"])
             d["types"] = [name for i, name in enumerate(TYPE_NAMES) if d["types"] >> i & 1]
