@@ -1,6 +1,7 @@
 """Distributed sensors: remote capture nodes forwarding to a central server, room-level location
 from the strongest sensor, position estimates on a floor plan, and the map API."""
 import gzip
+import http.client
 import json
 import logging
 import math
@@ -9,6 +10,7 @@ import re
 import threading
 import time
 import zlib
+import urllib.parse
 import urllib.request
 from collections import deque
 from contextlib import closing
@@ -45,6 +47,7 @@ class Forwarder:
         self.buf = deque(maxlen=300_000)
         self.dropped = 0
         self.sent = 0
+        self._conn = None  # kept open between batches, see _post
         self.on_channel_config = None  # called with the channel settings the server sends back, when it has any
         self.version = {**version.info(), "arch": version.runtime()["arch"]}  # reported with every batch, for the Sensors page
         if not cfg.server_url or not cfg.sensor_token:
@@ -80,6 +83,46 @@ class Forwarder:
             except Exception:
                 log.exception("Could not apply the channel settings from the server")
 
+    def _post(self, body):
+        """POST one batch to /api/ingest and return the reply. The connection is kept open between batches (one every 2 s),
+        so the server's name is looked up and TLS negotiated once, not 40,000 times a day. A dropped connection is reopened once
+        for the same batch; behind an HTTP proxy each batch goes through urllib instead."""
+        url = f"{self.cfg.server_url.rstrip('/')}/api/ingest"
+        headers = {"Authorization": f"Bearer {self.cfg.sensor_token}", "Content-Type": "application/json",
+                   "Content-Encoding": "gzip", "User-Agent": "sniffowireless-sensor"}
+        u = urllib.parse.urlsplit(url)
+        if urllib.request.getproxies().get(u.scheme) and not urllib.request.proxy_bypass(u.hostname or ""):
+            req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read()
+        for attempt in (0, 1):
+            fresh = self._conn is None
+            if fresh:
+                cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
+                self._conn = cls(u.hostname, u.port, timeout=20)
+            try:
+                self._conn.request("POST", u.path, body=body, headers=headers)
+                r = self._conn.getresponse()
+                data = r.read()
+            except (OSError, http.client.HTTPException):
+                self._close()
+                if fresh or attempt:  # a connection that was just opened failing is a real failure
+                    raise
+                continue  # the server closed an idle connection: reconnect and send again
+            if r.status >= 400:
+                self._close()
+                raise OSError(f"HTTP Error {r.status}: {r.reason}")
+            if r.will_close:
+                self._close()
+            return data
+
+    def _close(self):
+        try:
+            if self._conn:
+                self._conn.close()
+        finally:
+            self._conn = None
+
     def run(self, stop):
         backoff = 2
         while not stop.wait(2 if backoff == 2 else backoff):
@@ -89,12 +132,8 @@ class Forwarder:
             body = gzip.compress(json.dumps({"sent_at": time.time(), "obs": batch, "status": status.snapshot(),
                                              "dropped": self.dropped, "version": self.version,
                                              "system": self._system()}, default=str).encode())
-            req = urllib.request.Request(f"{self.cfg.server_url}/api/ingest", data=body, method="POST", headers={
-                "Authorization": f"Bearer {self.cfg.sensor_token}", "Content-Type": "application/json",
-                "Content-Encoding": "gzip", "User-Agent": "sniffowireless-sensor"})
             try:
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    reply = r.read()
+                reply = self._post(body)
                 self.sent += len(batch)
                 backoff = 2
                 self._handle_reply(reply)
