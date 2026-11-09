@@ -165,7 +165,12 @@ const eraLabel = y => y == null ? 'Unknown' : y <= 2003 ? 'before ~2010' : `${y}
 const typeLabel = t => t ? (DEV_TYPES[t] || t) : 'Unknown';
 const ADDR_TYPES = { public: 'Public (fixed)', 'random-static': 'Random static', 'random-resolvable': 'Random resolvable (private)',
   'random-nonresolvable': 'Random non-resolvable' };
-const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v), addr_type: v => ADDR_TYPES[v] || v };
+// A Bluetooth version is exact ("5.4", the device reported it) or a lower bound ("5.2+", from the features it advertises).
+function btVerTag(v) {
+  if (!v) return '<span class="faint">—</span>';
+  return v.endsWith('+') ? `<span class="tag" title="At least this version: the strongest feature the device advertises needs it">${esc(v)}</span>` : `<span class="tag on" title="Reported by the device">${esc(v)}</span>`;
+}
+const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v), addr_type: v => ADDR_TYPES[v] || v, bt_ver: v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v };
 function identCell(x) {
   const id = x.ident || {};
   const label = id.label || (x.vendor ? esc(x.vendor) : '');
@@ -705,7 +710,7 @@ function linkRows(root) {
 // ------------------------------------------------------------------ devices
 const FILTER_LABELS = { vendor: 'Vendor', brand: 'Brand', dev_type: 'Device type', os: 'OS', wifi_gen: 'Wi-Fi', era: 'Age', fp: 'Fingerprint',
   ssid: 'SSID', probe: 'Probed', bssid: 'Connected to', channel: 'Channel', connected: 'Connected now',
-  addr_type: 'Address type', company: 'Bluetooth company' };
+  addr_type: 'Address type', company: 'Bluetooth company', bt_ver: 'Bluetooth version' };
 
 async function viewDevices(params) {
   const st = Object.fromEntries(params.entries());
@@ -762,7 +767,8 @@ async function viewDevices(params) {
     const qs = new URLSearchParams({ ...st, limit, offset, slim: 1 });
     const d = await api('/api/devices?' + qs);
     document.getElementById('count').textContent = `${num(d.total)} device${d.total === 1 ? '' : 's'}`;
-    const head = cols.map(([k, l, cls]) => {
+    const showBt = d.items.some(x => x.kind === 'ble' || x.kind === 'bt_classic');  // the Bluetooth version column, only when the page has Bluetooth rows
+    const head = (showBt ? [...cols.slice(0, 4), [null, 'Bluetooth'], ...cols.slice(4)] : cols).map(([k, l, cls]) => {
       if (!k) return `<th>${l}</th>`;
       const on = st.sort === k;
       return `<th class="sort ${cls || ''}" data-sort="${k}">${l}${on ? ` <span class="arrow">${st.order === 'asc' ? '↑' : '↓'}</span>` : ''}</th>`;
@@ -779,6 +785,7 @@ async function viewDevices(params) {
         <td class="mono"><span class="state-dot ${active ? 'on' : ''}"></span>${esc(x.mac)}${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}</td>
         <td class="trunc">${x.watch ? '<span class="star" title="Watched">★</span>' : ''}${label ? (x.label ? `<b>${esc(label)}</b>` : esc(label)) : '<span class="faint">—</span>'}${x.group_name ? ` <span class="tag">${esc(x.group_name)}</span>` : ''}${x.kind === 'ap' && x.enc ? ` <span class="tag ${x.enc.includes('OPN') ? 'bad' : ''}">${esc(x.enc.replace(/\/PSK|\/SAE/g, ''))}</span>` : ''}</td>
         <td class="trunc muted" style="max-width:300px">${identCell(x)}</td>
+        ${showBt ? `<td>${btVerTag(x.bt_ver)}</td>` : ''}
         <td>${conn}</td>
         <td class="muted">${chText(x.channel, x.band)}</td>
         <td>${rssiBars(x.last_rssi)}</td>
@@ -825,7 +832,9 @@ async function viewDevice(mac, params) {
     ex.appearance ? ['Appearance', esc(ex.appearance)] : null,
     ex.class ? ['Device class', esc(ex.class)] : null,
     ex.tx_power != null ? ['TX power', `${ex.tx_power} dBm`] : null,
-    ex.bt_version ? ['Bluetooth version', `${esc(ex.bt_version)}${ex.chip ? ` <span class="faint">(${esc(ex.chip)})</span>` : ''}`] : null,
+    ex.bt_ver || ex.bt_version ? ['Bluetooth version', (ex.bt_ver || ex.bt_version).endsWith('+')
+      ? `${esc(ex.bt_ver)} <span class="faint">at least, going by its ${esc(ex.bt_basis || 'features')} (the device does not report a version)</span>`
+      : `${esc(ex.bt_ver || ex.bt_version)}${ex.chip ? ` <span class="faint">(${esc(ex.chip)})</span>` : ''}`] : null,
     ex.phy ? ['Radio (PHY)', esc(ex.phy) + (ex.phy === 'Coded' ? ' <span class="faint">(long range)</span>' : '')] : null,
     ex.auracast ? ['LE Audio broadcast', esc([ex.auracast.name, ex.auracast.id ? 'ID ' + ex.auracast.id : '', ex.auracast.encrypted ? 'encrypted' : 'open', ex.auracast.quality ? ex.auracast.quality + ' quality' : ''].filter(Boolean).join(' · '))] : null,
     ex.esl ? ['Electronic shelf label', 'yes'] : null,
@@ -1068,6 +1077,7 @@ function breakdown(el, s, kind) {
   ];
   if (kind === 'ble') charts.push(['Address type', of(s.addr_type), 'addr_type', v => ADDR_TYPES[v] || v],
     ['Bluetooth company', of(s.company), 'company', v => v]);
+  if (kind === 'ble' || kind === 'bt_classic') charts.push(['Bluetooth version', of(s.bt_ver), 'bt_ver', v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v]);
   const total = charts[0][1].reduce((a, r) => a + r.n, 0);
   el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices</span>
       ${seg('bkind', BREAKDOWN_KINDS.filter(([k]) => kindOn(k)), kind)}</header>

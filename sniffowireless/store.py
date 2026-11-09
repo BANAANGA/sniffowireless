@@ -11,7 +11,7 @@ import queue
 import sqlite3
 import time
 
-from . import identify
+from . import btversion, identify
 from .config import _int
 from .sanitize import clean_str
 
@@ -236,11 +236,25 @@ class Store:
             self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('presence_hours', '1')")
             if n:
                 log.info("Migrated database: built the hourly presence roll-up (%d device-hours)", n)
+        if not self.conn.execute("SELECT 1 FROM meta WHERE key='bt_versions'").fetchone():
+            self._backfill_bt_versions()
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('bt_versions', '1')")
         row = self.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()
         if not row or int(row[0]) != identify.IDENT_VERSION:
             self.reidentify_all()
             self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('ident_version', ?)",
                               (str(identify.IDENT_VERSION),))
+
+    def _backfill_bt_versions(self):
+        """Work out the Bluetooth version of the devices stored before it was kept (once, from what they already hold)."""
+        n = 0
+        for r in self.conn.execute("SELECT mac, kind, extra FROM devices WHERE kind IN ('ble', 'bt_classic')").fetchall():
+            extra = json.loads(r["extra"] or "{}")
+            if btversion.apply(r["kind"], extra):
+                self.conn.execute("UPDATE devices SET extra=? WHERE mac=?", (json.dumps(extra), r["mac"]))
+                n += 1
+        if n:
+            log.info("Migrated database: worked out the Bluetooth version of %d devices", n)
 
     def reidentify_all(self):
         """Re-run identification for every stored device (after the rules changed)."""
@@ -471,6 +485,8 @@ class Store:
             dev["extra"].update({k: v for k, v in o["extra"].items() if v is not None})
         fp_changed = self._merge_fp(dev, o.get("fp"))
         ex = dev["extra"]
+        if dev["kind"] in ("ble", "bt_classic"):
+            btversion.apply(dev["kind"], ex)
         key = (dev["kind"], dev["name"], dev["vendor"], dev["ssid"], dev["band"], dev["randomized"],
                ex.get("appearance"), ex.get("company"), ex.get("cod"), ex.get("class"))
         if fp_changed or dev.get("_ikey") != key or dev.get("ident") is None:
