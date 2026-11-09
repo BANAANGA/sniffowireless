@@ -9,7 +9,7 @@ from .oui import VendorLookup
 log = logging.getLogger("sniffowireless")
 
 
-def start_sensors(cfg, sink, stop, handshake=None, wifi=None, lora=None):
+def start_sensors(cfg, sink, stop, handshake=None, wifi=None, lora=None, zigbee=None):
     """Start Wi-Fi / Bluetooth capture; `sink` is the Store (server) or a Forwarder (remote sensor).
 
     `handshake` (a HandshakeCapture) is only passed in server mode, where admin settings are reachable;
@@ -34,10 +34,11 @@ def start_sensors(cfg, sink, stop, handshake=None, wifi=None, lora=None):
             log.info("Bluetooth sensor on %s", dev)
             n += 1
     if cfg.zigbee_devices:
-        from .zigbee import ZigbeeSensor
+        from .zigbee import ZigbeeControl, ZigbeeSensor
+        zigbee = zigbee or ZigbeeControl(cfg)
         for dev in cfg.zigbee_devices:
-            ZigbeeSensor(dev, cfg, sink).start(stop)
-            log.info("Zigbee sensor on %s, channels %s", dev, ",".join(str(c) for c in cfg.zigbee_channels))
+            ZigbeeSensor(dev, cfg, sink, control=zigbee).start(stop)
+            log.info("Zigbee sensor on %s, channels %s", dev, ",".join(str(c) for c in zigbee.effective()["channels"]))
             n += 1
     if cfg.lora_devices:
         from .lora import LoraControl, LoraSensor
@@ -60,7 +61,10 @@ def run_sensor(cfg):
     from .lora import LoraControl
     lora = LoraControl(cfg)
     fwd.on_lora_config = lora.apply_remote     # the LoRa profiles the same way
-    if not start_sensors(cfg, fwd, stop, wifi=wifi, lora=lora):
+    from .zigbee import ZigbeeControl
+    zigbee = ZigbeeControl(cfg)
+    fwd.on_zigbee_config = zigbee.apply_remote  # and the Zigbee channels
+    if not start_sensors(cfg, fwd, stop, wifi=wifi, lora=lora, zigbee=zigbee):
         raise SystemExit("Sensor mode needs WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES, ZIGBEE_DEVICES and/or LORA_DEVICES")
     log.info("Remote sensor forwarding to %s", cfg.server_url)
     try:
@@ -155,7 +159,8 @@ def main():
         log.info("Demo mode enabled: generating synthetic devices")
     from .channels import attach
     from .lora import attach as attach_lora
-    if not start_sensors(cfg, store, stop, handshake=ctx.handshake, wifi=attach(ctx), lora=attach_lora(ctx)) and not cfg.demo:
+    from .zigbee import attach as attach_zigbee
+    if not start_sensors(cfg, store, stop, handshake=ctx.handshake, wifi=attach(ctx), lora=attach_lora(ctx), zigbee=attach_zigbee(ctx)) and not cfg.demo:
         log.warning("No local sensors configured: set WIFI_INTERFACES, ETH_INTERFACES, BT_DEVICES, ZIGBEE_DEVICES and/or LORA_DEVICES, add remote sensors in "
                     "Settings → Sensors, or use DEMO_MODE=1")
 

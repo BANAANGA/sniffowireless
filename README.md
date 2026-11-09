@@ -997,6 +997,8 @@ ZIGBEE_DEVICES=/dev/serial/by-id/usb-...
 
 Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
 
+**Choosing channels in the web UI.** **Settings → Zigbee** works like *Wi-Fi channels* and *LoRa bands*: for this server and for every remote sensor, pick the channels to listen on (11-26) with the buttons or by typing a list like `15,20-25`, set the time on each channel and the time between network scans, or switch passive listening off to keep only network scans. Saving applies at once on this server, within a second or two; a remote sensor picks it up with its next upload (status *applied* / *waiting for the sensor*). Whatever is left empty stays as the sensor's own `ZIGBEE_CHANNELS`, `ZIGBEE_HOP_INTERVAL`, `ZIGBEE_SCAN_INTERVAL` and `ZIGBEE_SNIFF` say, and *Back to the sensor's own settings* removes the override. The stick's device path (`ZIGBEE_DEVICES`) stays an environment setting, and the stick itself is never reconfigured. A remote sensor needs an image with this feature (it reports *sensor software too old* otherwise).
+
 ---
 
 ## LoRa: Meshtastic, MeshCore, LoRaWAN

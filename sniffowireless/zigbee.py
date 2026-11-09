@@ -9,10 +9,13 @@ import os
 import threading
 import time
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from . import adapters, status
-from .auth import current_user
+from .auth import current_user, require_admin
 from .zigbee_radio import ALL_CHANNELS, HINTS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect
 
 from .modules import cutoff_for
@@ -69,9 +72,118 @@ class SerialLink:
         self.port.close()
 
 
+OVERRIDE_KEYS = ("channels", "hop_interval", "scan_interval", "sniff")
+HOP_MIN, HOP_MAX = 0.2, 600.0
+SCAN_MIN, SCAN_MAX = 30, 86400
+
+
+def parse_channels(spec):
+    """'15,20-25' -> [15, 20, ..., 25]; ValueError saying what is wrong. 802.15.4's 2.4 GHz channels are 11-26."""
+    out = []
+    for tok in [t.strip() for t in str(spec).split(",") if t.strip()]:
+        lo, _, hi = tok.partition("-")
+        try:
+            a, b = int(lo), int(hi or lo)
+        except ValueError:
+            raise ValueError(f"'{tok}' is not a channel number or range like 20-25")
+        if not (11 <= a <= 26 and 11 <= b <= 26) or a > b:
+            raise ValueError(f"'{tok}': Zigbee channels are 11 to 26")
+        out.extend(c for c in range(a, b + 1) if c not in out)
+    if not out:
+        raise ValueError("The channel list is empty")
+    return out
+
+
+def clean_override(o):
+    """Only the known keys with their values checked (ValueError saying what is wrong); None means 'the sensor's own setting'."""
+    o = o if isinstance(o, dict) else {}
+    out = {"channels": None, "hop_interval": None, "scan_interval": None, "sniff": None}
+    if o.get("channels") not in (None, ""):
+        if not isinstance(o["channels"], str) or len(o["channels"]) > 200:
+            raise ValueError("The channel list is too long")
+        out["channels"] = ",".join(str(c) for c in parse_channels(o["channels"]))
+    for key, lo, hi, label in (("hop_interval", HOP_MIN, HOP_MAX, "The time on each channel"),
+                               ("scan_interval", SCAN_MIN, SCAN_MAX, "The time between network scans")):
+        if o.get(key) not in (None, ""):
+            try:
+                v = float(o[key])
+            except (TypeError, ValueError):
+                raise ValueError(f"{label} is a number of seconds")
+            if not lo <= v <= hi:
+                raise ValueError(f"{label} must be between {lo:g} and {hi:g} seconds")
+            out[key] = int(v) if key == "scan_interval" else v
+    if o.get("sniff") is not None:
+        out["sniff"] = bool(o["sniff"])
+    return out
+
+
+class ZigbeeControl:
+    """Which channels the Zigbee sticks of this process listen on, for how long on each, how often they scan and whether they
+    listen passively at all. Starts from ZIGBEE_* and takes an override on top while running: set in the web UI (settings key
+    "zigbee") for this server, or sent in the ingest reply for a remote sensor, which reports the revision it runs (`zb_rev`)."""
+
+    def __init__(self, cfg, override=None, rev=0):
+        self.cfg, self.rev = cfg, rev
+        self.override = clean_override(override) if override else None
+        self.lock = threading.Lock()
+        self.sensors = []
+        self._rejected_rev = None
+
+    def effective(self):
+        o = self.override or {}
+        channels = parse_channels(o["channels"]) if o.get("channels") else list(self.cfg.zigbee_channels)
+        return {"channels": channels, "hop_interval": float(o.get("hop_interval") or self.cfg.zigbee_hop_interval),
+                "scan_interval": int(o.get("scan_interval") or self.cfg.zigbee_scan_interval),
+                "sniff": self.cfg.zigbee_sniff if o.get("sniff") is None else bool(o["sniff"])}
+
+    def apply(self, override, rev):
+        """Switch to new settings (ValueError, nothing changed, if they are not valid). The sticks pick them up within a second or two."""
+        override = clean_override(override) if override else None
+        if override and all(v is None for v in override.values()):
+            override = None
+        with self.lock:
+            self.override, self.rev = override, rev
+        for s in list(self.sensors):
+            s.publish()
+
+    def apply_local(self, settings):
+        entry = (settings.get("local") or {}) if isinstance(settings, dict) else {}
+        rev = entry.get("rev") or 0
+        if rev != self.rev:
+            try:
+                self.apply({k: entry.get(k) for k in OVERRIDE_KEYS}, rev)
+            except ValueError as e:
+                log.warning("Ignoring the Zigbee settings: %s", e)
+
+    def apply_remote(self, conf):
+        if not isinstance(conf, dict) or not isinstance(conf.get("rev"), int) or conf["rev"] == self.rev or conf["rev"] == self._rejected_rev:
+            return
+        try:
+            self.apply({k: conf.get(k) for k in OVERRIDE_KEYS}, conf["rev"])
+            log.info("Zigbee settings from the server applied (revision %d)", conf["rev"])
+        except ValueError as e:
+            self._rejected_rev = conf["rev"]
+            log.warning("Ignoring Zigbee settings from the server (revision %d): %s", conf["rev"], e)
+
+
+def attach(ctx):
+    """The server's own Zigbee control, started from the saved settings and kept in step with later changes."""
+    entry = ctx.settings.get("zigbee")["local"] or {}
+    try:
+        control = ZigbeeControl(ctx.cfg, {k: entry.get(k) for k in OVERRIDE_KEYS} if entry else None, entry.get("rev") or 0)
+    except ValueError as e:
+        log.warning("Ignoring the saved Zigbee settings (%s); using the environment", e)
+        control = ZigbeeControl(ctx.cfg)
+    ctx.zigbee_control = control
+    ctx.settings.on_change(lambda k: control.apply_local(ctx.settings.get("zigbee")) if k == "zigbee" else None)
+    return control
+
+
 class ZigbeeSensor:
-    def __init__(self, device, cfg, sink, link_factory=SerialLink):
+    def __init__(self, device, cfg, sink, link_factory=SerialLink, control=None):
         self.device, self.cfg, self.sink, self.link_factory = device, cfg, sink, link_factory
+        self.control = control or ZigbeeControl(cfg)
+        self.control.sensors.append(self)
         self.name = f"zigbee:{os.path.basename(device)}"
         self.stop = None
         self.no_capture = False
@@ -79,6 +191,10 @@ class ZigbeeSensor:
         self.link, self.reset_requested = None, threading.Event()
         adapters.REGISTRY[self.name] = self
         status.register(self.name, type="zigbee", iface=device)
+        self.publish()
+
+    def publish(self):
+        status.update(self.name, zb_rev=self.control.rev, zb_channels=self.control.effective()["channels"])
 
     def start(self, stop):
         self.stop = stop
@@ -123,7 +239,7 @@ class ZigbeeSensor:
         self.reset_requested.clear()
 
     def run(self, link):
-        family, next_scan = None, 0.0
+        family, last_scan = None, None
         while not self.stop.is_set():
             status.update(self.name, state="connecting", error=None)
             driver = detect(link, family, self.stop)
@@ -134,21 +250,26 @@ class ZigbeeSensor:
                                   "Thread firmware, or another program may be using it")
             family = driver.family
             status.update(self.name, firmware=driver.firmware, warning=" ".join(driver.notes) or None)
-            if time.monotonic() >= next_scan:
+            eff = self.control.effective()
+            if last_scan is None or time.monotonic() >= last_scan + eff["scan_interval"]:
                 self.scan(driver)
-                next_scan = time.monotonic() + self.cfg.zigbee_scan_interval
-                if not (self.cfg.zigbee_sniff and driver.can_capture and not self.no_capture):
+                last_scan = time.monotonic()
+                eff = self.control.effective()
+                if not (eff["sniff"] and driver.can_capture and not self.no_capture):
                     continue  # the next pass waits below; EZSP restarts cleanly when it comes round again
-            if self.cfg.zigbee_sniff and driver.can_capture and not self.no_capture:
+            rev = self.control.rev
+            next_scan = last_scan + eff["scan_interval"]
+            if eff["sniff"] and driver.can_capture and not self.no_capture:
                 try:
-                    self.capture(driver, next_scan)
+                    self.capture(driver, next_scan, eff, rev)
                 except NoCaptureMode as e:
                     log.warning("%s: %s", self.name, e)
                     self.no_capture = True
                     status.update(self.name, warning=str(e))
             else:
                 status.update(self.name, state="idle", channel=None)
-                self.stop.wait(max(0.0, next_scan - time.monotonic()))
+                while not self.stop.is_set() and self.control.rev == rev and time.monotonic() < next_scan:
+                    self.stop.wait(min(1.0, max(0.0, next_scan - time.monotonic())))
 
     def scan(self, driver):
         status.update(self.name, state="scanning", channel=None)
@@ -159,7 +280,7 @@ class ZigbeeSensor:
         if energy:
             self.sink.put({"t": "zb_energy", "ts": now, "mac": "-", "readings": energy})
 
-    def capture(self, driver, next_scan):
+    def capture(self, driver, next_scan, eff, rev):
         batch = FrameBatch()
         last_report = [time.monotonic()]
 
@@ -177,11 +298,11 @@ class ZigbeeSensor:
             if now - last_report[0] >= REPORT_INTERVAL:
                 self._report(batch)
                 last_report[0] = now
-            return self.stop.is_set() or now >= next_scan
+            return self.stop.is_set() or now >= next_scan or self.control.rev != rev  # new settings: start over with them
 
         status.update(self.name, state="capturing", error=None)
         try:
-            driver.capture(self.cfg.zigbee_channels, self.cfg.zigbee_hop_interval, until,
+            driver.capture(eff["channels"], eff["hop_interval"], until,
                            lambda ch: status.update(self.name, channel=str(ch)), on_frame)
         finally:
             self._report(batch)
@@ -341,8 +462,72 @@ def _channels(mask):
     return [c for c in ALL_CHANNELS if mask >> c & 1]
 
 
+class ZigbeeConfig(BaseModel):
+    channels: Optional[str] = None          # None / "" = the sensor's own ZIGBEE_CHANNELS
+    hop_interval: Optional[float] = None
+    scan_interval: Optional[float] = None
+    sniff: Optional[bool] = None            # None = the sensor's own ZIGBEE_SNIFF
+
+
 def routes(ctx):
     r = APIRouter()
+
+    # ---- which channels each stick listens on (this server's and the remote sensors')
+    def sticks(target):
+        out = []
+        for s in status.snapshot():
+            if s.get("type") != "zigbee" or (target == "local") != (s.get("remote") is None) or (target != "local" and s.get("remote") != target):
+                continue
+            out.append({k: s.get(k) for k in ("iface", "name", "state", "error", "channel", "zb_channels", "zb_rev", "warning", "packets", "firmware")})
+        return sorted(out, key=lambda a: a["iface"] or "")
+
+    def zb_target(target, name, online):
+        cfg_all = ctx.settings.get("zigbee")
+        entry = (cfg_all["local"] if target == "local" else cfg_all["sensors"].get(target)) or None
+        boards = sticks(target)
+        rev = (entry or {}).get("rev") or 0
+        return {"id": target, "name": name, "online": online, "config": ({k: entry.get(k) for k in ("rev",) + OVERRIDE_KEYS} if entry else None),
+                "sticks": boards, "applied": bool(boards) and all((b.get("zb_rev") or 0) == rev for b in boards) if online else None,
+                "too_old": target != "local" and online and bool(boards) and any(b.get("zb_rev") is None for b in boards)}
+
+    def zb_check(target):
+        if target != "local" and not ctx.one("SELECT 1 FROM sensors WHERE id=?", (target,)):
+            raise HTTPException(404, "No such sensor")
+
+    def zb_store(target, override):
+        cfg_all = ctx.settings.get("zigbee")
+        old = (cfg_all["local"] if target == "local" else cfg_all["sensors"].get(target)) or {}
+        new = {"rev": (old.get("rev") or 0) + 1, **{k: override[k] for k in OVERRIDE_KEYS}}
+        if target == "local":
+            cfg_all["local"] = new
+        else:
+            cfg_all["sensors"][target] = new
+        ctx.settings.set("zigbee", cfg_all)  # on_change applies it to this server's sticks
+        return new
+
+    @r.get("/api/zigbee-settings")
+    def get_zigbee_settings(_=Depends(require_admin)):
+        now = time.time()
+        out = [zb_target("local", "This server", True)]
+        for s in ctx.rows("SELECT id, name, last_seen FROM sensors WHERE id != 'local' ORDER BY name"):
+            out.append(zb_target(s["id"], s["name"], (s["last_seen"] or 0) > now - 60))
+        return {"targets": out, "defaults": {"channels": ",".join(map(str, ctx.cfg.zigbee_channels)), "hop_interval": ctx.cfg.zigbee_hop_interval,
+                                             "scan_interval": ctx.cfg.zigbee_scan_interval, "sniff": ctx.cfg.zigbee_sniff}}
+
+    @r.put("/api/zigbee-settings/{target}")
+    def put_zigbee_settings(target: str, body: ZigbeeConfig, _=Depends(require_admin)):
+        zb_check(target)
+        try:
+            override = clean_override(body.model_dump())
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "config": zb_store(target, override)}
+
+    @r.delete("/api/zigbee-settings/{target}")
+    def reset_zigbee_settings(target: str, _=Depends(require_admin)):
+        """Back to the sensor's own settings (ZIGBEE_CHANNELS and the like)."""
+        zb_check(target)
+        return {"ok": True, "config": zb_store(target, clean_override({}))}
 
     @r.get("/api/export/zigbee-radios.csv")
     def export_radios(_=Depends(current_user)):

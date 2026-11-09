@@ -27,6 +27,8 @@ DEFAULTS = {
     # LoRa profiles set from the web UI, for this server ("local") and per remote sensor id (see lora.py), and whether the
     # public Meshtastic channel is read: decode_public None = LORA_DECODE_PUBLIC.
     "lora": {"local": {}, "sensors": {}, "decode_public": None},
+    # Zigbee channels, hop / scan time and passive listening set from the web UI, for this server and per remote sensor id (see zigbee.py).
+    "zigbee": {"local": {}, "sensors": {}},
     # Anonymised view (display only): MAC addresses and / or SSIDs shown as pseudonyms to everyone. See anonymize.py.
     "privacy": {"macs": False, "ssids": False, "secret": ""},
     # Kinds of radios whose menu entries, overview cards and statistics are hidden (display only). See modules.py.
