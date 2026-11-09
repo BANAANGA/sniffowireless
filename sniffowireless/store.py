@@ -15,6 +15,8 @@ from . import btversion, identify
 from .config import _int
 from .sanitize import clean_str
 
+BT_VERSION_RULES = "2"
+
 log = logging.getLogger("sniffowireless.store")
 
 # Every API request opens its own connection, so SQLite's default 2 MB page cache starts cold each time and is too
@@ -236,9 +238,10 @@ class Store:
             self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('presence_hours', '1')")
             if n:
                 log.info("Migrated database: built the hourly presence roll-up (%d device-hours)", n)
-        if not self.conn.execute("SELECT 1 FROM meta WHERE key='bt_versions'").fetchone():
+        row = self.conn.execute("SELECT value FROM meta WHERE key='bt_versions'").fetchone()
+        if not row or row[0] != BT_VERSION_RULES:  # the rules for deriving it changed (v2: LE Audio services, model lookup)
             self._backfill_bt_versions()
-            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('bt_versions', '1')")
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('bt_versions', ?)", (BT_VERSION_RULES,))
         row = self.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()
         if not row or int(row[0]) != identify.IDENT_VERSION:
             self.reidentify_all()
@@ -248,9 +251,9 @@ class Store:
     def _backfill_bt_versions(self):
         """Work out the Bluetooth version of the devices stored before it was kept (once, from what they already hold)."""
         n = 0
-        for r in self.conn.execute("SELECT mac, kind, extra FROM devices WHERE kind IN ('ble', 'bt_classic')").fetchall():
+        for r in self.conn.execute("SELECT mac, kind, extra, model FROM devices WHERE kind IN ('ble', 'bt_classic')").fetchall():
             extra = json.loads(r["extra"] or "{}")
-            if btversion.apply(r["kind"], extra):
+            if btversion.apply(r["kind"], extra, r["model"]):
                 self.conn.execute("UPDATE devices SET extra=? WHERE mac=?", (json.dumps(extra), r["mac"]))
                 n += 1
         if n:
@@ -485,13 +488,13 @@ class Store:
             dev["extra"].update({k: v for k, v in o["extra"].items() if v is not None})
         fp_changed = self._merge_fp(dev, o.get("fp"))
         ex = dev["extra"]
-        if dev["kind"] in ("ble", "bt_classic"):
-            btversion.apply(dev["kind"], ex)
         key = (dev["kind"], dev["name"], dev["vendor"], dev["ssid"], dev["band"], dev["randomized"],
                ex.get("appearance"), ex.get("company"), ex.get("cod"), ex.get("class"))
         if fp_changed or dev.get("_ikey") != key or dev.get("ident") is None:
             dev["_ikey"] = key
             dev.update(identify.identify(dev))
+        if dev["kind"] in ("ble", "bt_classic"):  # after identification: the model it found can give the version
+            btversion.apply(dev["kind"], ex, dev.get("model"))
         self.dirty.add(mac)
         return dev
 

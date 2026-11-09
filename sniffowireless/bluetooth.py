@@ -8,6 +8,7 @@ connections made by the host are recorded as well.
 import errno
 import fcntl
 import logging
+import re
 import select
 import socket
 import struct
@@ -36,6 +37,13 @@ LE_FEATURES = {8: "2M PHY", 11: "Coded PHY", 12: "Ext. adv", 13: "Periodic adv",
 PHY_NAMES = {1: "1M", 2: "2M", 3: "Coded"}
 # Service UUIDs of LE Audio broadcasts (Auracast): Public Broadcast Announcement and Broadcast Audio Announcement.
 UUID_PBA, UUID_BAA = 0x1856, 0x1852
+
+# Reading a device's version by connecting to it (btprobe.py, on request only): limits per adapter, and the addresses being asked
+# right now, so the passive scan does not record those connections as the sensor's own Bluetooth links.
+PROBING = set()
+PROBE_GAP, PROBE_PER_HOUR = 15.0, 30
+MAC_RX = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+SENSORS = {}    # status name (bt:hci0) -> the BluetoothSensor of this machine
 
 
 def bt_version_label(v):
@@ -241,9 +249,12 @@ class BluetoothSensor:
         self.caps = []          # LE features of the controller (LE_FEATURES labels)
         self.version = None     # {"version": "6.0", "chip": "Intel", ...} from Read Local Version Information
         self.fp_seen = {}       # mac -> (fingerprint, ts) to avoid re-sending identical fingerprints
+        self.probe_lock = threading.Lock()
+        self.probe_busy, self.probe_times = False, []
         self.packets = 0
         self.stop = None
         status.register(self.name, type="bluetooth", iface=dev, adverts=0, inquiries=0)
+        SENSORS[self.name] = self
 
     def start(self, stop):
         self.stop = stop
@@ -355,6 +366,60 @@ class BluetoothSensor:
                 self._cmd(OGF_LINK, 0x0019, addr + bytes([psrm, 0]) + struct.pack("<H", clock | 0x8000))
                 return
 
+    # ----------------------------------------------------------------- reading a version by connecting (on request)
+    def request_probe(self, mac, addr_type):
+        """Ask the LE device `mac` (addr_type 0 public, 1 random) for its Bluetooth version by connecting to it for a moment. Returns at
+        once (ValueError with a sentence when not possible); the answer comes as an observation: extra.bt_probe and, on success,
+        extra.bt_version. This transmits, unlike everything else this class does, so it only ever runs on an admin's request."""
+        if not self.cfg.bt_active_probe:
+            raise ValueError("Reading a version by connecting is switched off on this machine (BT_ACTIVE_PROBE=0)")
+        mac = str(mac or "").lower()
+        if not MAC_RX.match(mac) or addr_type not in (0, 1):
+            raise ValueError("Not a Bluetooth LE address")
+        with self.probe_lock:
+            now = time.time()
+            self.probe_times = [t for t in self.probe_times if now - t < 3600]
+            if self.probe_busy:
+                raise ValueError(f"{self.name} is busy asking another device")
+            if self.probe_times and now - self.probe_times[-1] < PROBE_GAP:
+                raise ValueError("Wait a few seconds between requests")
+            if len(self.probe_times) >= PROBE_PER_HOUR:
+                raise ValueError(f"{self.name} has made {PROBE_PER_HOUR} such requests in the last hour; try again later")
+            self.probe_busy = True
+            self.probe_times.append(now)
+        threading.Thread(target=self._probe_version, args=(mac, addr_type), daemon=True, name=f"{self.name}-version").start()
+
+    def probe_from_server(self, mac, addr_type):
+        """request_probe for a request that came from the server: a refusal is reported back as the result, since nobody waits for this call."""
+        try:
+            self.request_probe(mac, addr_type)
+        except ValueError as e:
+            mac = str(mac or "").lower()
+            if MAC_RX.match(mac):
+                self.store.put({"t": "bt", "kind": "ble", "ts": time.time(), "mac": mac, "rssi": None,
+                                "extra": {"bt_probe": {"ts": time.time(), "ok": False, "error": str(e)[:200], "adapter": self.name}}})
+            else:
+                log.warning("%s: ignoring a version request for %r", self.name, mac)
+
+    def _probe_version(self, mac, addr_type):
+        from .btprobe import ProbeError, read_version
+        result, extra = {"ts": time.time(), "ok": False, "error": None, "adapter": self.name}, {}
+        try:
+            got = read_version(self.dev, mac, addr_type)
+            result["ok"] = True
+            extra = {"bt_version": got["version"], "chip": got["company"]}
+            log.info("%s: %s reports Bluetooth %s", self.name, mac, got["version"])
+        except ProbeError as e:
+            result["error"] = str(e)[:200]
+            log.info("%s: could not read the version of %s: %s", self.name, mac, e)
+        except Exception as e:  # never let a surprise leave the adapter marked busy
+            log.exception("%s: version request failed", self.name)
+            result["error"] = f"Unexpected error: {e}"[:200]
+        finally:
+            with self.probe_lock:
+                self.probe_busy = False
+        self.store.put({"t": "bt", "kind": "ble", "ts": time.time(), "mac": mac, "rssi": None, "extra": {**extra, "bt_probe": result}})
+
     # ----------------------------------------------------------------- loop
     def _loop(self):
         while not self.stop.is_set():
@@ -458,6 +523,8 @@ class BluetoothSensor:
         elif kind == "name_fail":
             self.name_pending = None
         elif kind == "conn":
+            if ev["mac"] in PROBING:  # our own, short version request (btprobe.py): not one of the host's links
+                return
             self.handles[ev["handle"]] = (ev["mac"], ev["le"])
             randomized = False
             if ev["le"]:

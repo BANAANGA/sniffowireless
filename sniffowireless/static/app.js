@@ -166,9 +166,17 @@ const typeLabel = t => t ? (DEV_TYPES[t] || t) : 'Unknown';
 const ADDR_TYPES = { public: 'Public (fixed)', 'random-static': 'Random static', 'random-resolvable': 'Random resolvable (private)',
   'random-nonresolvable': 'Random non-resolvable' };
 // A Bluetooth version is exact ("5.4", the device reported it) or a lower bound ("5.2+", from the features it advertises).
-function btVerTag(v) {
+function btVerTag(v, basis) {
   if (!v) return '<span class="faint">—</span>';
-  return v.endsWith('+') ? `<span class="tag" title="At least this version: the strongest feature the device advertises needs it">${esc(v)}</span>` : `<span class="tag on" title="Reported by the device">${esc(v)}</span>`;
+  if (v.endsWith('+')) return `<span class="tag" title="At least this version, going by its ${esc(basis || 'advertised features')}: the device does not report a version">${esc(v)}</span>`;
+  return `<span class="tag on" title="${esc(basis ? basis.charAt(0).toUpperCase() + basis.slice(1) : 'Reported by the device')}">${esc(v)}</span>`;
+}
+// The version row of the device page: exact (reported / from the model's specification) or a lower bound.
+function btVerDetail(ex) {
+  const v = ex.bt_ver || ex.bt_version, basis = ex.bt_basis || '';
+  if (v.endsWith('+')) return `${esc(v)} <span class="faint">at least, going by its ${esc(basis || 'features')} (the device does not report a version)</span>`;
+  if (!basis || basis === 'reported by the device') return `${esc(v)}${ex.chip ? ` <span class="faint">(${esc(ex.chip)})</span>` : ''}`;
+  return `${esc(v)} <span class="faint">${esc(basis)}</span>`;
 }
 const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v), addr_type: v => ADDR_TYPES[v] || v, bt_ver: v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v };
 function identCell(x) {
@@ -785,7 +793,7 @@ async function viewDevices(params) {
         <td class="mono"><span class="state-dot ${active ? 'on' : ''}"></span>${esc(x.mac)}${x.randomized ? ' <span class="tag warn" title="Locally administered / randomized address">rand</span>' : ''}</td>
         <td class="trunc">${x.watch ? '<span class="star" title="Watched">★</span>' : ''}${label ? (x.label ? `<b>${esc(label)}</b>` : esc(label)) : '<span class="faint">—</span>'}${x.group_name ? ` <span class="tag">${esc(x.group_name)}</span>` : ''}${x.kind === 'ap' && x.enc ? ` <span class="tag ${x.enc.includes('OPN') ? 'bad' : ''}">${esc(x.enc.replace(/\/PSK|\/SAE/g, ''))}</span>` : ''}</td>
         <td class="trunc muted" style="max-width:300px">${identCell(x)}</td>
-        ${showBt ? `<td>${btVerTag(x.bt_ver)}</td>` : ''}
+        ${showBt ? `<td>${btVerTag(x.bt_ver, x.bt_basis)}</td>` : ''}
         <td>${conn}</td>
         <td class="muted">${chText(x.channel, x.band)}</td>
         <td>${rssiBars(x.last_rssi)}</td>
@@ -832,9 +840,9 @@ async function viewDevice(mac, params) {
     ex.appearance ? ['Appearance', esc(ex.appearance)] : null,
     ex.class ? ['Device class', esc(ex.class)] : null,
     ex.tx_power != null ? ['TX power', `${ex.tx_power} dBm`] : null,
-    ex.bt_ver || ex.bt_version ? ['Bluetooth version', (ex.bt_ver || ex.bt_version).endsWith('+')
-      ? `${esc(ex.bt_ver)} <span class="faint">at least, going by its ${esc(ex.bt_basis || 'features')} (the device does not report a version)</span>`
-      : `${esc(ex.bt_ver || ex.bt_version)}${ex.chip ? ` <span class="faint">(${esc(ex.chip)})</span>` : ''}`] : null,
+    ex.bt_ver || ex.bt_version ? ['Bluetooth version', btVerDetail(ex)] : null,
+    ex.bt_probe ? ['Last version request', ex.bt_probe.ok ? `answered <span class="faint">${ago(ex.bt_probe.ts)}${ex.bt_probe.adapter ? ' via ' + esc(ex.bt_probe.adapter) : ''}</span>`
+      : `<span class="warn-text">failed</span> <span class="faint">${ago(ex.bt_probe.ts)}: ${esc(ex.bt_probe.error || 'unknown error')}</span>`] : null,
     ex.phy ? ['Radio (PHY)', esc(ex.phy) + (ex.phy === 'Coded' ? ' <span class="faint">(long range)</span>' : '')] : null,
     ex.auracast ? ['LE Audio broadcast', esc([ex.auracast.name, ex.auracast.id ? 'ID ' + ex.auracast.id : '', ex.auracast.encrypted ? 'encrypted' : 'open', ex.auracast.quality ? ex.auracast.quality + ' quality' : ''].filter(Boolean).join(' · '))] : null,
     ex.esl ? ['Electronic shelf label', 'yes'] : null,
@@ -857,7 +865,8 @@ async function viewDevice(mac, params) {
     <div class="page-head"><div>
       <div class="crumbs"><a href="#/devices">Devices</a> / <a href="#/devices?kind=${enc(d.kind)}">${esc(m.label)}</a></div>
       <h1>${esc(title)}</h1><div class="sub mono">${esc(d.mac)}${d.randomized ? ' · randomized address' : ''}</div></div>
-      <div class="row">${d.kind === 'ble' ? `<button class="btn" id="play-sound" type="button" title="Connects and asks the device to play its find-me sound. Doesn't work on genuine Apple AirTags — see the button for why.">Play sound</button>` : ''}
+      <div class="row">${d.kind === 'ble' && isAdmin() ? `<button class="btn" id="read-bt-version" type="button" ${d.now - d.last_seen > 120 ? 'disabled' : ''} title="${d.now - d.last_seen > 120 ? 'Only for a device heard in the last two minutes' : 'Connects to the device for a few seconds to read its exact Bluetooth version. This transmits.'}">Read exact version…</button>` : ''}
+        ${d.kind === 'ble' ? `<button class="btn" id="play-sound" type="button" title="Connects and asks the device to play its find-me sound. Doesn't work on genuine Apple AirTags — see the button for why.">Play sound</button>` : ''}
         ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div></div>
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
@@ -889,6 +898,38 @@ async function viewDevice(mac, params) {
       toast('Sound command sent');
     } catch (e) { toast(e.message, true); }
     finally { soundBtn.disabled = false; soundBtn.textContent = was; }
+  };
+  const verBtn = document.getElementById('read-bt-version');
+  if (verBtn) verBtn.onclick = () => {
+    const before = (d.extra.bt_probe || {}).ts;
+    openModal('Read the exact Bluetooth version', `
+      <p><b>This transmits.</b> Unlike everything else sniffowireless does, this makes a Bluetooth adapter of yours <b>connect to this device</b> for a few seconds, to ask it which Bluetooth version it implements.</p>
+      <ul>
+        <li>The device can notice a connection from your sensor. Some show an activity light or briefly stop advertising; one that is busy may refuse.</li>
+        <li>Nothing is paired, written or read except the Bluetooth version and the maker's ID. The connection is closed straight away.</li>
+        <li>It only works for a device heard in the last two minutes, and once a minute per device. The adapter that hears it best does it, also on a remote sensor.</li>
+        <li>Do this only to devices you own or may test.</li>
+      </ul>
+      <label class="check"><input type="checkbox" name="ok"> I own this device or have permission to test it</label>
+      <p class="faint small-text" id="ver-progress" style="margin-bottom:0"></p>`, async form => {
+      if (!form.elements.ok.checked) throw new Error('Tick the box to confirm');
+      const progress = form.querySelector('#ver-progress');
+      progress.textContent = 'Asking the adapter…';
+      await send('POST', `/api/devices/${enc(mac)}/bt-version`);
+      progress.textContent = 'Connecting to the device…';
+      for (let i = 0; i < 20; i++) {  // a remote sensor gets the request with its next upload, then reports the answer the same way
+        await new Promise(r => setTimeout(r, 1500));
+        const nd = await api(`/api/devices/${enc(mac)}`);
+        const bp = (nd.extra || {}).bt_probe;
+        if (bp && bp.ts !== before) {
+          if (!bp.ok) throw new Error(bp.error || 'The request failed');
+          toast(`Bluetooth ${nd.extra.bt_ver || nd.extra.bt_version}`);
+          route();
+          return;
+        }
+      }
+      throw new Error('No answer yet. A remote sensor picks the request up with its next upload; check this page again in a moment.');
+    }, { submit: 'Connect and read the version' });
   };
   // facts / static sections
   const peers = document.getElementById('peers');

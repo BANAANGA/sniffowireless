@@ -154,6 +154,14 @@ def queue_flash(sid, name, manifest):
              "at": time.time()}]
 
 
+def queue_probe(sid, name, mac, addr_type):
+    """Ask a remote sensor to read the Bluetooth version of an LE device by connecting to it (bluetooth.py request_probe)."""
+    with _lock:
+        q = PENDING.setdefault(sid, [])
+        q[:] = [c for c in q if not (c["action"] == "btprobe" and c.get("mac") == mac)][-9:] + [
+            {"action": "btprobe", "name": name, "mac": mac, "addr_type": addr_type, "at": time.time()}]
+
+
 def take(sid):
     """The requests waiting for this sensor (handed over once, and only fresh ones)."""
     with _lock:
@@ -189,9 +197,15 @@ def run_commands(cmds, fetch_firmware=None):
                     if len(image) != c.get("size") or hashlib.sha256(image).hexdigest() != c.get("sha256"):
                         raise ValueError("the firmware image from the server does not match what it announced")
                     flash_lora(c["name"], image)
+                elif c.get("action") == "btprobe" and NAME_RX.match(c["name"]) and c["name"].startswith("bt:"):
+                    from .bluetooth import SENSORS
+                    sensor = SENSORS.get(c["name"])
+                    if sensor is None:
+                        raise ValueError(f"{c['name']} is not a Bluetooth adapter of this machine")
+                    sensor.probe_from_server(c.get("mac"), c.get("addr_type"))
             except Exception as e:
                 log.warning("%s of %s failed: %s", c.get("action"), c.get("name"), e)
-                if c["name"] in status.SENSORS:
+                if c["name"] in status.SENSORS and c.get("action") in ("reset", "flash"):
                     status.update(c["name"], note=f"{'Firmware update' if c.get('action') == 'flash' else 'Reset'} failed: {e}")
     threading.Thread(target=work, daemon=True, name="adapter-commands").start()
 

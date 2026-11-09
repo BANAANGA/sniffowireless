@@ -195,6 +195,7 @@ class Config:
     bt_inquiry: bool = True
     bt_inquiry_interval: int = 60
     bt_resolve_names: bool = True
+    bt_active_probe: bool = True    # the device page's "read exact version" button (connects to the device); BT_ACTIVE_PROBE=0 removes it
 
     eth_interfaces: list = field(default_factory=list)
     eth_promisc: bool = True
@@ -263,6 +264,7 @@ class Config:
             bt_inquiry=_bool("BT_INQUIRY", True),
             bt_inquiry_interval=_int("BT_INQUIRY_INTERVAL", 60),
             bt_resolve_names=_bool("BT_RESOLVE_NAMES", True),
+            bt_active_probe=_bool("BT_ACTIVE_PROBE", True),
             zigbee_devices=_list("ZIGBEE_DEVICES"),
             zigbee_channels=zigbee_channels(_env("ZIGBEE_CHANNELS")),
             zigbee_hop_interval=max(0.2, _float("ZIGBEE_HOP_INTERVAL", 2.0)),
