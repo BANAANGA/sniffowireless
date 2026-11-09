@@ -174,6 +174,15 @@ BLE = [
     ("f2:5c:77:02:00:0d", "ES3-4F2A1C", 0x0000, "with:a0:a8:cd:01:00:04", -72, "random-static", "cycling sensor"),
 ]
 
+# Version evidence the demo devices advertise (see btversion.py): a mix of exact, "at least" and nothing known.
+BLE_NEW = {
+    "4c:11:aa:02:00:01": {"ext_adv": True, "phy": "2M"},                       # AirPods Pro: extended advertising
+    "c9:22:bb:02:00:02": {"ext_adv": True, "phy": "1M", "bt_version": "5.3"},  # Galaxy Watch5: connected to the host, version read
+    "e1:33:cc:02:00:03": {"ext_adv": True, "phy": "Coded"},
+    "6c:88:11:02:00:09": {"ext_adv": True, "phy": "1M", "bt_version": "5.0"},
+    "f0:55:ee:02:00:06": {"ext_adv": True, "phy": "2M", "encrypted_ad": True},
+}
+CLASSIC_VERSIONS = {"ac:bc:32:03:00:03": "5.0", "5c:0a:5b:01:00:04": "5.2"}
 CLASSIC = [
     ("00:1b:66:03:00:01", "Sennheiser MOMENTUM 4", "evening", -59, "audio/video", True, "0x240418"),
     ("00:1c:d7:03:00:02", "Car Multimedia", "worker", -80, "audio/video", False, "0x200420"),
@@ -382,13 +391,14 @@ class DemoGenerator:
                             atype != "random-static", "addr_random": atype != "public",
                             "vendor": (bt_company(cid) if cid else None) if atype != "public" else "Govee",
                             "extra": {"addr_type": atype, "company": bt_company(cid) if cid else None, "appearance": app,
-                                      "connectable": True}})
+                                      "connectable": True, **BLE_NEW.get(mac, {})}})
         minute = int(t // 60)
         for mac, name, sched, base, cls, connects, cod in CLASSIC:
             if not present(sched, mac, t):
                 continue
             out.append({"t": "bt", "kind": "bt_classic", "ts": t + 1, "mac": mac, "name": name,
-                        "rssi": self._rssi(base), "randomized": False, "extra": {"class": cls, "cod": cod}})
+                        "rssi": self._rssi(base), "randomized": False,
+                        "extra": {"class": cls, "cod": cod, **({"bt_version": CLASSIC_VERSIONS[mac]} if mac in CLASSIC_VERSIONS else {})}})
         if _h("deauth", int(t // 3600)) % 11 == 0 and minute % 60 < 3:
             out.append({"t": "event", "ts": t + 5, "mac": APS[5][0], "type": "deauth_broadcast",
                         "detail": "deauth to ff:ff:ff:ff:ff:ff reason 7"})

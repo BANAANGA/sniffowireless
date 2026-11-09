@@ -429,6 +429,7 @@ class BluetoothSensor:
                 "extra": {"addr_type": label, "company": bt_company(cid), "appearance": ad.get("appearance"),
                           "tx_power": ad.get("tx_power"), "uuids": ad.get("uuids"),
                           "connectable": ev["connectable"], "phy": ev.get("phy") if ev.get("ext") else None,
+                          "ext_adv": True if ev.get("ext") else None,
                           "auracast": {k: v for k, v in broadcast.items() if v is not None} or None,
                           "esl": True if ad.get("esl") else None, "encrypted_ad": True if ad.get("encrypted_ad") else None},
                 "fp": {"ble": fp} if fp else None,
