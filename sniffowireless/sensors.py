@@ -50,6 +50,7 @@ class Forwarder:
         self._conn = None  # kept open between batches, see _post
         self.on_channel_config = None  # called with the channel settings the server sends back, when it has any
         self.on_lora_config = None     # the same for the LoRa profiles
+        self.on_zigbee_config = None   # and for the Zigbee channels
         self.version = {**version.info(), "arch": version.runtime()["arch"]}  # reported with every batch, for the Sensors page
         if not cfg.server_url or not cfg.sensor_token:
             raise SystemExit("SNIFFOWIRELESS_MODE=sensor needs SERVER_URL and SENSOR_TOKEN")
@@ -74,6 +75,7 @@ class Forwarder:
         try:
             parsed = json.loads(reply)
             conf, cmds, lora = parsed.get("channel_config"), parsed.get("commands"), parsed.get("lora_config")
+            zigbee = parsed.get("zigbee_config")
         except (ValueError, AttributeError):
             return
         if isinstance(cmds, list) and cmds:
@@ -88,6 +90,11 @@ class Forwarder:
                 self.on_lora_config(lora)
             except Exception:
                 log.exception("Could not apply the LoRa settings from the server")
+        if zigbee and self.on_zigbee_config:
+            try:
+                self.on_zigbee_config(zigbee)
+            except Exception:
+                log.exception("Could not apply the Zigbee settings from the server")
 
     def fetch_firmware(self):
         """The LoRa firmware image the server ships (for an update the admin asked for), fetched with this sensor's token."""
@@ -323,6 +330,9 @@ def routes(ctx):
         lora = (ctx.settings.get("lora")["sensors"] or {}).get(sid)
         if lora and lora.get("rev"):  # LoRa profiles chosen in the web UI for this sensor
             reply["lora_config"] = {k: lora.get(k) for k in ("rev", "profiles", "hop_interval")}
+        zb = (ctx.settings.get("zigbee")["sensors"] or {}).get(sid)
+        if zb and zb.get("rev"):  # Zigbee channels chosen in the web UI for this sensor
+            reply["zigbee_config"] = {k: zb.get(k) for k in ("rev", "channels", "hop_interval", "scan_interval", "sniff")}
         return reply
 
     @r.get("/api/sensors")
@@ -377,6 +387,9 @@ def routes(ctx):
         lora = ctx.settings.get("lora")
         if lora["sensors"].pop(sid, None) is not None:
             ctx.settings.set("lora", lora)
+        zb = ctx.settings.get("zigbee")
+        if zb["sensors"].pop(sid, None) is not None:
+            ctx.settings.set("zigbee", zb)
         ctx.location.reload()
         return {"ok": True}
 

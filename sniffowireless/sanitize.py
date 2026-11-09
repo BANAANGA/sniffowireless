@@ -291,6 +291,10 @@ def remote_status(s):
         out["chan_rev"] = clean_num(s.get("chan_rev"), 0, 10 ** 9, True)
     if s.get("lora_rev") is not None:
         out["lora_rev"] = clean_num(s.get("lora_rev"), 0, 10 ** 9, True)
+    if s.get("zb_rev") is not None:
+        out["zb_rev"] = clean_num(s.get("zb_rev"), 0, 10 ** 9, True)
+    if isinstance(s.get("zb_channels"), list):  # the Zigbee channels a stick listens on
+        out["zb_channels"] = [clean_num(c, 11, 26, True) for c in s["zb_channels"][:16] if isinstance(c, int) and 11 <= c <= 26]
     if isinstance(s.get("profiles"), list):  # the LoRa profiles a board hops over
         out["profiles"] = [x for x in (clean_str(p, 48) for p in s["profiles"][:64] if isinstance(p, str)) if x]
     for k, valid in (("channels", None), ("skipped", None), ("caps", None), ("bands", BANDS), ("supported_bands", BANDS)):
