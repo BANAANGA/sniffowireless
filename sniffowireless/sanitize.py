@@ -289,6 +289,10 @@ def remote_status(s):
         out["pps"] = clean_num(s.get("pps"), 0, 10 ** 9)
     if s.get("chan_rev") is not None:
         out["chan_rev"] = clean_num(s.get("chan_rev"), 0, 10 ** 9, True)
+    if s.get("lora_rev") is not None:
+        out["lora_rev"] = clean_num(s.get("lora_rev"), 0, 10 ** 9, True)
+    if isinstance(s.get("profiles"), list):  # the LoRa profiles a board hops over
+        out["profiles"] = [x for x in (clean_str(p, 48) for p in s["profiles"][:64] if isinstance(p, str)) if x]
     for k, valid in (("channels", None), ("skipped", None), ("caps", None), ("bands", BANDS), ("supported_bands", BANDS)):
         if isinstance(s.get(k), list):  # Wi-Fi channel labels / bands, for the Channels page
             items = [clean_str(x, 16) for x in s[k][:100] if isinstance(x, str)]

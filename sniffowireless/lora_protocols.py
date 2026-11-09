@@ -1,9 +1,9 @@
 """LoRa protocols: the radio settings ("profiles") worth listening on, and a classifier that recognises which protocol a
 received frame belongs to from its clear-text structure.
 
-Receive-only and metadata-only. Encrypted payloads are never decrypted and nothing of a message's content is kept: what comes
+Receive-only. Encrypted payloads are never decrypted here and nothing of a message's content is kept by this module: what comes
 out is who sent it (an address or name the sender broadcasts itself), who it is for, how it was routed, and how strongly it
-was received. A LoRa radio only hears a network while it is set to that network's frequency, bandwidth, spreading factor and
+was received. (The one exception, the public default channel of Meshtastic, is read in meshtastic.py after classification.) A LoRa radio only hears a network while it is set to that network's frequency, bandwidth, spreading factor and
 sync word, so the sensor hops between profiles; a profile also says which protocol is expected there, which raises the
 confidence of a frame that fits that protocol's structure.
 
@@ -88,6 +88,26 @@ def meshtastic_profile(region, preset="LongFast"):
                    f"Meshtastic {preset} ({region})", f, bw, sf, cr, SYNC_MESHTASTIC, 8, "meshtastic")
 
 
+# ------------------------------------------------------------------------------------------------ LoRaWAN
+# Default uplink channels (MHz, 125 kHz wide) and the spreading factors devices use on them, from the LoRaWAN Regional
+# Parameters (RP002-1.0.x): the join channels every device of the region knows, and for US915/AU915 the sub-band most networks
+# (The Things Network among them) use, sub-band 2. A radio hears one channel at one spreading factor at a time, so a device
+# is only heard while the sniffer sits on the channel and SF it happens to use: every extra one listened to is a share of
+# the traffic that was missed before.
+LORAWAN_PLANS = {"EU868": ([868.1, 868.3, 868.5], (7, 12)), "EU433": ([433.175, 433.375, 433.575], (7, 12)),
+                 "US915": ([round(903.9 + 0.2 * i, 1) for i in range(8)], (7, 10)),
+                 "AU915": ([round(916.8 + 0.2 * i, 1) for i in range(8)], (7, 10)),
+                 "AS923": ([923.2, 923.4], (7, 12)), "IN865": ([865.0625, 865.4025, 865.985], (7, 12)),
+                 "KR920": ([922.1, 922.3, 922.5], (7, 12))}
+
+
+def lorawan_profiles(region, sfs=(7,)):
+    """The profiles for a region's default uplink channels at the given spreading factors."""
+    freqs, (lo, hi) = LORAWAN_PLANS[region]
+    return [Profile(f"lorawan-{region.lower()}-{f:g}-sf{sf}", f"LoRaWAN {region} {f:g} MHz SF{sf}", f, 125, sf, 5, SYNC_LORAWAN, 8, "lorawan")
+            for sf in sfs if lo <= sf <= hi for f in freqs]
+
+
 PROFILES = {p.name: p for p in (
     [meshtastic_profile(r) for r in ("EU868", "US", "ANZ", "EU433")]
     + [Profile("meshcore-eu868", "MeshCore (EU/UK 869.618, the firmware default)", 869.618, 62.5, 8, 5, SYNC_PRIVATE, 8, "meshcore"),
@@ -97,12 +117,13 @@ PROFILES = {p.name: p for p in (
        Profile("lorawan-us915-sb2", "LoRaWAN US915 sub-band 2 (903.9 MHz, SF7)", 903.9, 125, 7, 5, SYNC_LORAWAN, 8, "lorawan"),
        Profile("lora-aprs-433", "LoRa APRS (433.775 MHz, SF12)", 433.775, 125, 12, 5, SYNC_PRIVATE, 8, "lora-aprs")])}
 
-REGION_DEFAULTS = {"EU868": ["meshtastic-eu868", "meshcore-eu868"], "US915": ["meshtastic-us"],
-                   "ANZ": ["meshtastic-anz", "meshcore-au-narrow"]}
+REGION_DEFAULTS = {"EU868": ["meshtastic-eu868", "meshcore-eu868", "lorawan:eu868"], "US915": ["meshtastic-us", "lorawan:us915"],
+                   "ANZ": ["meshtastic-anz", "meshcore-au-narrow", "lorawan:au915"]}
 
 
 def parse_profiles(spec, region="EU868"):
-    """The profiles for LORA_PROFILES: comma separated names from PROFILES, `meshtastic:<region>[:<preset>]`, or a custom
+    """The profiles for LORA_PROFILES: comma separated names from PROFILES, `meshtastic:<region>[:<preset>]`,
+    `lorawan:<region>[:<sf or range>]` (all default uplink channels of a LoRaWAN region), or a custom
     `name=freq/bw/sf/cr/sync[/preamble]` (MHz, kHz, spreading factor, coding rate 5-8, sync word like 0x12). Empty means the
     region's defaults. Raises ValueError saying what is wrong."""
     items = [x.strip() for x in (spec or "").split(",") if x.strip()]
@@ -122,6 +143,18 @@ def parse_profiles(spec, region="EU868"):
             if reg not in MESHTASTIC_REGIONS or preset is None or len(parts) > 3:
                 raise ValueError(f"{item!r}: use meshtastic:<{'|'.join(MESHTASTIC_REGIONS)}>[:<preset>]")
             out.append(meshtastic_profile(reg, preset))
+        elif item.lower().startswith("lorawan:"):
+            parts = item.split(":")
+            reg = parts[1].upper() if len(parts) > 1 else ""
+            m = re.fullmatch(r"(\d{1,2})(?:-(\d{1,2}))?", parts[2]) if len(parts) == 3 else None
+            if reg not in LORAWAN_PLANS or len(parts) > 3 or (len(parts) == 3 and not m):
+                raise ValueError(f"{item!r}: use lorawan:<{'|'.join(LORAWAN_PLANS)}>[:<sf>] with an SF like 7 or a range like 7-12")
+            lo, hi = (int(m.group(1)), int(m.group(2) or m.group(1))) if m else (7, 7)
+            plan_lo, plan_hi = LORAWAN_PLANS[reg][1]
+            sfs = [sf for sf in range(lo, hi + 1) if plan_lo <= sf <= plan_hi]
+            if not sfs:
+                raise ValueError(f"{item!r}: {reg} devices use SF{plan_lo}-{plan_hi}")
+            out.extend(lorawan_profiles(reg, sfs))
         elif "=" in item:
             name, _, params = item.partition("=")
             f = params.split("/")
@@ -138,7 +171,8 @@ def parse_profiles(spec, region="EU868"):
             hint = {SYNC_MESHTASTIC: "meshtastic", SYNC_LORAWAN: "lorawan"}.get(sync)
             out.append(Profile(name.lower(), name, freq, bw, sf, cr, sync, preamble, hint))
         else:
-            raise ValueError(f"unknown LoRa profile {item!r}; known: {', '.join(PROFILES)}")
+            raise ValueError(f"unknown LoRa profile {item!r}; known: {', '.join(PROFILES)}, or meshtastic:<region>[:<preset>], "
+                             "lorawan:<region>[:<sf>], name=freq/bw/sf/cr/sync")
     return list({p.name: p for p in out}.values())
 
 

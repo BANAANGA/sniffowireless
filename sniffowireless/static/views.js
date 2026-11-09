@@ -509,12 +509,13 @@ addRoute('/reports', async (_, params) => {
 });
 
 // ===================================================================== settings
-const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'], ['modules', 'Modules'], ['privacy', 'Privacy'], ['purge', 'Clear data'], ['wifichannels', 'Wi-Fi channels'], ['loraflasher', 'LoRa flasher'],
+const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'], ['modules', 'Modules'], ['privacy', 'Privacy'], ['purge', 'Clear data'], ['wifichannels', 'Wi-Fi channels'], ['lorabands', 'LoRa bands'], ['loraflasher', 'LoRa flasher'],
   ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['performance', 'Performance'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance'], ['about', 'About']];
 
 addRoute('/settings', async (_, params) => {
   const tabs = (isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore', 'about'].includes(k)))
-    .filter(([k]) => k !== 'wifichannels' || modOn('wifi'));
+    .filter(([k]) => k !== 'wifichannels' || modOn('wifi'))
+    .filter(([k]) => k !== 'lorabands' || modOn('lora'));
   let tab = params.get('tab') || 'account';
   app.innerHTML = `<div class="page-head"><div><h1>Settings</h1></div></div><div class="settings"><nav class="subnav">${tabs.map(([k, l]) => `<a href="${hrefWith('/settings', { tab: k })}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</nav><div id="set-body" class="set-body"></div></div>`;
   const el = document.getElementById('set-body');

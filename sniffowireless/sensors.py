@@ -49,6 +49,7 @@ class Forwarder:
         self.sent = 0
         self._conn = None  # kept open between batches, see _post
         self.on_channel_config = None  # called with the channel settings the server sends back, when it has any
+        self.on_lora_config = None     # the same for the LoRa profiles
         self.version = {**version.info(), "arch": version.runtime()["arch"]}  # reported with every batch, for the Sensors page
         if not cfg.server_url or not cfg.sensor_token:
             raise SystemExit("SNIFFOWIRELESS_MODE=sensor needs SERVER_URL and SENSOR_TOKEN")
@@ -72,7 +73,7 @@ class Forwarder:
         """The server's answer to a batch may carry settings for this sensor (channels set in the web UI) and requests (resets)."""
         try:
             parsed = json.loads(reply)
-            conf, cmds = parsed.get("channel_config"), parsed.get("commands")
+            conf, cmds, lora = parsed.get("channel_config"), parsed.get("commands"), parsed.get("lora_config")
         except (ValueError, AttributeError):
             return
         if isinstance(cmds, list) and cmds:
@@ -82,6 +83,11 @@ class Forwarder:
                 self.on_channel_config(conf)
             except Exception:
                 log.exception("Could not apply the channel settings from the server")
+        if lora and self.on_lora_config:
+            try:
+                self.on_lora_config(lora)
+            except Exception:
+                log.exception("Could not apply the LoRa settings from the server")
 
     def fetch_firmware(self):
         """The LoRa firmware image the server ships (for an update the admin asked for), fetched with this sensor's token."""
@@ -314,6 +320,9 @@ def routes(ctx):
         chan = (ctx.settings.get("channels")["sensors"] or {}).get(sid)
         if chan and chan.get("rev"):  # settings made in the web UI for this sensor: it applies them when the revision is new
             reply["channel_config"] = {k: chan.get(k) for k in ("rev", "channels", "per_iface", "regdomain", "hop_interval")}
+        lora = (ctx.settings.get("lora")["sensors"] or {}).get(sid)
+        if lora and lora.get("rev"):  # LoRa profiles chosen in the web UI for this sensor
+            reply["lora_config"] = {k: lora.get(k) for k in ("rev", "profiles", "hop_interval")}
         return reply
 
     @r.get("/api/sensors")
@@ -365,6 +374,9 @@ def routes(ctx):
         chan = ctx.settings.get("channels")
         if chan["sensors"].pop(sid, None) is not None:  # its channel settings go with it
             ctx.settings.set("channels", chan)
+        lora = ctx.settings.get("lora")
+        if lora["sensors"].pop(sid, None) is not None:
+            ctx.settings.set("lora", lora)
         ctx.location.reload()
         return {"ok": True}
 

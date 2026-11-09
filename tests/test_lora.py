@@ -145,8 +145,9 @@ def test_meshtastic_frequencies_follow_the_firmware_formula():
 
 
 def test_parse_profiles():
-    assert [p.name for p in parse_profiles("", "EU868")] == ["meshtastic-eu868", "meshcore-eu868"]
-    assert [p.name for p in parse_profiles("", "us915")] == ["meshtastic-us"]
+    assert [p.name for p in parse_profiles("", "EU868")] == ["meshtastic-eu868", "meshcore-eu868", "lorawan-eu868-868.1-sf7",
+                                                                  "lorawan-eu868-868.3-sf7", "lorawan-eu868-868.5-sf7"]
+    assert [p.name for p in parse_profiles("", "us915")][:2] == ["meshtastic-us", "lorawan-us915-903.9-sf7"]
     got = parse_profiles("meshtastic:us:MediumFast, mesh=868.3/125/7/5/0x34, LoRaWAN-EU868, lorawan-eu868, mine=915/250/9/6/18/12")
     assert [p.name for p in got] == ["meshtastic-us-mediumfast", "mesh", "lorawan-eu868", "mine"]  # a repeated profile is listed once
     assert got[0].bw == 250 and got[0].sf == 9 and got[1].hint == "lorawan" and got[1].sync == 0x34
@@ -398,7 +399,7 @@ def test_lora_api(ctx, tmp_path):
     assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
     empty = c.get("/api/lora").json()
     assert empty["protocols"] == [] and empty["nodes"] == [] and empty["recent"] == [] and empty["configured"] is False
-    assert [p["name"] for p in empty["listening"]] == ["meshtastic-eu868", "meshcore-eu868"] and "meshtastic-us" in [p["name"] for p in empty["known_profiles"]]
+    assert [p["name"] for p in empty["listening"]][:2] == ["meshtastic-eu868", "meshcore-eu868"] and "meshtastic-us" in [p["name"] for p in empty["known_profiles"]]
     eu, mc = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"]
     t = time.time() - 600
     for i in range(6):
@@ -601,8 +602,8 @@ def test_airtime_is_kept_and_shown_per_profile(ctx):
     each = airtime_ms(len(payload), eu.sf, eu.bw, eu.cr, 16) / 1000
     row = c.get("/api/lora?hours=1").json()["listening"][0]
     assert row["name"] == "meshtastic-eu868" and abs(row["air_s"] - 10 * each) < 0.05
-    # two profiles are listened to alternately: each is heard half of the time, so its use is twice the airtime share
-    assert abs(row["use"] - 10 * each / (3600 * 0.5)) < 0.0005
+    # the profiles are listened to in turn: each is heard 1/N of the time, so its use is N times the airtime share
+    assert abs(row["use"] - 10 * each / (3600 / len(ctx.cfg.lora_profiles))) < 0.0005
 
 
 # ------------------------------------------------------------------ report, metrics, MQTT
