@@ -145,8 +145,11 @@ class ZnpDriver:
         if nv and len(nv[2]) >= 6 and nv[2][0] == 0:
             mask = struct.unpack_from("<I", nv[2], 2)[0]
             if mask & ALL_CHANNELS_MASK != ALL_CHANNELS_MASK:
-                chans = ", ".join(str(c) for c in ALL_CHANNELS if mask >> c & 1)
-                notes.append(f"This stick is configured for channel {chans}, so networks on other channels may be missed.")
+                found = [c for c in ALL_CHANNELS if mask >> c & 1]
+                if found:
+                    notes.append(f"This stick is configured for channel{'s' if len(found) > 1 else ''} "
+                                 f"{', '.join(map(str, found))}, so networks on other channels may be missed.")
+                # a mask with no channel 11-26 in it (unset or not a channel list): nothing useful to say
         return cls(link, parser, firmware, notes)
 
     def scan(self, on_network, on_energy, stop=None):
