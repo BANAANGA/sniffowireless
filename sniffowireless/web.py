@@ -1,6 +1,7 @@
 """HTTP API + static single-page UI."""
 import hashlib
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -10,18 +11,21 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (adapters, alerts, appearance, auth, backup, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
+from . import (adapters, alerts, appearance, auth, backup, bluetooth, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
                matching, metrics, modules, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
-from .auth import current_user
+from .auth import current_user, require_admin
 from .httpsec import SecurityMiddleware
 from .web_util import csv_response, overlap_counts
+
+log = logging.getLogger("sniffowireless.web")
 
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
 ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
 QRCODE_JS_CDN = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
+PROBE_MAX_AGE = 120  # seconds: how recently a device must have been heard to be asked for its version
 SORTABLE = {"last_seen", "first_seen", "packets", "last_rssi", "best_rssi", "mac", "vendor",
             "name", "ssid", "kind", "channel", "band", "brand", "model", "dev_type", "os", "wifi_gen", "era"}
 
@@ -292,6 +296,7 @@ def create_app(ctx):
         items = [_dev(i) for i in items]
         for i in items:  # also in the slim rows, which drop `extra`
             i["bt_ver"] = i["extra"].get("bt_ver")
+            i["bt_basis"] = i["extra"].get("bt_basis")
         if slim:  # tables only show the identification label; the evidence and raw fingerprints are ~70% of each row
             for i in items:
                 i["ident"] = {"label": (i.get("ident") or {}).get("label")}
@@ -444,6 +449,51 @@ def create_app(ctx):
         except tracker_sound.SoundError as e:
             raise HTTPException(502, str(e))
         return {"ok": True}
+
+    probe_last = {}  # mac -> when its version was last asked for: a cooldown per device
+
+    @app.post("/api/devices/{mac}/bt-version")
+    def read_bt_version(mac: str, user=Depends(require_admin)):
+        """Ask a Bluetooth LE device for its exact version by connecting to it for a moment (btprobe.py). This TRANSMITS, unlike
+        everything else sniffowireless does, so: admin only, only a device heard in the last two minutes (the connection goes to an
+        address that is really there), one request per device a minute, and the adapter that heard it best does the asking (a remote
+        sensor gets it as a command and reports the answer like any observation: extra.bt_probe, extra.bt_version)."""
+        mac = mac.lower()
+        if not cfg.bt_active_probe:
+            raise HTTPException(403, "Reading a version by connecting is switched off (BT_ACTIVE_PROBE=0)")
+        d = one("SELECT kind, last_seen, extra FROM devices WHERE mac=?", (mac,))
+        if not d:
+            raise HTTPException(404, "device not found")
+        if d["kind"] != "ble":
+            raise HTTPException(400, "Only Bluetooth LE devices can be asked for their version")
+        now = time.time()
+        if now - (d["last_seen"] or 0) > PROBE_MAX_AGE:
+            raise HTTPException(409, "This device has not been heard in the last two minutes. It may be gone, and a private address may have changed.")
+        if now - probe_last.get(mac, 0) < 60:
+            raise HTTPException(429, "This device was asked a moment ago; wait a minute")
+        extra = json.loads(d["extra"] or "null") or {}
+        addr_type = 0 if extra.get("addr_type") == "public" else 1
+        heard = rows("SELECT sensor, rssi FROM sightings WHERE mac=? AND last_seen>=? ORDER BY rssi IS NULL, rssi DESC", (mac, now - PROBE_MAX_AGE))
+        snap = status.snapshot()
+        for h in heard:  # strongest first
+            if h["sensor"] == "local":
+                names = sorted(n for n, sensor in bluetooth.SENSORS.items() if (status.SENSORS.get(n) or {}).get("state") != "error")
+                for name in names:
+                    try:
+                        bluetooth.SENSORS[name].request_probe(mac, addr_type)
+                    except ValueError as e:
+                        raise HTTPException(409, str(e))
+                    probe_last[mac] = now
+                    log.info("%s asked %s for its Bluetooth version via %s", user.username, mac, name)
+                    return {"ok": True, "queued": False, "adapter": name}
+            else:
+                names = sorted(x["name"] for x in snap if x.get("type") == "bluetooth" and x.get("remote") == h["sensor"] and x.get("state") != "error")
+                if names:
+                    adapters.queue_probe(h["sensor"], names[0], mac, addr_type)
+                    probe_last[mac] = now
+                    log.info("%s asked %s for its Bluetooth version via %s on sensor %s", user.username, mac, names[0], h["sensor"])
+                    return {"ok": True, "queued": True, "adapter": names[0], "sensor": h["sensor"]}
+        raise HTTPException(409, "No Bluetooth adapter that heard this device just now is available")
 
     @app.get("/api/devices/{mac}/rssi", dependencies=[Depends(current_user)])
     def device_rssi(mac: str, hours: float = 24):
