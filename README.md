@@ -630,6 +630,7 @@ All settings are environment variables (put them in `.env`).
 | `LORA_REGION` | `EU868` | `EU868`, `US915` or `ANZ`: picks the default listening profiles. |
 | `LORA_PROFILES` | *(region default)* | Profiles to listen on, see [LoRa](#lora-meshtastic-meshcore-lorawan). |
 | `LORA_HOP_INTERVAL` | `5` | Seconds spent on each profile when there is more than one (minimum 0.5). |
+| `LORA_DECODE_PUBLIC` | `1` | Read messages, positions, node names and telemetry on the public Meshtastic channel (`0` keeps addresses and signal only). Also a switch under **Settings → LoRa bands**. |
 | `ETH_PROMISC` | `1` | Put the Ethernet interface in promiscuous mode (needed on a mirror/SPAN port). |
 | `LAN_SESSION_TIMEOUT` | `900` | Seconds without traffic before a LAN device counts as offline. |
 | `BT_ACTIVE_SCAN` | `1` | Active LE scanning (sends scan requests, which gets device names). `0` is fully passive. |
@@ -1002,11 +1003,11 @@ Remote sensors (`SNIFFOWIRELESS_MODE=sensor`) support `ZIGBEE_DEVICES` too.
 
 A **Heltec WiFi LoRa 32 V3** (ESP32-S3 + SX1262) flashed with the receive-only firmware in [`firmware/lora-sniffer`](firmware/lora-sniffer) listens on LoRa bands and the server works out what it heard. The **LoRa** page shows packets per protocol over time, every node address heard, and the latest packets with their type, hop count and signal.
 
-**What it recognises** (from the unencrypted headers, never by decrypting anything):
+**What it recognises** (from the unencrypted headers; the one thing it decrypts is the public Meshtastic channel, see below):
 
 | Protocol | What you see |
 |---|---|
-| **Meshtastic** | Sender and destination node IDs, hop count, relay, MQTT gateway flag, channel hash |
+| **Meshtastic** | Sender and destination node IDs, hop count, relay, MQTT gateway flag, channel hash; on the public channel also text messages, positions, node names and telemetry |
 | **MeshCore** | Packet type (advert, text, ack, path, …), route, hops, and for adverts the node name and type (chat, repeater, room, sensor) |
 | **LoRaWAN** | Message type, device address, frame counter; join requests show the device EUI |
 | **LoRa APRS** | Callsigns and packet type |
@@ -1014,7 +1015,18 @@ A **Heltec WiFi LoRa 32 V3** (ESP32-S3 + SX1262) flashed with the receive-only f
 
 Each packet carries a confidence (*sure*, *likely*, *a guess*). A LoRa receiver only hears packets whose **sync word** and **spreading factor / bandwidth** match its settings, so the radio **hops between profiles** (frequency, bandwidth, SF, sync word). Hopping means each profile is heard only part of the time, and a quiet profile is not proof of silence. With a single profile the radio stays put and misses nothing on it. Protocols not in this list (for example IoTNet) show up as unidentified for now; the classifier in `sniffowireless/lora_protocols.py` is built to take more.
 
-**Privacy:** only metadata is stored (addresses, types, signal, size). Message bodies, raw bytes and shared coordinates are never written to the database.
+**Public Meshtastic channel.** Every Meshtastic device ships with the same published default key (the `AQ==` channel, "LongFast" and the other presets), and channels can also be set up without any encryption. What is sent on those is broadcast to everyone in range by design, so it is **read**: text messages, positions, node names (which name the node in the list), telemetry and waypoints appear on the LoRa page (*Public messages*, a *Position* column with a map link, and a *Detail* column on the latest packets). Only that one published key is tried. Channels with their own key and direct messages (public-key encrypted) stay unreadable and are reported as before. The decoder is `sniffowireless/meshtastic.py` (AES-128-CTR written out in Python, no extra dependency; protobuf `Data`, `Position`, `User`, `Telemetry`, `Waypoint`); the other ports (routing, admin, traceroute, …) are only named.
+
+**Privacy:** apart from the public Meshtastic channel above, only metadata is stored (addresses, types, signal, size): message bodies, raw bytes and shared coordinates of everything else are never written to the database. What was read from the public channel is stored with the packets in the `info` column, follows the LoRa retention setting, is removed by *Settings → Clear data*, and is not included in the CSV exports. Switch it off with **Settings → LoRa bands** or `LORA_DECODE_PUBLIC=0`; new frames are then stored as metadata only (rows already stored stay until they expire or are cleared).
+
+**Choosing what to listen to.** **Settings → LoRa bands** works like *Wi-Fi channels*: per LoRa board of this server and of every remote sensor, pick the profiles to hop over with the buttons (or type the list) and set the time on each profile. Saving applies at once on this server; a remote sensor picks it up with its next upload (status *applied* / *waiting for the sensor*), and what is left empty stays as the sensor's own `LORA_REGION` / `LORA_PROFILES` says. A profile is a frequency, bandwidth, spreading factor, coding rate and sync word. In the list (the same syntax as `LORA_PROFILES`):
+
+- a profile name from the buttons, for example `meshtastic-eu868`, `meshcore-eu868`, `lora-aprs-433`;
+- `meshtastic:<EU868|US|ANZ|EU433|ANZ433>[:<preset>]`, for example `meshtastic:eu868:ShortFast`;
+- `lorawan:<EU868|EU433|US915|AU915|AS923|IN865|KR920>[:<sf or range>]`, the region's default uplink channels at that spreading factor: `lorawan:eu868` is 868.1, 868.3 and 868.5 MHz at SF7, `lorawan:eu868:7-12` all 18 combinations;
+- your own `name=freq/bw/sf/cr/sync[/preamble]`, for example `mine=868.3/125/9/5/0x34`.
+
+**LoRaWAN.** A LoRaWAN device sends on one of its region's channels at the spreading factor its network chose, and the sniffer's radio hears **one channel at one spreading factor at a time**, only uplinks (downlinks use inverted signals and are not heard). The defaults therefore listen to the three EU868 channels (and the first sub-band of US915 / AU915) at SF7, which is where most devices near a gateway are; devices far from their gateway use SF9-SF12, so add `lorawan:eu868:7-12` (18 profiles, one round takes 90 seconds at the default 5 s per profile) when you want to see them, or pick a few. A frame is only called LoRaWAN when it was heard with the public sync word `0x34` and its header fits the specification (message type, version, frame counter, exact join request / accept sizes). Nothing is decrypted: you see message type, device address, frame counter, FPort and, for join requests, the device EUI.
 
 **Setup:**
 

@@ -207,6 +207,7 @@ class Config:
     lora_region: str = "EU868"
     lora_profiles: list = field(default_factory=lambda: _default_lora_profiles())
     lora_hop_interval: float = 5.0
+    lora_decode_public: bool = True
 
     lan_session_timeout: int = 900
     wifi_session_timeout: int = 300
@@ -271,6 +272,7 @@ class Config:
             lora_region=region,
             lora_profiles=lora_profiles,
             lora_hop_interval=max(0.5, _float("LORA_HOP_INTERVAL", 5.0)),
+            lora_decode_public=_bool("LORA_DECODE_PUBLIC", True),
             eth_interfaces=_list("ETH_INTERFACES"),
             eth_promisc=_bool("ETH_PROMISC", True),
             lan_session_timeout=_int("LAN_SESSION_TIMEOUT", 900),
