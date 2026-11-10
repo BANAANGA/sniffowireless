@@ -157,3 +157,10 @@ def test_every_service_the_identifier_knows_has_a_hover_explanation():
     js = (pathlib.Path(__file__).resolve().parent.parent / "sniffowireless" / "static" / "btservices.js").read_text()
     keys = set(re.findall(r"^\s*'([0-9a-f]{4})':", js, re.M))
     assert (set(BLE_UUIDS) | LE_AUDIO_SERVICES) <= keys
+
+
+def test_classic_profile_services_are_explained():
+    import re, pathlib
+    js = (pathlib.Path(__file__).resolve().parent.parent / "sniffowireless" / "static" / "btservices.js").read_text()
+    keys = set(re.findall(r"^\s*'([0-9a-f]{4})':", js, re.M))
+    assert {"1105", "110a", "110c", "110e", "1112", "1115", "1116", "112f", "1200"} <= keys
