@@ -161,6 +161,15 @@ def ap_attributes(elts, beacon_tu=None):
             if n:
                 out.setdefault("rnr", []).extend(n)
                 out["rnr"] = out["rnr"][:12]
+        elif eid == 221 and len(info) >= 4 and bytes(info[:3]) in (b"\x00\x15\x6d", b"\x00\x0b\x86"):   # Ubiquiti / Aruba AP-name elements
+            from .apmodels import ARUBA_SUBTYPES, vendor_ap_name
+            vendor, name, sub = vendor_ap_name(info) or (None, None, None)
+            if vendor == "Aruba" and sub in ARUBA_SUBTYPES:
+                out.setdefault("aruba", [])
+                if ARUBA_SUBTYPES[sub] not in out["aruba"]:
+                    out["aruba"].append(ARUBA_SUBTYPES[sub])
+            if name:
+                out["ap_name"], out["ap_name_src"] = name, vendor
         elif eid == 221 and len(info) >= 4:
             oui, vtype = bytes(info[:3]), info[3]
             if oui == b"\x00\x50\xf2" and vtype == 1:
