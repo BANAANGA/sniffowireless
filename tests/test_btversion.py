@@ -104,3 +104,18 @@ def test_the_list_filter_and_statistics(ctx):
     assert c.get("/api/export/devices.csv", params={"bt_ver": "5.0+"}).status_code == 200
     s = c.get("/api/stats").json()["bt_ver"]
     assert {(r["v"], r["kind"]): r["n"] for r in s} == {("4.0+", "ble"): 1, ("5.0+", "ble"): 2, ("5.3", "ble"): 1, (None, "bt_classic"): 1}
+
+
+def test_bt_company_uses_full_sig_list():
+    from sniffowireless.oui import bt_company
+    assert bt_company(0x0160) == "AwoX"
+    assert bt_company(0x0211)  # Telink, not in the old short list
+    assert bt_company(0x004C) == "Apple"  # short names still win
+
+
+def test_telink_mac_with_other_company_id_keeps_telink_brand():
+    from sniffowireless.identify import identify
+    d = {"kind": "ble", "mac": "a4:c1:38:4c:a5:bc", "vendor": "Telink Semiconductor (Taipei) Co. Ltd.", "randomized": 0,
+         "extra": {"company": "AwoX"}}
+    r = identify(d)
+    assert r["brand"].startswith("Telink")
