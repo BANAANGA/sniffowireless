@@ -94,6 +94,15 @@ Search it, tick networks and apply. Networks that are only *looked for* by devic
 
 **Company IDs and raw manufacturer data.** The *Manufacturer data* row names the company behind the ID a device advertises (the full Bluetooth SIG list is bundled). A number that is far beyond the highest registered ID is shown as *Unregistered 0x…*: it is not a company, the device just uses those bytes for its own format, and it is not used as the device's vendor or brand. *Raw manufacturer data* shows the first 32 bytes as sent, company field first (Apple's rotating data is decoded instead and not kept). Remote sensors need the newest image to send it.
 
+**Wi-Fi details.** Everything here is read passively from frames the radio already hears; remote sensors need the newest image to report it. An **access point's** page can show:
+- *Up for*, estimated from the timestamp in its beacons (the AP's own timer). Some access points reset that timer without restarting, so treat it as an estimate. When the timer starts over, an *Access point restarted* event is recorded (you can build an alert rule on it).
+- *Security details*: the key-management suites (PSK, SAE, OWE, 802.1X ...), ciphers and **protected management frames** (required, optional or off). A network that offers WPA3 and WPA2 together is marked *transition*, because clients that connect with WPA2 get no WPA3 protection, and TKIP or old WPA 1 are flagged.
+- *Load* (connected clients and how busy the channel is, as the AP reports it), beacon interval, country, roaming support (802.11k / v / r), Wi-Fi 6 BSS colour, Wi-Fi 7 multi-link, multiple BSSID, mesh ID, WPS state, and *Neighbouring APs* the AP announces in its beacons (often its own other bands).
+
+A **client's** page shows *Link rate* (up and down, from the last data frames; the driver must report it) with the noise floor when available, and the identification section lists *what it says it can do* (802.11k / v / r, beamforming, supported channels, whether it still offers 802.11b rates...). The details are refreshed every minute (access points) or 30 seconds (link rate), not for every frame.
+
+**Linking randomised addresses (off by default).** Set `WIFI_SEQ_LINK=1` to let the server guess that two randomised MAC addresses are one device because the second carries on the 802.11 frame counter of the first within a few seconds. It only proposes a link when exactly one earlier address fits, shows it on both pages as *Possibly the same device*, and never merges anything. It is a heuristic: other devices can match by chance, and some devices do not carry the counter over. Because it defeats the privacy a randomised address is meant to give, it is opt-in. Sensors always send the counter of randomised senders; only the server option decides whether it is used.
+
 ## Bluetooth ↔ Wi-Fi matching
 
 Phones, tablets and laptops have both radios, so sniffowireless sees them twice. **Matching** (sidebar under Devices) guesses which Bluetooth address belongs to which Wi-Fi address from the last 7 days. It weighs:

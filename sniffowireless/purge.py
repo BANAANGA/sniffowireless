@@ -28,7 +28,7 @@ SPEC = {
 OTHER_FINDINGS = SPEC["bluetooth"]["findings"] + SPEC["lan"]["findings"]
 # events (and the alert history, which has the same type / mac columns) that belong to a module
 EVENT_TYPES = {  # (events about watched radios have lora: / zb: addresses and are found through those)
-    "wifi": ("rogue_ap", "deauth_flood", "deauth_broadcast", "karma_ap", "security_finding", "interference", "dfs_radar", "channel_switch_announced",
+    "wifi": ("ap_restart", "rogue_ap", "deauth_flood", "deauth_broadcast", "karma_ap", "security_finding", "interference", "dfs_radar", "channel_switch_announced",
              "channel_change", "investigated_seen", "investigated_connect", "investigated_probe", "fingerprint_changed", "handshake_attack",
              "ap_downgrade", "probe_scan", "mac_duplicate"),
     "bluetooth": ("tracker_following",),

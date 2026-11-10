@@ -15,6 +15,7 @@ from . import status
 from .config import band_of, chan_label, freq_to_channel
 from .handshake import eapol_message
 from .identify import wifi_fingerprint
+from .wifiattrs import ap_attributes, radio_quality, seq_number
 from .survey import frame_airtime_us, rate_from_radiotap
 
 conf.verb = 0
@@ -128,12 +129,29 @@ def radio_freq(rt_freq, tuned):
     return rt_freq
 
 
-def parse_frame(pkt, fp_gate=None, tuned=None):
+def is_local(mac):
+    """Locally administered (randomised) address."""
+    try:
+        return bool(int(mac[0:2], 16) & 0x02)
+    except (TypeError, ValueError):
+        return False
+
+
+class AttrGates:
+    """Rate limits for the extra attributes: AP details (load, uptime...) and link quality are refreshed every so often."""
+
+    def __init__(self, ap_interval=60, link_interval=30):
+        self.ap, self.link = FingerprintGate(ap_interval), FingerprintGate(link_interval)
+
+
+def parse_frame(pkt, fp_gate=None, tuned=None, gates=None, seq_on=False):
     """Turn one captured 802.11 frame into zero or more store observations.
 
     Management frames carrying capability elements also get a device fingerprint ('fp'),
     subject to `fp_gate(mac, source, ts)` so busy devices aren't re-parsed on every frame.
     `tuned` is the frequency the radio is tuned to (used when the driver mislabels the frame's frequency).
+    `gates` (AttrGates) switches on the extra AP details and link quality; `seq_on` adds the frame sequence number of
+    randomised transmitters (only used by the opt-in address linking).
     """
     if not pkt.haslayer(Dot11):
         return []
@@ -154,8 +172,18 @@ def parse_frame(pkt, fp_gate=None, tuned=None):
         fp = wifi_fingerprint(_elts(pkt))
         return {"wifi": fp, "src": src} if fp else None
 
-    def client(mac, bssid=None, frame=None, r=None, **kw):
+    seqn = seq_number(pkt) if seq_on else None
+
+    def client(mac, bssid=None, frame=None, r=None, tx=False, link=None, **kw):
+        """tx: this client sent the frame (so the sequence number is its own); link: "up"/"down" rate direction."""
         if is_unicast(mac) and mac != bssid:
+            if tx and seqn is not None and is_local(mac):
+                kw["seq"] = seqn
+            if link and gates and gates.link(mac, link, ts):
+                q = radio_quality(pkt)
+                ex = {k: v for k, v in (("rate_" + link, q.get("phy_rate")), ("noise", q.get("noise"))) if v is not None}
+                if ex:
+                    kw["extra"] = ex
             out.append({"t": "wifi_client", "ts": ts, "mac": mac, "bssid": bssid, "frame": frame,
                         "rssi": r, "freq": freq, "band": band, **kw})
 
@@ -179,17 +207,24 @@ def parse_frame(pkt, fp_gate=None, tuned=None):
             ssid = _elt_ssid(pkt)
             crypto = stats.get("crypto") or set()
             csa, primary = _chan_elts(pkt)
+            extra = {"hidden": True} if st == 8 and ssid == "" else {}
+            if gates and gates.ap(a2 or a3, "ap", ts):
+                info = ap_attributes(_elts(pkt), getattr(layer, "beacon_interval", None))
+                tsf = getattr(layer, "timestamp", None)
+                if isinstance(tsf, int) and 0 < tsf < 5 * 365 * 86400 * 1_000_000:  # AP timer in µs: roughly its uptime
+                    info["boot"] = int(ts - tsf / 1e6)
+                if info:
+                    extra["ap"] = info
             ap(a2 or a3, rssi, ssid=ssid or None, channel=stats.get("channel") or primary,
-               enc=",".join(sorted(crypto)) or None,
-               extra={"hidden": True} if st == 8 and ssid == "" else None,
+               enc=",".join(sorted(crypto)) or None, extra=extra or None,
                fp=fingerprint(a2 or a3, "beacon"), csa=csa)
             if st == 5:
                 client(a1, None, "probe_resp")
         elif st == 4:  # probe request
             ssid = _elt_ssid(pkt)
-            client(a2, None, "probe", rssi, probe=ssid or None, fp=fingerprint(a2, "probe"))
+            client(a2, None, "probe", rssi, tx=True, probe=ssid or None, fp=fingerprint(a2, "probe"))
         elif st in (0, 2):  # (re)association request: client -> AP
-            client(a2, a1, "assoc", rssi, fp=fingerprint(a2, "assoc"))
+            client(a2, a1, "assoc", rssi, tx=True, fp=fingerprint(a2, "assoc"))
             ap(a1)
         elif st in (1, 3):  # (re)association response: AP -> client
             layer = pkt.getlayer(Dot11AssoResp) or pkt.getlayer(Dot11ReassoResp)
@@ -201,7 +236,7 @@ def parse_frame(pkt, fp_gate=None, tuned=None):
                 ap(a2, rssi)
                 client(a1, None, "auth")
             else:
-                client(a2, None, "auth", rssi)
+                client(a2, None, "auth", rssi, tx=True)
         elif st in (10, 12):  # disassociation / deauthentication
             layer = pkt.getlayer(Dot11Deauth) or pkt.getlayer(Dot11Disas)
             reason = getattr(layer, "reason", None)
@@ -221,11 +256,11 @@ def parse_frame(pkt, fp_gate=None, tuned=None):
         fc = int(d.FCfield)
         to_ds, from_ds = bool(fc & 0x1), bool(fc & 0x2)
         if to_ds and not from_ds:      # client -> AP
-            client(a2, a1, "data", rssi)
+            client(a2, a1, "data", rssi, tx=True, link="up")
             ap(a1)
         elif from_ds and not to_ds:    # AP -> client
             ap(a2, rssi)
-            client(a1, a2, "data")
+            client(a1, a2, "data", link="down")
     return out
 
 
@@ -364,6 +399,7 @@ class WifiSensor:
         self.mon = None
         self.packets = 0
         self.fp_gate = FingerprintGate()
+        self.gates = AttrGates()
         self.cur_freq = None
         self.band_frames = {}  # band -> frames received (after any frequency correction)
         self.relabelled = 0    # frames whose radiotap frequency was corrected to the tuned one
@@ -447,7 +483,7 @@ class WifiSensor:
         except Exception:
             pass
         try:
-            for o in parse_frame(pkt, self.fp_gate, tuned):
+            for o in parse_frame(pkt, self.fp_gate, tuned, self.gates, True):
                 self.store.put(o)
                 if self.handshake and o["t"] == "wifi_ap" and o.get("ssid"):
                     self.handshake.note_ap(o["mac"], o["ssid"])

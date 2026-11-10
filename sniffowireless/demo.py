@@ -87,6 +87,10 @@ WIFI_FPS = {
                               wps=dict(manufacturer="HP", model="OfficeJet Pro 9010 series", category=(3, 1))),
 }
 WIFI_FPS = {k: wifi_fp(**v) for k, v in WIFI_FPS.items()}
+for _fp in WIFI_FPS.values():  # example capability details (the real ones come from wifiattrs.client_caps)
+    _fp["capinfo"] = ({"caps": ["802.11v BSS transition", "802.11k radio measurement", "LDPC", "MU-MIMO beamformee"], "dsss": False,
+                       "chan_count": 25, "txp": [0, 17]} if _fp.get("gen", 0) >= 5 else
+                      {"caps": ["LDPC"], "dsss": True, "chan_count": 11, "txp": [0, 20]})
 # random-MAC passers-by fall into three device families, showing probe-fingerprint grouping
 PASSER_FPS = [WIFI_FPS["a4:83:e7:01:00:01"], WIFI_FPS["3e:12:aa:01:00:0c"], wifi_fp(**WINDOWS_PC)]
 
@@ -346,6 +350,7 @@ class DemoGenerator:
     def __init__(self, cfg, store, ctx=None):
         self.cfg, self.store, self.ctx = cfg, store, ctx
         self.rng = random.Random(42)
+        self.boot_base = time.time()  # the demo access points were last restarted some days before it started
         if ctx:
             self.seed()
         self.passers = [f"{0x02 | (i * 4 & 0xfc):02x}:{self.rng.randrange(256):02x}:{self.rng.randrange(256):02x}:"
@@ -353,6 +358,23 @@ class DemoGenerator:
 
     def _rssi(self, base):
         return int(base + self.rng.gauss(0, 3))
+
+    def _ap_info(self, mac, enc, vendor):
+        """Example of what beacons say about an access point (the real values come from wifiattrs.ap_attributes)."""
+        h = _h(mac, 11)
+        info = {"country": "NL", "beacon_tu": 100, "boot": int(self.boot_base - (1 + h % 20) * 86400 - h % 3600),
+                "load": {"sta": h % 14, "util": 8 + h % 55}}
+        if "WPA3" in enc:
+            info["rsn"] = {"akm": ["PSK", "SAE"], "pairwise": ["CCMP"], "group": "CCMP", "pmf": "optional", "transition": True}
+        elif "WPA2" in enc:
+            info["rsn"] = {"akm": ["PSK"], "pairwise": ["CCMP"], "group": "CCMP", "pmf": "off"}
+        if vendor in ("Ubiquiti", "Netgear"):
+            info["roaming"] = ["11k", "11r", "11v"]
+        if h % 3 == 0:
+            info["bss_color"] = 1 + h % 60
+        if h % 4 == 0:
+            info["rnr"] = [{"bssid": mac[:-2] + "f1", "ch": 5, "oc": 131}]
+        return info
 
     def observations(self, t):
         rng = self.rng
@@ -363,7 +385,7 @@ class DemoGenerator:
                 ch, csa = dfs_state(t)
             out.append({"csa": csa, "t": "wifi_ap", "ts": t + rng.random() * 50, "mac": mac, "ssid": ssid or None,
                         **_radio(ch), "enc": enc, "rssi": self._rssi(base), "vendor": vendor,
-                        "extra": {"hidden": True} if not ssid else None,
+                        "extra": {**({"hidden": True} if not ssid else {}), "ap": self._ap_info(mac, enc, vendor)},
                         "fp": {"wifi": WIFI_FPS[mac], "src": "beacon"} if mac in WIFI_FPS else None})
         for mac, vendor, sched, aps, base, probes in CLIENTS:
             if not present(sched, mac, t):
@@ -374,6 +396,8 @@ class DemoGenerator:
             for n in range(rng.randint(2, 6)):
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "bssid": bssid,
                             "frame": "data", "rssi": self._rssi(base), **_radio(APS[ap_i][2]), "vendor": vendor,
+                            "extra": {"rate_up": float(rng.choice((72.2, 144.4, 286.7, 433.3, 866.7))), "rate_down": float(rng.choice((144.4, 286.7, 573.5, 866.7))),
+                                      "noise": -92} if n == 1 else None,
                             "fp": {"wifi": fp, "src": "assoc"} if fp and n == 0 else None})
             if probes and rng.random() < 0.05:
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",
