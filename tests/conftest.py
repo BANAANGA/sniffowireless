@@ -7,3 +7,11 @@ def _privacy_mode_is_per_test():
     yield
     from sniffowireless import macprivacy
     macprivacy.set_current(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_learned_signatures_between_tests():
+    """The store registers what it has learned with identify.set_learner(); a test that built one must not feed the next."""
+    yield
+    from sniffowireless import identify
+    identify.set_learner(None)

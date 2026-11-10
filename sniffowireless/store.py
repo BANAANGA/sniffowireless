@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time
 
-from . import btversion, identify, macprivacy, wifiattrs
+from . import btversion, identify, macprivacy, ossig, wifiattrs
 from .config import _int
 from .oui import bt_company, bt_company_known
 from .sanitize import clean_str
@@ -198,10 +198,13 @@ class Store:
         os.makedirs(os.path.dirname(os.path.abspath(cfg.db_path)), exist_ok=True)
         self.conn = connect(cfg.db_path)
         self.conn.executescript(SCHEMA)
+        self.learner = ossig.OsLearner(self.conn)  # Wi-Fi signatures learned from devices whose OS is known (ossig.py)
+        identify.set_learner(self.learner.lookup)
         self._migrate()
         self.macpriv = None
         self.retention = {}     # days per kind of data from Settings -> Privacy (0 = RETENTION_DAYS)
         self._init_macprivacy()
+        self.learner.reload()   # (addresses may just have been replaced by pseudonyms)
         n = self.conn.execute(
             "UPDATE sessions SET open=0, end_reason=COALESCE(end_reason,'restart') WHERE open=1").rowcount
         if n:
@@ -348,10 +351,72 @@ class Store:
             links.append({"mac": other, "step": step, "ts": int(ts)})
             a_dev["extra"]["same_as"] = links
 
+    def _learn(self, dev):
+        """A client whose OS is established by strong evidence teaches its Wi-Fi signature (ossig.py)."""
+        if dev.get("kind") != "wifi_client":
+            return
+        sig = ossig.wifi_signature(dev)
+        fam = ossig.trusted_family(((dev.get("ident") or {}).get("evidence")))
+        if sig and fam:
+            self.learner.observe(dev["mac"], sig, fam)
+
+    def _load_dev(self, mac):
+        dev = self.devices.get(mac)
+        if dev is None:
+            row = self.conn.execute("SELECT * FROM devices WHERE mac=?", (mac,)).fetchone()
+            if not row:
+                return None
+            dev = dict(row)
+            dev["extra"] = json.loads(dev["extra"] or "{}")
+            dev["ident"] = json.loads(dev["ident"] or "null")
+            self.devices[mac] = dev
+        return dev
+
+    def propagate_linked_os(self):
+        """Carry the OS across Bluetooth <-> Wi-Fi links that a person confirmed: a phone has both radios, and its Wi-Fi side often
+        says more about the OS than its Bluetooth side. Only links with status 'linked' count; a pair that is later rejected loses it."""
+        try:
+            pairs = self.conn.execute("SELECT mac_a, mac_b, status FROM device_links").fetchall()
+        except sqlite3.OperationalError:
+            return 0
+        changed = 0
+
+        def refresh(dev):
+            dev.update(identify.identify(dev))
+            self.dirty.add(dev["mac"])
+
+        for a, b, status in pairs:
+            da, db = self._load_dev(a), self._load_dev(b)
+            if da is None or db is None:
+                continue
+            if status == "linked":
+                for src, dst in ((da, db), (db, da)):
+                    fam = ossig.trusted_family((src.get("ident") or {}).get("evidence"), 65)
+                    have = ossig.trusted_family((dst.get("ident") or {}).get("evidence"), 65)
+                    cur = dst["extra"].get("linked_os") or {}
+                    if fam and not have and (cur.get("os"), cur.get("from")) != (fam, src["mac"]):
+                        dst["extra"]["linked_os"] = {"os": fam, "from": src["mac"], "conf": 70}
+                        refresh(dst)
+                        changed += 1
+            else:
+                for dev, other in ((da, b), (db, a)):
+                    if (dev["extra"].get("linked_os") or {}).get("from") == other:
+                        dev["extra"].pop("linked_os", None)
+                        refresh(dev)
+                        changed += 1
+        return changed
+
     def reidentify_all(self):
-        """Re-run identification for every stored device (after the rules changed)."""
+        """Re-run identification for every stored device (after the rules changed). Two passes: the first lets devices with strong OS evidence
+        teach their Wi-Fi signatures, the second identifies everything again with what was learned."""
         rows = self.conn.execute("SELECT * FROM devices").fetchall()
         self.conn.execute("BEGIN")
+        for r in rows:
+            if r["kind"] == "wifi_client":
+                d = dict(r)
+                d["extra"] = json.loads(d["extra"] or "{}")
+                d["ident"] = identify.identify(d)["ident"]
+                self._learn(d)
         for r in rows:
             d = dict(r)
             d["extra"] = json.loads(d["extra"] or "{}")
@@ -361,7 +426,8 @@ class Store:
                                               res["wifi_gen"], res["era"], json.dumps(res["ident"]), d["mac"]))
         self.conn.execute("COMMIT")
         if rows:
-            log.info("Re-identified %d devices (identification rules v%d)", len(rows), identify.IDENT_VERSION)
+            log.info("Re-identified %d devices (identification rules v%d; %d Wi-Fi signatures learned from %d devices)", len(rows),
+                     identify.IDENT_VERSION, len(self.learner.counts), len(self.learner.seen))
 
     # ------------------------------------------------------------------ input
     def command(self, fn):
@@ -440,6 +506,7 @@ class Store:
                     last_flush = now
                 if now - last_prune >= 3600:
                     self.prune(now)
+                    self.propagate_linked_os()
                     last_prune = now
             except Exception:
                 log.exception("Store maintenance failed")
@@ -604,6 +671,7 @@ class Store:
         if fp_changed or dev.get("_ikey") != key or dev.get("ident") is None:
             dev["_ikey"] = key
             dev.update(identify.identify(dev))
+            self._learn(dev)
         if dev["kind"] in ("ble", "bt_classic"):  # after identification: the model it found can give the version
             btversion.apply(dev["kind"], ex, dev.get("model"))
         self.dirty.add(mac)
