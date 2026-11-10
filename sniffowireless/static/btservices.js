@@ -92,9 +92,31 @@ const BT_SERVICES = {
   'fe59': ['Nordic DFU', 'Firmware-update service of Nordic Semiconductor chips.'],
 };
 
+// Services worth a second look. Advertising one proves nothing about the device: whether it is a problem depends on
+// pairing and authentication, which a passive listener cannot see.
+const BT_RISK = {
+  '1105': 'Accepts files and contacts pushed to it. Old phones with weak settings were open to “BlueSnarf” attacks through this.',
+  '1106': 'Browsing and copying files. Should only work for a paired, trusted device.',
+  '112d': 'Gives access to the SIM card. Should only be available to a paired car kit.',
+  '112e': 'Reads contacts and call history. Should only work for a paired device.',
+  '112f': 'Offers contacts and call history. Should only be available to a paired car kit.',
+  '1132': 'Offers text messages. Should only be available to a paired device.',
+  '1133': 'Announces new text messages. Should only go to a paired device.',
+  '1134': 'Gives access to text messages. Should only be available to a paired device.',
+  '1101': 'A serial port is often an unauthenticated back door on cheap gadgets and industrial adapters.',
+  '1108': 'The old headset profile, replaced by Hands-Free. Suggests an old device that may not be updated.',
+  '1124': 'A keyboard-type service: if it accepts connections without proper pairing, keystrokes can be injected.',
+  '1802': 'Often lets anyone in range make the device beep or flash.',
+  'fe59': 'Firmware update service. A risk only if updates are not signed or the service is not protected.',
+  '1827': 'Mesh provisioning is open: the device can be added to a Bluetooth Mesh network. Check that this is intended.',
+  '1828': 'A Bluetooth Mesh gateway: nearby phones can talk to the mesh through it.',
+  '1115': 'Can use a network connection shared over Bluetooth.',
+  '1116': 'Shares a network connection over Bluetooth. Check that this is intended.',
+};
+
 function btServiceInfo(u) {
   const k = String(u).toLowerCase();
-  if (BT_SERVICES[k]) return { name: BT_SERVICES[k][0], text: BT_SERVICES[k][1] };
+  if (BT_SERVICES[k]) return { name: BT_SERVICES[k][0], text: BT_SERVICES[k][1], risk: BT_RISK[k] || null };
   const n = parseInt(k, 16);
   if (n >= 0xFC00 && n <= 0xFFFF) return { name: null, text: 'A service number assigned to a Bluetooth member company. This app does not know which one, and the device may use it for its own protocol.' };
   return { name: null, text: 'Not a service this app recognises. It may be a newer standard service or a vendor-specific one.' };
@@ -103,6 +125,7 @@ function btServiceInfo(u) {
 function btServiceTags(uuids) {
   return (uuids || []).map(u => {
     const i = btServiceInfo(u);
-    return `<span class="svc" tabindex="0" title="${esc(`0x${u}${i.name ? ' · ' + i.name : ''}\n${i.text}`)}"><span class="mono">${esc(u)}</span>${i.name ? ` <span class="faint">${esc(i.name)}</span>` : ''}</span>`;
+    const tip = `0x${u}${i.name ? ' · ' + i.name : ''}\n${i.text}` + (i.risk ? `\n\nWorth a look: ${i.risk}\n(The device only advertises this service; the scan cannot tell whether it is protected.)` : '');
+    return `<span class="svc${i.risk ? ' svc-risk' : ''}" tabindex="0" title="${esc(tip)}"><span class="mono">${esc(u)}</span>${i.name ? ` <span class="faint">${esc(i.name)}</span>` : ''}${i.risk ? ' <span class="svc-flag" aria-label="worth a look">⚠</span>' : ''}</span>`;
   }).join(', ');
 }

@@ -568,3 +568,5 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 
 .svc { cursor: help; border-bottom: 1px dotted var(--muted); }
 .svc:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+.svc-flag { color: var(--warn, #d9a441); font-size: .9em; }
+.svc-risk { border-bottom-style: solid; }
