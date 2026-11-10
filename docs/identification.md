@@ -33,6 +33,15 @@ sniffowireless works out what each device is purely from what it broadcasts. Not
 
 What is **not** detected: the exact model of an access point that announces no name and no WPS information (most TP-Link Omada and many UniFi beacons carry nothing more than capabilities, which only say *Wi-Fi 6, 4×4, 160 MHz*), and anything from Aruba's LLDP text, whose format I could not confirm. The rules are written from the makers' public model names and Wireshark's element layouts and have not been tried against captures from real access points.
 
+**Cars.** What is used, strongest first:
+- A Tesla's Bluetooth name. Tesla documents it in its vehicle-command protocol: `S` + the first 8 bytes of the SHA-1 of the VIN as lower-case hex + `C` (for example `S1a2b3c4d5e6f7a8bC`). That is a Tesla, high confidence.
+- The MAC vendor name of the car maker: *Tesla, Inc.*, *Mercedes-Benz* / *Daimler AG*, *Volkswagen*, *Audi AG*, *Porsche*, *BMW*, *Ford Motor*, *General Motors*, *Volvo Car*, *Toyota Motor*, *Rivian*. Look-alike vendors are not matched: *TESLA, a.s.* (a Czech electronics company), *Tesla Controls*, *Pico-Tesla*, *Meridian Audio*, *Toyota Motorsport*. *Daimler Truck* is named but not called a car.
+- The Bluetooth company ID of those makers, for the car and its key.
+- A hotspot or device **named** after a make (`Tesla Model 3`, `AUDI Q5`, `BMW_5A2B`, `Ford Mustang`), as whole words only: `Audio`, `Stanford` or `Claudia` are not cars. Ford counts only with a model or SYNC, because on its own it is a surname.
+- Tesla's own equipment is not a car: a `TeslaWallConnector_…` network is an *EV charger* and `TeslaPW_…` a Powerwall (*Smart home*).
+
+What does **not** work: most cars use a supplier's network chip (Harman, Continental, Qualcomm, ...) and many connect with a randomised address, so there is no maker in the address; and I found no documented Wi-Fi or Bluetooth naming for Mercedes, so it is only recognised by its vendor name, its Bluetooth company ID or a hotspot name that says so.
+
 **Estimated age** comes from the newest standard a device supports (it can't predate it), or from the model's release year when that is known (AirPods/Beats). For phones, computers, TVs and routers sniffowireless also gives an upper bound: a laptop with only Wi-Fi 5 is typically from 2013–2020. Printers and IoT devices still ship with Wi-Fi 4 today, so for those only "N or newer" is shown.
 
 **Limits:** results are best-effort. Devices with randomized MACs and no name (most phones while idle) can often only be identified as "Apple phone, Wi-Fi 6" or "phone". Clients only reveal capabilities in probe/association frames, so a device first has to scan or (re)connect while the sensor is on its channel. When the rules improve in a new version, all stored devices are re-identified automatically on startup.

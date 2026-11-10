@@ -156,7 +156,7 @@ const DEV_TYPES = {
   phone: 'Phone', tablet: 'Tablet', laptop: 'Laptop', desktop: 'Desktop PC', computer: 'Computer', watch: 'Smartwatch',
   wearable: 'Wearable', headphones: 'Headphones', speaker: 'Speaker', tv: 'TV', streaming: 'Streaming device',
   console: 'Game console', controller: 'Game controller', printer: 'Printer', camera: 'Camera', tag: 'Tracker tag',
-  sensor: 'Sensor', iot: 'IoT device', light: 'Smart light', input: 'Keyboard / mouse', car: 'Car',
+  sensor: 'Sensor', iot: 'IoT device', light: 'Smart light', input: 'Keyboard / mouse', car: 'Car', charger: 'EV charger',
   router: 'Router / access point', hotspot: 'Mobile hotspot', smart_home: 'Smart home', beacon: 'Beacon',
   sbc: 'Single-board computer', media: 'Media device', network: 'Network device', nas: 'NAS / storage', server: 'Server', bike: 'Bike / e-bike',
 };
