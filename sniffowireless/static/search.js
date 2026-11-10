@@ -44,7 +44,7 @@ function searchItem(sec, x, q) {
   if (!input) return;
   let timer = null, seq = 0, active = -1;
   const links = () => [...pop.querySelectorAll('a.sr')];
-  const close = () => { pop.hidden = true; active = -1; };
+  const close = () => { clearTimeout(timer); seq++; pop.hidden = true; active = -1; };  // seq++: drop a reply still on its way
   const mark = i => {
     const l = links();
     l.forEach((a, j) => a.classList.toggle('on', j === i));
@@ -56,7 +56,7 @@ function searchItem(sec, x, q) {
     if (q.length < 2) { close(); return; }
     const id = ++seq;
     const r = await api(`/api/search?q=${enc(q)}&limit=5`);
-    if (id !== seq) return;  // a newer query is on its way
+    if (id !== seq || document.activeElement !== input) return;  // a newer query is on its way, or the box lost focus meanwhile
     const secs = SEARCH_SECTIONS.filter(([k]) => r.results[k].length);
     pop.innerHTML = (secs.length ? secs.map(([k, label]) => `<div class="sr-sec">${label}</div>` + r.results[k].map(x => {
       const [href, title, meta] = searchItem(k, x, q);
@@ -88,6 +88,7 @@ function searchItem(sec, x, q) {
   pop.addEventListener('mousedown', e => e.preventDefault());  // keep focus while clicking a result
   pop.addEventListener('click', e => { if (e.target.closest('a')) { close(); input.blur(); } });
   input.addEventListener('blur', () => setTimeout(close, 100));
+  window.addEventListener('hashchange', close);  // moving to another page: never leave the list over its content
   document.addEventListener('keydown', e => {
     if (e.key === '/' && !e.ctrlKey && !e.metaKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
       e.preventDefault();
