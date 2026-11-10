@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-from . import apmodels, wifiattrs
+from . import apmodels, ossig, wifiattrs
 
 IDENT_VERSION = 11
 
@@ -614,6 +614,50 @@ class Evidence:
         cands = [e for e in self.items if e["field"] == field]
         return max(cands, key=lambda e: e["conf"]) if cands else None
 
+    def resolve(self, field):
+        """The value the evidence points to, with the confidence of all of it together.
+
+        Clues for the same value are grouped (for the OS by family: "Android 14" and "Android" agree, "iOS / macOS" and "iOS" too). Within a
+        group each *kind* of source counts once, at its strongest, because two DHCP details are one source, not two. Different kinds add up
+        like independent witnesses (the second and later at 60 %: they are rarely fully independent), capped at 97. When another value is
+        well supported too, the winner is marked as contested (x0.85) and the rivals are returned in `also`."""
+        items = [e for e in self.items if e["field"] == field]
+        if not items:
+            return None
+        groups = {}
+        for e in items:
+            key = ossig.os_key(e["value"]) if field == "os" else str(e["value"]).strip().lower()
+            groups.setdefault(key, []).append(e)
+        scored = []
+        for members in groups.values():
+            by_kind = {}
+            for e in members:
+                k = ossig.source_category(e["source"])
+                if k not in by_kind or e["conf"] > by_kind[k]["conf"]:
+                    by_kind[k] = e
+            ranked = sorted(by_kind.values(), key=lambda e: -e["conf"])
+            miss = 1 - ranked[0]["conf"] / 100
+            for e in ranked[1:]:
+                miss *= 1 - 0.6 * e["conf"] / 100
+            lead = ranked[0]
+            specific = max((e for e in members if e["conf"] >= lead["conf"] - 10), key=lambda e: len(str(e["value"])))   # "Android 14" over "Android"
+            scored.append({"value": specific["value"], "conf": min(97, round(100 * (1 - miss))), "source": lead["source"], "agree": len(ranked)})
+        scored.sort(key=lambda g: -g["conf"])
+        top = dict(scored[0])
+        rivals = [g for g in scored[1:] if not (field == "os" and ossig.os_compatible(top["value"], g["value"]))]   # "Linux" next to "Android" is no conflict
+        if any(g["conf"] >= 40 and g["conf"] >= 0.6 * top["conf"] for g in rivals):
+            top["conf"] = round(top["conf"] * 0.85)
+        top["also"] = [{"value": g["value"], "conf": g["conf"], "source": g["source"]} for g in rivals if g["conf"] >= 30][:3]
+        return top
+
+
+_learner = {"fn": None}
+
+
+def set_learner(fn):
+    """fn(signature, mac) -> (os family, devices, share) or None: what the store has learned about Wi-Fi signatures (ossig.OsLearner.lookup)."""
+    _learner["fn"] = fn
+
 
 def identify(dev):
     """Return identification columns + a detailed 'ident' dict for a device record."""
@@ -815,12 +859,26 @@ def identify(dev):
         ev.add("type", {"audio/video": "media", "computer": "computer", "phone": "phone",
                         "wearable": "wearable"}.get(extra["class"]), 55, f"Bluetooth device class “{extra['class']}”")
 
+    # --- learned from the network: the same Wi-Fi capability pattern as devices whose OS is known
+    if kind == "wifi_client" and _learner["fn"]:
+        sig = ossig.wifi_signature(dev)
+        got = _learner["fn"](sig, dev.get("mac")) if sig else None
+        if got:
+            fam, n, share = got
+            ev.add("os", fam, ossig.learned_conf(n, share), f"Wi-Fi capability pattern shared with {n} device{'s' if n != 1 else ''} identified as {fam}")
+    # --- carried over a Bluetooth <-> Wi-Fi link that was confirmed by a person
+    linked = extra.get("linked_os")
+    if isinstance(linked, dict) and linked.get("os"):
+        ev.add("os", linked["os"], int(linked.get("conf") or 70), f"Linked to {linked.get('from')} (confirmed by you), which is identified as {linked['os']}")
+
     # --- resolve
-    out = {}
+    out, agree, also = {}, {}, {}
     for f in ("brand", "model", "type", "os", "wifi", "chipset"):
-        b = ev.best(f)
+        b = ev.resolve(f)
         out[f] = b["value"] if b else None
         out[f + "_conf"] = b["conf"] if b else 0
+        if b:
+            agree[f], also[f] = b["agree"], b["also"]
     era = max(years) if years else None
     gen = wfp.get("gen") if wfp else None
     six = dev.get("band") == "6"
@@ -840,7 +898,7 @@ def identify(dev):
     ident = {
         "version": IDENT_VERSION,
         "label": label_for(out),
-        "fields": {f: {"value": out[f], "conf": out[f + "_conf"],
+        "fields": {f: {"value": out[f], "conf": out[f + "_conf"], "agree": agree[f], **({"also": also[f]} if also[f] else {}),
                        "level": next(l for t, l in CONF_LABEL if out[f + "_conf"] >= t)}
                    for f in ("brand", "model", "type", "os", "wifi", "chipset") if out[f]},
         "features": sorted({e["value"] for e in ev.items if e["field"] == "feature"}),
