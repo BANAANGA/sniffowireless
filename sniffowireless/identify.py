@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-IDENT_VERSION = 4
+IDENT_VERSION = 5
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -386,14 +386,17 @@ NAME_RULES = [
     (r"\bHomePod( mini)?\b", "Apple", "speaker", None, True, None),
     (r"\bAirPods( Pro| Max)?\b", "Apple", "headphones", None, True, None),
     (r"\bBeats\b|\bPowerbeats\b", "Beats (Apple)", "headphones", None, True, None),
-    (r"\bGalaxy Watch ?\d*\w*", "Samsung", "watch", "Wear OS", True, None),
-    (r"\bGalaxy Buds ?\w*", "Samsung", "headphones", None, True, None),
-    (r"\bGalaxy Tab ?\w*", "Samsung", "tablet", "Android", True, None),
-    (r"\bGalaxy (S|Z|A|M|Note) ?\d+\w*", "Samsung", "phone", "Android", True, None),
+    (r"\bGalaxy[ _-]?Watch[ _-]?\d*\w*(?:[ _-](?:Classic|Ultra|FE|Pro|Plus))?", "Samsung", "watch", "Wear OS", True, None),
+    (r"\bGalaxy[ _-]?Buds[ _-]?\w*(?:[ _-](?:Pro|Plus|Live|FE))?", "Samsung", "headphones", None, True, None),
+    (r"\bGalaxy[ _-]?Tab[ _-]?\w*\+?(?:[ _-](?:Ultra|FE|Plus|Lite))*", "Samsung", "tablet", "Android", True, None),
+    (r"\bGalaxy[ _-]Z[ _-]?(Flip|Fold)[ _-]?\d*\w*", "Samsung", "phone", "Android", True, None),
+    (r"\bGalaxy[ _-]?(S|A|M|Note)[ _-]?\d+\w*\+?(?:[ _-](?:Ultra|FE|Plus|5G))*", "Samsung", "phone", "Android", True, None),
     (r"\[TV\]|\bSamsung .*\bTV\b|\bQ\d{2}\w* Series\b", "Samsung", "tv", "Tizen", False, None),
-    (r"\bPixel Watch\b", "Google", "watch", "Wear OS", True, None),
-    (r"\bPixel Buds\b", "Google", "headphones", None, True, None),
-    (r"\bPixel ?\d+\w*( Pro| a)?\b", "Google", "phone", "Android", True, None),
+    (r"\bPixel[ _-]?Watch\b", "Google", "watch", "Wear OS", True, None),
+    (r"\bPixel[ _-]?Buds\b", "Google", "headphones", None, True, None),
+    (r"\bPixel[ _-]Fold\b", "Google", "phone", "Android", True, None),
+    (r"\bPixel[ _-]Tablet\b", "Google", "tablet", "Android", True, None),
+    (r"\bPixel[ _-]?\d+\w*(?:[ _-](?:Pro(?:[ _-](?:XL|Fold))?|XL))?\b", "Google", "phone", "Android", True, None),
     (r"\bChromecast\b", "Google", "streaming", None, True, None),
     (r"\b(Google|Nest) (Home|Mini|Hub|Audio)\b", "Google", "speaker", None, True, None),
     (r"\b(Google|Nest) Wifi\b", "Google", "router", None, True, None),  # a mesh router, not a speaker
@@ -517,6 +520,48 @@ def short_vendor(v):
     return SUFFIXES.sub("", v).strip(" ,.") or v
 
 
+def tidy_model(text):
+    """A model name found in a name or hostname: separators become spaces ("Galaxy-S23-Ultra" -> "Galaxy S23 Ultra") and an all
+    lowercase one (routers often lowercase hostnames) gets its capitals back."""
+    t = re.sub(r"[ _-]+", " ", text).strip()
+    if t == t.lower():
+        t = " ".join({"fe": "FE", "xl": "XL", "5g": "5G"}.get(w) or (w.capitalize() if w[:1].isalpha() else w) for w in t.split())
+    return t
+
+
+# Samsung model numbers: SM-<line letter><3 digits><region letters>, e.g. SM-S918B. The line letter says what kind of device it is (Samsung
+# publishes no table, so these are the commonly documented lines). Marketing names only for models confirmed from published model lists.
+SM_RX = re.compile(r"\bSM-([A-Z])(\d{3})([A-Z0-9]{0,3})\b", re.I)
+SM_TYPES = {"A": "phone", "S": "phone", "G": "phone", "N": "phone", "F": "phone", "M": "phone", "J": "phone",
+            "T": "tablet", "X": "tablet", "P": "tablet"}
+SM_NAMES = {  # letter + digits -> (marketing name, year)
+    "S921": ("Galaxy S24", 2024), "S926": ("Galaxy S24+", 2024), "S928": ("Galaxy S24 Ultra", 2024),
+    "S911": ("Galaxy S23", 2023), "S916": ("Galaxy S23+", 2023), "S918": ("Galaxy S23 Ultra", 2023),
+    "S901": ("Galaxy S22", 2022), "S906": ("Galaxy S22+", 2022), "S908": ("Galaxy S22 Ultra", 2022),
+    "G991": ("Galaxy S21", 2021), "G996": ("Galaxy S21+", 2021), "G998": ("Galaxy S21 Ultra", 2021),
+    "F741": ("Galaxy Z Flip6", 2024), "F946": ("Galaxy Z Fold5", 2023),
+}
+
+
+def samsung_model_evidence(ev, years, text, source):
+    """Evidence from a Samsung model number in `text` (a WPS model, a device or Bluetooth name). True when there was one."""
+    m = SM_RX.search(text or "")
+    if not m:
+        return False
+    letter, digits = m.group(1).upper(), m.group(2)
+    number = f"SM-{letter}{digits}{m.group(3).upper()}"
+    src = f"{source}: Samsung model number {number}"
+    ev.add("brand", "Samsung", 88, src)
+    if letter in SM_TYPES:
+        ev.add("type", SM_TYPES[letter], 78, src)
+        ev.add("os", "Android", 70, src)
+    known = SM_NAMES.get(letter + digits)
+    ev.add("model", known[0] if known else number, 90 if known else 80, src)
+    if known:
+        years.append((known[1], f"{known[0]} released {known[1]}"))
+    return True
+
+
 class Evidence:
     def __init__(self):
         self.items = []
@@ -570,6 +615,7 @@ def identify(dev):
     for text, what in ((name, "Device name"), (ssid if kind == "ap" else None, "Network name")):
         if not text:
             continue
+        samsung_model_evidence(ev, years, text, f"{what} “{text}”")
         for rx, brand, typ, os_, as_model, year in NAME_RULES:
             m = rx.search(text)
             if m:
@@ -577,7 +623,7 @@ def identify(dev):
                 ev.add("type", typ, 70 if what == "Device name" else 45, f"{what} “{text}”")
                 ev.add("os", os_, 65, f"{what} “{text}”")
                 if as_model:
-                    ev.add("model", m.group(0).strip(), 60, f"{what} “{text}”")
+                    ev.add("model", tidy_model(m.group(0)), 60, f"{what} “{text}”")
                 break
     if kind == "ap" and ssid:
         for rx, brand, typ, os_ in SSID_RULES:
@@ -625,8 +671,10 @@ def identify(dev):
             model = " ".join(x for x in (wps.get("model"), wps.get("model_number")) if x and x != wps.get("manufacturer"))
             if model:
                 ev.add("model", model, 85, f"{src}: model")
+                samsung_model_evidence(ev, years, model, src)
             if wps.get("device_name"):
                 ev.add("name", wps["device_name"], 80, f"{src}: device name")
+                samsung_model_evidence(ev, years, wps["device_name"], f"{src}: device name")
                 for rx, brand, typ, os_, _m, _y in NAME_RULES:
                     if rx.search(wps["device_name"]):
                         ev.add("brand", brand, 72, f"{src}: device name “{wps['device_name']}”")
