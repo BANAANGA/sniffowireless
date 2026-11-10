@@ -840,6 +840,10 @@ async function viewDevice(mac, params) {
     ex.appearance ? ['Appearance', esc(ex.appearance)] : null,
     ex.class ? ['Device class', esc(ex.class)] : null,
     ex.tx_power != null ? ['TX power', `${ex.tx_power} dBm`] : null,
+    ex.flags != null ? ['Advertised flags', btFlagsText(ex.flags)] : null,
+    ex.conn_interval ? ['Preferred connection interval', ex.conn_interval[0] === ex.conn_interval[1] ? `${ex.conn_interval[0]} ms` : `${ex.conn_interval[0]}–${ex.conn_interval[1]} ms`] : null,
+    ex.adv_interval ? ['Advertising interval', `≈ ${ex.adv_interval} ms <span class="faint">(estimated from how often it was heard)</span>`] : null,
+    ex.ibeacon ? ['iBeacon', `<span class="mono">${esc(ex.ibeacon.uuid)}</span> <span class="faint">major</span> ${ex.ibeacon.major} <span class="faint">minor</span> ${ex.ibeacon.minor}${ex.ibeacon.power != null ? ` <span class="faint">· ${ex.ibeacon.power} dBm at 1 m</span>` : ''}`] : null,
     ex.bt_ver || ex.bt_version ? ['Bluetooth version', btVerDetail(ex)] : null,
     ex.bt_probe ? ['Last version request', ex.bt_probe.ok ? `answered <span class="faint">${ago(ex.bt_probe.ts)}${ex.bt_probe.adapter ? ' via ' + esc(ex.bt_probe.adapter) : ''}</span>`
       : `<span class="warn-text">failed</span> <span class="faint">${ago(ex.bt_probe.ts)}: ${esc(ex.bt_probe.error || 'unknown error')}</span>`] : null,

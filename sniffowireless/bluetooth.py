@@ -112,8 +112,18 @@ def parse_ad(data):
         elif t == 0xFF and len(v) >= 2:
             out["company_id"] = v[0] | v[1] << 8
             out["mfg"] = bytes(v[2:34])
+        elif t == 0x01 and v:  # Flags: bit0 limited / bit1 general discoverable, bit2 "BR/EDR not supported"
+            out["flags"] = v[0]
         elif t in (0x02, 0x03):
             uuids += [f"{v[j] | v[j + 1] << 8:04x}" for j in range(0, len(v) - 1, 2)]
+        elif t in (0x04, 0x05):  # 32-bit UUIDs
+            uuids += [uuid_label(bytes(v[j:j + 4][::-1])) for j in range(0, len(v) - 3, 4)]
+        elif t in (0x06, 0x07):  # 128-bit UUIDs (most vendor-specific services)
+            uuids += [uuid_label(bytes(v[j:j + 16][::-1])) for j in range(0, len(v) - 15, 16)]
+        elif t == 0x12 and len(v) >= 4:  # Peripheral connection interval range, units of 1.25 ms (0xFFFF: no preference)
+            lo, hi = v[0] | v[1] << 8, v[2] | v[3] << 8
+            if 6 <= lo <= hi <= 3200:
+                out["conn_interval"] = [round(lo * 1.25, 2), round(hi * 1.25, 2)]
         elif t == 0x16 and len(v) >= 2:
             u = v[0] | v[1] << 8
             uuids.append(f"{u:04x}")
@@ -131,8 +141,58 @@ def parse_ad(data):
             out["esl"] = True
         i += 1 + ln
     if uuids:
-        out["uuids"] = sorted(set(uuids))[:16]
+        out["uuids"] = sorted(set(uuids), key=lambda u: (len(u), u))[:16]  # standard short ones first
+    beacon = ibeacon(out.get("mfg"), out.get("company_id"))
+    if beacon:
+        out["ibeacon"] = beacon
     return out
+
+
+BASE_UUID_TAIL = bytes.fromhex("00001000800000805f9b34fb")  # the Bluetooth base UUID after its first 4 bytes
+
+
+def uuid_label(b):
+    """A UUID given most-significant byte first: 16-bit ones as '180f', other 32-bit ones as 8 hex digits, everything
+    else as the dashed 128-bit form. A 128-bit UUID on the Bluetooth base is shortened to its 16/32-bit form."""
+    if len(b) == 4:
+        return b.hex()[4:] if b[:2] == b"\x00\x00" else b.hex()
+    if len(b) == 16 and b[4:] == BASE_UUID_TAIL:
+        return uuid_label(b[:4])
+    h = b.hex()
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
+
+
+def ibeacon(mfg, cid):
+    """Apple iBeacon: manufacturer data 02 15 <16-byte UUID> <major BE> <minor BE> <measured power at 1 m>."""
+    if cid != 0x004C or not mfg or len(mfg) < 23 or mfg[0] != 0x02 or mfg[1] != 0x15:
+        return None
+    mp = mfg[22]
+    return {"uuid": uuid_label(bytes(mfg[2:18])), "major": mfg[18] << 8 | mfg[19], "minor": mfg[20] << 8 | mfg[21],
+            "power": mp - 256 if mp > 127 else mp}
+
+
+class AdvInterval:
+    """Estimate how often a device advertises from the gaps between its packets (scan responses left out).
+    The scanner hears one of three channels at a time, so the estimate is the typical gap among the shortest
+    plausible ones; it is only reported after enough samples and is rounded."""
+    MIN_GAP, MAX_GAP, NEED, KEEP = 0.020, 5.0, 8, 24
+
+    def __init__(self, limit=20000):
+        self.limit, self.d = limit, {}
+
+    def update(self, mac, now):
+        last, gaps = self.d.get(mac, (None, []))
+        if last is not None and self.MIN_GAP <= now - last <= self.MAX_GAP:
+            gaps = (gaps + [now - last])[-self.KEEP:]
+        if len(self.d) >= self.limit and mac not in self.d:
+            self.d.clear()
+        self.d[mac] = (now, gaps)
+        if len(gaps) < self.NEED:
+            return None
+        lo = min(gaps)
+        near = sorted(g for g in gaps if g <= lo * 1.3)
+        est = near[len(near) // 2] * 1000
+        return int(round(est / 10.0) * 10) if est < 1000 else int(round(est / 50.0) * 50)
 
 
 def classify_le_addr(addr_type, mac):
@@ -167,7 +227,7 @@ def parse_event(pkt):
                 r = _rssi(p[i + 9 + ln]) if i + 9 + ln < len(p) else None
                 i += 10 + ln
                 out.append({"ev": "adv", "mac": bdaddr(addr), "addr_type": atype, "rssi": r,
-                            "connectable": evt_type in (0, 1), "ad": parse_ad(data)})
+                            "connectable": evt_type in (0, 1), "ad": parse_ad(data), "srsp": evt_type == 4})
         elif sub == 0x0D:  # LE extended advertising report
             n, i = p[1], 2
             for _ in range(n):
@@ -182,7 +242,7 @@ def parse_event(pkt):
                 i += 24 + ln
                 out.append({"ev": "adv", "mac": bdaddr(addr), "addr_type": atype, "rssi": r,
                             "connectable": bool(evt_type & 0x01), "ad": parse_ad(data),
-                            "ext": not evt_type & 0x10, "phy": phy})  # evt_type bit 4 set = legacy PDU
+                            "ext": not evt_type & 0x10, "phy": phy, "srsp": bool(evt_type & 0x08)})  # evt_type bit 4 set = legacy PDU
         elif sub in (0x01, 0x0A, 0x29) and len(p) >= 12 and p[1] == 0:  # LE (enhanced, v2) connection complete
             handle = p[2] | (p[3] & 0x0F) << 8
             out.append({"ev": "conn", "handle": handle, "mac": bdaddr(p[6:12]), "le": True,
@@ -249,6 +309,8 @@ class BluetoothSensor:
         self.caps = []          # LE features of the controller (LE_FEATURES labels)
         self.version = None     # {"version": "6.0", "chip": "Intel", ...} from Read Local Version Information
         self.fp_seen = {}       # mac -> (fingerprint, ts) to avoid re-sending identical fingerprints
+        self.intervals = AdvInterval()
+        self.interval_sent = {}  # mac -> last estimate sent, to resend only on a real change
         self.probe_lock = threading.Lock()
         self.probe_busy, self.probe_times = False, []
         self.packets = 0
@@ -486,6 +548,15 @@ class BluetoothSensor:
                 self.fp_seen[ev["mac"]] = (fp, now)
             else:
                 fp = None
+            est = None if ev.get("srsp") else self.intervals.update(ev["mac"], now)
+            if est is not None:
+                sent = self.interval_sent.get(ev["mac"])
+                if sent is not None and abs(est - sent) <= max(20, sent * 0.2):
+                    est = None
+                else:
+                    if len(self.interval_sent) > 50_000:
+                        self.interval_sent.clear()
+                    self.interval_sent[ev["mac"]] = est
             broadcast = {"name": ad.get("broadcast_name"), "id": ad.get("broadcast_id"), **(ad.get("auracast") or {})}
             self.store.put({
                 "t": "bt", "kind": "ble", "ts": now, "mac": ev["mac"], "rssi": ev["rssi"],
@@ -496,7 +567,9 @@ class BluetoothSensor:
                           "connectable": ev["connectable"], "phy": ev.get("phy") if ev.get("ext") else None,
                           "ext_adv": True if ev.get("ext") else None,
                           "auracast": {k: v for k, v in broadcast.items() if v is not None} or None,
-                          "esl": True if ad.get("esl") else None, "encrypted_ad": True if ad.get("encrypted_ad") else None},
+                          "esl": True if ad.get("esl") else None, "encrypted_ad": True if ad.get("encrypted_ad") else None,
+                          "flags": ad.get("flags"), "conn_interval": ad.get("conn_interval"), "ibeacon": ad.get("ibeacon"),
+                          "adv_interval": est},
                 "fp": {"ble": fp} if fp else None,
             })
             status.update(self.name, adverts=self.packets)

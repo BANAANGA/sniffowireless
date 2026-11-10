@@ -92,6 +92,10 @@ const BT_SERVICES = {
   'fe59': ['Nordic DFU', 'Firmware-update service of Nordic Semiconductor chips.'],
 };
 
+const BT_SERVICES_LONG = {
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e': ['Nordic UART', 'A serial-style data channel over Bluetooth LE used by many hobby and Nordic-chip devices to send text or commands.'],
+};
+
 // Services worth a second look. Advertising one proves nothing about the device: whether it is a problem depends on
 // pairing and authentication, which a passive listener cannot see.
 const BT_RISK = {
@@ -116,6 +120,9 @@ const BT_RISK = {
 
 function btServiceInfo(u) {
   const k = String(u).toLowerCase();
+  if (k.length > 4 && BT_SERVICES_LONG[k]) return { name: BT_SERVICES_LONG[k][0], text: BT_SERVICES_LONG[k][1], risk: null };
+  if (k.length === 36) return { name: null, text: 'A vendor-specific (128-bit) service. Manufacturers use these for their own protocol, so the number alone does not say what the device does.', risk: null };
+  if (k.length === 8) return { name: null, text: 'A 32-bit service number. Rarely used; the app does not recognise it.', risk: null };
   if (BT_SERVICES[k]) return { name: BT_SERVICES[k][0], text: BT_SERVICES[k][1], risk: BT_RISK[k] || null };
   const n = parseInt(k, 16);
   if (n >= 0xFC00 && n <= 0xFFFF) return { name: null, text: 'A service number assigned to a Bluetooth member company. This app does not know which one, and the device may use it for its own protocol.' };
@@ -125,7 +132,14 @@ function btServiceInfo(u) {
 function btServiceTags(uuids) {
   return (uuids || []).map(u => {
     const i = btServiceInfo(u);
-    const tip = `0x${u}${i.name ? ' · ' + i.name : ''}\n${i.text}` + (i.risk ? `\n\nWorth a look: ${i.risk}\n(The device only advertises this service; the scan cannot tell whether it is protected.)` : '');
+    const tip = `${u.length <= 8 ? '0x' : ''}${u}${i.name ? ' · ' + i.name : ''}\n${i.text}` + (i.risk ? `\n\nWorth a look: ${i.risk}\n(The device only advertises this service; the scan cannot tell whether it is protected.)` : '');
     return `<span class="svc${i.risk ? ' svc-risk' : ''}" tabindex="0" title="${esc(tip)}"><span class="mono">${esc(u)}</span>${i.name ? ` <span class="faint">${esc(i.name)}</span>` : ''}${i.risk ? ' <span class="svc-flag" aria-label="worth a look">⚠</span>' : ''}</span>`;
   }).join(', ');
+}
+
+function btFlagsText(f) {
+  const parts = [];
+  parts.push(f & 2 ? 'general discoverable' : f & 1 ? 'limited discoverable' : 'not discoverable');
+  parts.push(f & 4 ? 'LE only (no classic Bluetooth)' : 'also supports classic Bluetooth');
+  return esc(parts.join(' · '));
 }
