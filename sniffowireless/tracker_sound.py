@@ -37,6 +37,8 @@ class SoundError(Exception):
 
 
 def _open_socket(dev_id):
+    if not hasattr(socket, "AF_BLUETOOTH"):  # a Python built without Bluetooth support has no such constant
+        raise SoundError("This Python has no Bluetooth socket support (it was built without it)")
     s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
     try:
         fcntl.ioctl(s.fileno(), HCIDEVUP, dev_id)

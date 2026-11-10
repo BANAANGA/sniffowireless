@@ -521,3 +521,16 @@ def test_ensure_monitor_says_why_the_link_wont_come_up(monkeypatch):
         wifi.ensure_monitor("wlanX")
     monkeypatch.setattr(wifi, "run_cmd", lambda *a: (0, ""))
     assert wifi.ensure_monitor("wlanX") == "wlanX"
+
+
+def test_a_python_without_bluetooth_sockets_fails_cleanly(monkeypatch):
+    """Some Python builds (e.g. CI runners) have no socket.AF_BLUETOOTH: that must be a clear error, not an AttributeError."""
+    import socket
+    import pytest as pt
+    from sniffowireless.tracker_sound import SoundError, play_sound
+    monkeypatch.delattr(socket, "AF_BLUETOOTH", raising=False)
+    with pt.raises(SoundError, match="no Bluetooth socket support"):
+        play_sound("hci0", "aa:bb:cc:dd:ee:ff")
+    from sniffowireless import adapters
+    with pt.raises(OSError, match="no Bluetooth socket support"):
+        adapters.reset_bluetooth({"name": "bt:hci0", "iface": "hci0"}, False)
