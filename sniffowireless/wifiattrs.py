@@ -7,7 +7,6 @@ which an opt-in feature can use to link a device across its randomised MAC addre
 Bit and suite numbers come from the IEEE 802.11 definitions as published in hostapd (src/common/ieee802_11_defs.h and
 wpa_common.h). Nothing here transmits.
 """
-import struct
 
 # ---- RSN (WPA2 / WPA3) suite selectors, OUI 00-0f-ac
 RSN_AKM = {1: "802.1X", 2: "PSK", 3: "FT-802.1X", 4: "FT-PSK", 5: "802.1X-SHA256", 6: "PSK-SHA256", 8: "SAE", 9: "FT-SAE",

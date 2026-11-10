@@ -1,0 +1,29 @@
+name: Stable branch
+
+# The `stable` branch follows full releases only: it moves when a release with a whole-number tag (30, 31, ...) is published,
+# never for point releases (30.1) or pre-releases, and never from a push. A push that cannot fast-forward is refused rather
+# than forced, so history on `stable` is never rewritten.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  stable:
+    if: ${{ !github.event.release.prerelease && !github.event.release.draft && !contains(github.event.release.tag_name, '.') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move stable to this release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in (*[!0-9]*|"") echo "Release $TAG is not a whole-number version; leaving stable alone"; exit 0;; esac
+          git init -q .
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git fetch -q --depth=1 origin "refs/tags/$TAG"
+          sha="$(git rev-parse FETCH_HEAD^{commit})"
+          git push origin "$sha:refs/heads/stable"
+          echo "stable now points at release $TAG ($sha)" >> "$GITHUB_STEP_SUMMARY"

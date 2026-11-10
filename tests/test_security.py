@@ -1148,3 +1148,18 @@ def test_status_tells_the_page_when_the_server_was_updated(env):
     other = TestClient(web.create_app(ctx), base_url="http://sniffowireless.test")
     assert other.post("/api/auth/login", json={"username": "admin", "password": PW}, headers=H).status_code == 200
     assert other.get("/api/status").json()["build"]["ui"] == b["ui"]  # same files, same value
+
+
+def test_csp_only_allows_a_cdn_when_the_bundled_libraries_are_missing():
+    from sniffowireless.httpsec import make_csp
+    assert "cdn.jsdelivr.net" not in make_csp(False) and "script-src 'self';" in make_csp(False)
+    assert "script-src 'self' https://cdn.jsdelivr.net;" in make_csp(True)
+    for csp in (make_csp(False), make_csp(True)):
+        assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0] and "object-src 'none'" in csp
+
+
+def test_dockerfile_pins_the_vendored_scripts_and_does_not_fall_back_to_a_cdn():
+    import pathlib, re
+    d = (pathlib.Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
+    assert len(re.findall(r"\b[0-9a-f]{64}\b", d)) >= 3 and "sha256sum -c" in d
+    assert "will load it from the CDN" not in d and "UI will load it from the CDN" not in d

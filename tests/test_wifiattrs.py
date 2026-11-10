@@ -1,7 +1,7 @@
 """Wi-Fi attributes read passively from beacons, client requests, radiotap and sequence numbers."""
 import struct
 
-from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeReq, RadioTap
+from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, RadioTap
 
 from sniffowireless import wifiattrs as w
 from sniffowireless.identify import wifi_fingerprint

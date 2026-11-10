@@ -139,7 +139,7 @@ class Loader:
                 progress((seq + 1) / blocks)
         got = self.check("verify the flash", FLASH_MD5, struct.pack("<IIII", address, size, 0, 0), timeout=max(3.0, 8.0 * size / 1e6),
                          resp_len=32).decode("ascii", "replace").lower()
-        want = hashlib.md5(image).hexdigest()
+        want = hashlib.md5(image, usedforsecurity=False).hexdigest()
         if got != want:
             raise FlashError(f"the board's flash does not match the image after writing (md5 {got[:8]}… instead of {want[:8]}…)")
 

@@ -168,7 +168,7 @@ import time
 from sniffowireless import lora as lora_mod
 from sniffowireless import status
 from sniffowireless.config import Config
-from sniffowireless.lora import LoraError, LoraMonitor, LoraSensor, parse_rx
+from sniffowireless.lora import LoraError, LoraSensor, parse_rx
 from sniffowireless.main import build
 
 
@@ -284,7 +284,7 @@ def test_sensor_attributes_by_what_the_sniffer_reports_not_what_was_asked():
 
 
 def test_sensor_skips_a_refused_profile_and_says_so():
-    eu, mc, ap = PROFILES["meshtastic-eu868"], PROFILES["meshcore-eu868"], PROFILES["lora-aprs-433"]
+    eu, ap = PROFILES["meshtastic-eu868"], PROFILES["lora-aprs-433"]
     sniffer = FakeSniffer({(eu.freq, eu.sf): [rx_line(meshtastic(), eu)]}, refuse=[ap.freq])
     sensor, sink, err = run_sensor(sniffer, Config(lora_profiles=[ap, eu], lora_hop_interval=0.1), seconds=0.6)
     assert err is None and len(sink) >= 1

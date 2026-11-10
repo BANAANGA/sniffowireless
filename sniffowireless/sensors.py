@@ -8,13 +8,11 @@ import math
 import os
 import re
 import secrets
-import threading
 import time
 import zlib
 import urllib.parse
 import urllib.request
 from collections import deque
-from contextlib import closing
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request

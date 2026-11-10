@@ -9,6 +9,9 @@ services:
     image: sniffowireless:latest
     container_name: sniffowireless
     restart: unless-stopped
+    logging:  # without a limit Docker keeps every log line, which can fill the disk over months
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     # Host networking is required: monitor-mode Wi-Fi interfaces and HCI Bluetooth
     # adapters live in the host's network namespace.
     network_mode: host

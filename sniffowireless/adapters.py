@@ -16,7 +16,6 @@ import re
 import socket
 import threading
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field

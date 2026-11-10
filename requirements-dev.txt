@@ -1,0 +1,5 @@
+# Needed to run the tests and checks (CI installs this on top of requirements.txt)
+pytest
+httpx            # the web framework's test client
+ruff
+pip-audit

@@ -207,7 +207,7 @@ ZIGBEE_RADIOS = [
 
 
 def _h(*parts):
-    return int(hashlib.md5("|".join(map(str, parts)).encode()).hexdigest()[:8], 16)
+    return int(hashlib.md5("|".join(map(str, parts)).encode(), usedforsecurity=False).hexdigest()[:8], 16)
 
 
 def present(sched, mac, t):

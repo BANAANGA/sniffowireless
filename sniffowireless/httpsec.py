@@ -2,11 +2,22 @@
 optional host allow-list (protects against DNS rebinding when the UI is reachable without login)."""
 import json
 import math
+import os
 from urllib.parse import parse_qsl
 
-CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
-       "img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
-       "frame-ancestors 'none'; form-action 'self'")
+VENDOR_DIR = "/app/vendor"
+VENDOR_FILES = ("chart.umd.min.js", "esptool.bundle.js", "qrcode.js")
+
+
+def make_csp(cdn):
+    """The page policy. Scripts only come from this server; the CDN is allowed only for an installation that does not
+    have the bundled libraries (a source checkout run without Docker), which then loads them from there."""
+    return ("default-src 'self'; script-src 'self'" + (" https://cdn.jsdelivr.net" if cdn else "") + "; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; "
+            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+
+
+CSP = make_csp(not all(os.path.exists(os.path.join(VENDOR_DIR, f)) for f in VENDOR_FILES))
 # Uploaded images (an SVG floor plan could contain script) are served inert and sandboxed.
 UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"
 DOCS_PATHS = ("/api/docs", "/api/openapi.json")  # Swagger UI needs inline script + its CDN

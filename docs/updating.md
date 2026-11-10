@@ -42,6 +42,15 @@ Pick the way you run it:
 
 Capture stops for a few seconds while the container restarts. After a big update the first start can take longer on a large database (it re-identifies devices when the identification rules changed); follow it with `docker compose logs -f`. To pin a version instead of `latest`, use a release tag such as `ghcr.io/banaanga/sniffowireless:11`, which also makes going back easy.
 
+### Stable channel
+
+Releases are numbered 30, 31, 32 ... for full versions, with point releases in between (30.1, 30.2). The **stable channel** only moves when a full version is published:
+
+- the git branch **`stable`** (for source builds: `git checkout stable && ./scripts/update.sh`), and
+- the image tag **`ghcr.io/banaanga/sniffowireless:stable`** (use it in place of `:latest` in your compose file).
+
+`stable` is set to the full release when it is published and is not touched by point releases or by work on `main`, so it stays exactly as that release was tested until the next full version. `latest` and `main` get everything, including point releases. A sensor can follow either; keep the server and its sensors on the same channel.
+
 ### Remote sensors
 
 A sensor keeps no data, so updating it means getting the new image and recreating its container with the same settings. Update the **server first**: a newer server works with older sensors, while a newer sensor can send things an older server doesn't know yet. Features that need both ends, such as [changing channels from the web UI](sensors.md#wi-fi-channels-from-the-web-ui), work once both are updated.
