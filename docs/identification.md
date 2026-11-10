@@ -44,6 +44,14 @@ What is **not** detected: the exact model of an access point that announces no n
 **The OS across a Bluetooth ↔ Wi-Fi link.** A phone has both radios, and its Wi-Fi side often says more than its Bluetooth side. Once you confirm a pairing on the Matching page, the OS one side is established as (65 % or more, not itself derived) is given to the other side as *"Linked to … (confirmed by you)"* at 70 %. Only confirmed links count, never suggestions; rejecting the pairing takes it away; a device with its own OS evidence keeps it.
 
 **Bluetooth LE and the OS.** Apart from Apple's Continuity messages and Microsoft's CDP beacons (both used), I found no documented Bluetooth LE signal that tells a phone's OS. Google's Fast Pair (`fe2c`) is sent by accessories such as earbuds, not by phones, so it says nothing about a phone's OS; and I could not confirm who advertises `fef3`. Those are not used as OS evidence.
+**Cars.** What is used, strongest first:
+- A Tesla's Bluetooth name. Tesla documents it in its vehicle-command protocol: `S` + the first 8 bytes of the SHA-1 of the VIN as lower-case hex + `C` (for example `S1a2b3c4d5e6f7a8bC`). That is a Tesla, high confidence.
+- The MAC vendor name of the car maker: *Tesla, Inc.*, *Mercedes-Benz* / *Daimler AG*, *Volkswagen*, *Audi AG*, *Porsche*, *BMW*, *Ford Motor*, *General Motors*, *Volvo Car*, *Toyota Motor*, *Rivian*. Look-alike vendors are not matched: *TESLA, a.s.* (a Czech electronics company), *Tesla Controls*, *Pico-Tesla*, *Meridian Audio*, *Toyota Motorsport*. *Daimler Truck* is named but not called a car.
+- The Bluetooth company ID of those makers, for the car and its key.
+- A hotspot or device **named** after a make (`Tesla Model 3`, `AUDI Q5`, `BMW_5A2B`, `Ford Mustang`, or `MBUX …` for Mercedes, whose infotainment system is MBUX), as whole words only: `Audio`, `Stanford` or `Claudia` are not cars. Ford counts only with a model or SYNC, because on its own it is a surname.
+- Tesla's own equipment is not a car: a `TeslaWallConnector_…` network is an *EV charger* and `TeslaPW_…` a Powerwall (*Smart home*).
+
+What does **not** work: most cars use a supplier's network chip (Harman, Continental, Qualcomm, ...) and many connect with a randomised address, so there is no maker in the address; and I found no documented Wi-Fi or Bluetooth naming for Mercedes, so it is only recognised by its vendor name, its Bluetooth company ID or a hotspot name that says so.
 
 **Estimated age** comes from the newest standard a device supports (it can't predate it), or from the model's release year when that is known (AirPods/Beats). For phones, computers, TVs and routers sniffowireless also gives an upper bound: a laptop with only Wi-Fi 5 is typically from 2013–2020. Printers and IoT devices still ship with Wi-Fi 4 today, so for those only "N or newer" is shown.
 

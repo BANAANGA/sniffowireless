@@ -10,7 +10,7 @@ import re
 
 from . import apmodels, ossig, wifiattrs
 
-IDENT_VERSION = 10
+IDENT_VERSION = 11
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -20,7 +20,7 @@ TYPE_LABELS = {
     "sensor": "Sensor", "iot": "IoT device", "light": "Smart light", "input": "Keyboard / mouse",
     "car": "Car", "router": "Router / access point", "hotspot": "Mobile hotspot", "smart_home": "Smart home",
     "beacon": "Beacon", "sbc": "Single-board computer", "media": "Media device", "network": "Network device",
-    "nas": "NAS / storage", "server": "Server", "bike": "Bike / e-bike",
+    "nas": "NAS / storage", "server": "Server", "charger": "EV charger", "bike": "Bike / e-bike",
 }
 WIFI_GEN_YEAR = {4: 2009, 5: 2013, 6: 2019, 7: 2024}
 WIFI_6E_YEAR = 2021
@@ -389,6 +389,25 @@ def lan_evidence(ev, lfp, years):
 
 # ---------------------------------------------------------------- name rules
 # (regex, brand, type, os, use match as model, year)
+def _word(p):
+    return r"(?<![A-Za-z])(?:" + p + r")(?![A-Za-z])"
+
+
+# (pattern, brand). Whole words only ("Audio" is not Audi, "Stanford" is not Ford); Ford only with a model or SYNC, as a bare word it is a surname.
+CAR_MAKES = [
+    (_word("Tesla"), "Tesla"), (_word(r"Mercedes(?:[ _-]?Benz)?|MBUX"), "Mercedes-Benz"), (_word("BMW"), "BMW"), (_word("Audi"), "Audi"),
+    (_word("VW|Volkswagen"), "Volkswagen"), (_word("Toyota"), "Toyota"), (_word("Volvo"), "Volvo"), (_word("Polestar"), "Polestar"),
+    (_word("Porsche"), "Porsche"), (_word("Rivian"), "Rivian"),
+    (_word(r"Ford[ _-]?(?:SYNC|F-?150|Mustang|Mach-?E|Explorer|Focus|Fiesta|Transit)"), "Ford"),
+]
+# Tesla's own gear is not a car: the Wall Connector (EV charger) and the Powerwall gateway name their Wi-Fi after themselves
+TESLA_GEAR = [(r"^TeslaWallConnector", "Tesla", "charger"), (r"^TeslaPW", "Tesla", "smart_home")]
+TESLA_BLE_NAME = re.compile(r"^S[0-9a-f]{16}C$")  # Tesla's documented BLE local name: "S" + first 8 bytes of SHA-1(VIN) as hex + "C"
+# Bluetooth company IDs of car makers: their vehicles (and key fobs) identify themselves this way
+CAR_BLE_COMPANIES = {"Tesla, Inc.": "Tesla", "Mercedes-Benz Group AG": "Mercedes-Benz", "Audi AG": "Audi", "Volkswagen AG": "Volkswagen",
+                     "Porsche AG": "Porsche", "General Motors": "General Motors", "Ford Motor Company": "Ford", "TOYOTA motor corporation": "Toyota",
+                     "Rivian Automotive, LLC": "Rivian"}
+
 NAME_RULES = [
     (r"\biPhone\b", "Apple", "phone", "iOS", False, None),
     (r"\biPad\b", "Apple", "tablet", "iPadOS", False, None),
@@ -467,8 +486,9 @@ NAME_RULES = [
     (r"^ESP[_-][0-9A-F]{6}$|\besp32\b|\bESP8266\b", "Espressif", "iot", None, False, None),
     (r"\b(Shelly|tasmota)\b", None, "iot", None, False, None),
     (r"\braspberrypi\b", "Raspberry Pi", "sbc", "Linux", False, None),
-    (r"\b(Car Multimedia|CarPlay|Android Auto|Tesla|SYNC|MMI|BMW|VW|Mercedes|Toyota|Volvo)\b", None, "car", None,
-     False, None),
+    *[(r, b, t, None, False, None) for r, b, t in TESLA_GEAR],
+    *[(r, b, "car", None, False, None) for r, b in CAR_MAKES],
+    (r"\b(Car Multimedia|CarPlay|Android Auto)\b", None, "car", None, False, None),
     (r"\bWeMo\b", "Belkin Wemo", "smart_home", None, False, None),
     (r"\bSmartThings\b", "Samsung", "smart_home", None, False, None),
     (r"\b(Kasa|Tapo)\b", "TP-Link", "smart_home", None, False, None),
@@ -490,7 +510,8 @@ SSID_RULES = [
     (re.compile(r"^DIRECT-", re.I), None, "media", None),
     (re.compile(r"iPhone|iPad", re.I), "Apple", "hotspot", "iOS"),
     (re.compile(r"AndroidAP|Galaxy|Pixel|Redmi|OnePlus|HUAWEI", re.I), None, "hotspot", "Android"),
-    (re.compile(r"Tesla|^VW[ _]|Audi|BMW|Mercedes|Ford|Toyota|Volvo|Polestar", re.I), None, "car", None),
+    *[(re.compile(r, re.I), b, t, None) for r, b, t in TESLA_GEAR],
+    *[(re.compile(r, re.I), b, "car", None) for r, b in CAR_MAKES],
     (re.compile(r"Chromecast|Google-Home", re.I), "Google", "streaming", None),
     (re.compile(r"^ESP_|^ESP-|^Tasmota|^shelly", re.I), None, "iot", None),
     (re.compile(r"Ring Setup|Wyze|Arlo", re.I), None, "camera", None),
@@ -508,7 +529,13 @@ VENDOR_RULES = [
     (r"\b(Hikvision|Dahua|Reolink)\b", None, "camera", 70), (r"\bTuya\b", "Tuya", "iot", 60),
     (r"\b(Signify|Philips Lighting)\b", "Philips Hue", "light", 70), (r"\bXiaomi\b", "Xiaomi", None, 0),
     (r"\bHuawei\b", "Huawei", None, 0), (r"\bOnePlus\b", "OnePlus", "phone", 60), (r"\bGarmin\b", "Garmin", "watch", 50),
-    (r"\bFitbit\b", "Fitbit", "wearable", 70), (r"\bTesla\b", "Tesla", "car", 70),
+    (r"\bFitbit\b", "Fitbit", "wearable", 70),
+    # car makers by their MAC vendor name; "TESLA, a.s." (Czech electronics), "Tesla Controls" and "Pico-Tesla" are not Tesla Inc.
+    (r"^Tesla,? ?Inc\b|\bTesla Motors\b", "Tesla", "car", 70), (r"Mercedes-Benz|\bDaimler AG\b", "Mercedes-Benz", "car", 65),
+    (r"\bDaimler Truck\b", "Daimler Truck", None, 0), (r"\bVolkswagen\b", "Volkswagen", "car", 65), (r"\bAudi AG\b", "Audi", "car", 65),
+    (r"\bPorsche\b", "Porsche", "car", 65), (r"^Bmw\b|\bBMW\b", "BMW", "car", 60), (r"\bFord Motor\b", "Ford", "car", 65),
+    (r"\bGeneral Motors\b", "General Motors", "car", 60), (r"\bVolvo Car\b", "Volvo", "car", 65),
+    (r"\bToyota Motor\b|\bWoven By Toyota\b", "Toyota", "car", 60), (r"\bRivian\b", "Rivian", "car", 65),
     (r"\bSynology\b", "Synology", "nas", 80), (r"\bQNAP\b", "QNAP", "nas", 80),
     (r"\biRobot\b", "iRobot", "iot", 75), (r"\becobee\b", "ecobee", "smart_home", 75),
     (r"\b(Seiko Epson|Brother|Canon)\b", None, "printer", 55), (r"\bHewlett|\bHP Inc", "HP", None, 0),
@@ -805,6 +832,12 @@ def identify(dev):
     app = extra.get("appearance")
     if app in APPEARANCE_TYPES:
         ev.add("type", APPEARANCE_TYPES[app], 75, f"BLE appearance “{app}”")
+    if kind == "ble" and name and TESLA_BLE_NAME.match(name):
+        ev.add("brand", "Tesla", 90, "Bluetooth name “S…C” (Tesla's documented vehicle name)")
+        ev.add("type", "car", 90, "Bluetooth name “S…C” (Tesla's documented vehicle name)")
+    if kind == "ble" and CAR_BLE_COMPANIES.get(extra.get("company")):
+        ev.add("brand", CAR_BLE_COMPANIES[extra["company"]], 60, f"Bluetooth manufacturer data: {extra['company']} (a car maker)")
+        ev.add("type", "car", 60, f"Bluetooth manufacturer data: {extra['company']} (a car maker)")
     if extra.get("company") and kind == "ble" and not extra["company"].startswith(("Company 0x", "Unregistered 0x")):
         ev.add("brand", extra["company"], 55, "BLE manufacturer data")
 
