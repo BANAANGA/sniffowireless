@@ -1,4 +1,5 @@
 """MAC vendor (OUI) and Bluetooth company identifier lookups."""
+import json
 import logging
 import os
 
@@ -21,10 +22,25 @@ BT_COMPANIES = {
 }
 
 
+def _load_companies():
+    """Full Bluetooth SIG company list (bundled); the short names above win where both exist."""
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "data", "bt_companies.json"), encoding="utf-8") as f:
+            full = {int(k, 16): v for k, v in json.load(f).items()}
+    except (OSError, ValueError):
+        log.warning("Bluetooth company list not found; only common vendors are named")
+        full = {}
+    full.update(BT_COMPANIES)
+    return full
+
+
+_COMPANIES = _load_companies()
+
+
 def bt_company(cid):
     if cid is None:
         return None
-    return BT_COMPANIES.get(cid, f"Company 0x{cid:04X}")
+    return _COMPANIES.get(cid, f"Company 0x{cid:04X}")
 
 
 class VendorLookup:

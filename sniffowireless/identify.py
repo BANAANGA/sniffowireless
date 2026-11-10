@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-IDENT_VERSION = 5
+IDENT_VERSION = 6
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -727,7 +727,11 @@ def identify(dev):
     if app in APPEARANCE_TYPES:
         ev.add("type", APPEARANCE_TYPES[app], 75, f"BLE appearance “{app}”")
     if extra.get("company") and kind == "ble":
-        ev.add("brand", extra["company"], 55, "BLE manufacturer data")
+        # Chip makers (Telink, Nordic...) own the MAC range while the advertised company ID is often a product
+        # maker's (or a reused SDK default): then the company ID is weaker evidence than usual.
+        chip_oui = bool(vendor and not dev.get("randomized") and re.search(
+            r"telink|nordic|espressif|silicon lab|dialog|realtek|texas instr|beken|bouffalo|phyplus", vendor, re.I))
+        ev.add("brand", extra["company"], 35 if chip_oui else 55, "BLE manufacturer data")
 
     # --- Bluetooth Classic class of device
     cod = extra.get("cod")
