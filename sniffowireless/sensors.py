@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import threading
 import time
 import zlib
@@ -20,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import adapters, sanitize, status, sysinfo, version
+from . import adapters, logs, sanitize, status, sysinfo, version
 from .sanitize import Name
 from .auth import current_user, require_admin
 
@@ -52,6 +53,7 @@ class Forwarder:
         self.on_lora_config = None     # the same for the LoRa profiles
         self.on_zigbee_config = None   # and for the Zigbee channels
         self.version = {**version.info(), "arch": version.runtime()["arch"]}  # reported with every batch, for the Sensors page
+        self.log_cursor, self.log_epoch = 0, secrets.token_hex(4)  # the last log line sent (this run's counter), and which run that is
         if not cfg.server_url or not cfg.sensor_token:
             raise SystemExit("SNIFFOWIRELESS_MODE=sensor needs SERVER_URL and SENSOR_TOKEN")
 
@@ -152,12 +154,15 @@ class Forwarder:
             batch = []
             while self.buf and len(batch) < 20_000:
                 batch.append(self.buf.popleft())
+            lines = logs.HANDLER.since(self.log_cursor, logs.REMOTE_BATCH)  # new log lines, for the server's Logs page
             body = gzip.compress(json.dumps({"sent_at": time.time(), "obs": batch, "status": status.snapshot(),
-                                             "dropped": self.dropped, "version": self.version,
-                                             "system": self._system()}, default=str).encode())
+                                             "dropped": self.dropped, "version": self.version, "system": self._system(),
+                                             "logs": lines, "log_epoch": self.log_epoch}, default=str).encode())
             try:
                 reply = self._post(body)
                 self.sent += len(batch)
+                if lines:
+                    self.log_cursor = lines[-1]["id"]
                 backoff = 2
                 self._handle_reply(reply)
             except Exception as e:
@@ -316,6 +321,10 @@ def routes(ctx):
         system = sanitize.remote_system(body.get("system"))
         if "system" in body:  # older sensors send none: leave whatever is there to go stale
             status.set_system(sid, system, now)
+        if isinstance(body.get("logs"), list):  # the sensor's new log lines, for the Logs page
+            lines = [x for x in (sanitize.remote_log_line(x, now, adjust) for x in body["logs"][:logs.REMOTE_BATCH]) if x]
+            if lines:
+                logs.REMOTE.add(sid, sanitize.clean_str(body.get("log_epoch"), 16), lines)
         dropped = sanitize.clean_num(body.get("dropped"), 0, 10 ** 15, True)
         ctx.execute("UPDATE sensors SET last_seen=?, info=? WHERE id=?",
                     (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts,
@@ -381,6 +390,7 @@ def routes(ctx):
             ctx.execute("DELETE FROM api_tokens WHERE id=?", (s["token_id"],))
         ctx.execute("DELETE FROM sensors WHERE id=?", (sid,))
         status.remove_remote(sid)
+        logs.REMOTE.drop(sid)
         chan = ctx.settings.get("channels")
         if chan["sensors"].pop(sid, None) is not None:  # its channel settings go with it
             ctx.settings.set("channels", chan)

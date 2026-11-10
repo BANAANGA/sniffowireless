@@ -275,6 +275,10 @@ ul.plain li { padding: 4px 0; }
 .meter { display: inline-block; width: 60px; height: 4px; background: var(--panel-2); border-radius: 2px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
 .meter i { display: block; height: 100%; background: var(--ap); }
 .settings { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 24px; align-items: start; }
+.tabbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--border); }
+.tabbar a { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: var(--radius) var(--radius) 0 0; }
+.tabbar a:hover { color: var(--text); background: var(--panel-2); }
+.tabbar a.on { color: var(--text); border-bottom-color: var(--accent, currentColor); }
 .subnav { display: flex; flex-direction: column; gap: 1px; position: sticky; top: 24px; }
 .subnav a { padding: 6px 10px; border-radius: var(--radius); color: var(--muted); }
 .subnav a.active, .subnav a:hover { background: var(--panel-2); color: var(--text); }
