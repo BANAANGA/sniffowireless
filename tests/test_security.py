@@ -493,6 +493,24 @@ def test_appearance(env):
     assert os.path.exists(ctx.cfg.db_path)
 
 
+def test_appearance_font_and_size(env):
+    ctx, c = env
+    a = c.get("/api/appearance").json()
+    assert a["font"] == "" and a["font_custom"] == "" and a["font_size"] == 13  # stock look
+    login(c)
+    body = {"name": "x", "icon": "dot", "colors": {}}
+    for bad in ({"font": "Comic Sans"}, {"font": "custom", "font_custom": 'x"; background:url(//evil)'}, {"font_custom": "a" * 41},
+                {"font_size": 10}, {"font_size": 21}, {"font_size": "big"}, {"font_custom": "Arial;}"}):
+        assert c.put("/api/appearance", json={**body, **bad}, headers=H).status_code in (400, 422), bad
+    r = c.put("/api/appearance", json={**body, "font": "custom", "font_custom": " Atkinson Hyperlegible ", "font_size": 16}, headers=H).json()
+    assert r["font"] == "custom" and r["font_custom"] == "Atkinson Hyperlegible" and r["font_size"] == 16
+    assert c.get("/api/appearance").json()["font_size"] == 16
+    # a tampered config backup falls back to the stock look instead of serving something odd
+    ctx.settings.set("appearance", {**ctx.settings.get("appearance"), "font": "<script>", "font_custom": "x;}", "font_size": 400})
+    a = c.get("/api/appearance").json()
+    assert a["font"] == "" and a["font_custom"] == "" and a["font_size"] == 13
+
+
 def test_stats_ssids_capped(env):
     ctx, c = env
     now = time.time()

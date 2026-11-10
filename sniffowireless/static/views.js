@@ -128,7 +128,7 @@ addRoute('/groups', async () => {
   app.innerHTML = `<div class="page-head"><div><h1>Groups</h1><div class="sub">People or things made of several devices (a phone, watch and earbuds; a phone's rotating MACs).</div></div>${adminBtn('new-group', 'New group', 'primary')}</div>
     <div class="grid cols-3">${gs.map(g => `<a class="card" href="#/group/${g.id}">
       <div class="label"><span class="state-dot ${g.present ? 'on' : ''}"></span>${g.kind === 'person' ? 'Person' : 'Thing'}${g.watch ? ' · <span class="star">★</span> watched' : ''}</div>
-      <div class="value" style="font-size:20px">${esc(g.name)}</div>
+      <div class="value" style="font-size:calc(20px * var(--fs,1))">${esc(g.name)}</div>
       <div class="meta"><span>${g.members} device${g.members === 1 ? '' : 's'}</span><span>${g.present ? 'present now' : 'last seen ' + ago(g.last_seen)}</span></div></a>`).join('')
     || '<div class="empty span-all">No groups yet. Open a device and use “Label &amp; tracking” to add it to a group.</div>'}</div>`;
   const b = document.getElementById('new-group');
@@ -273,7 +273,7 @@ addRoute('/security', async () => {
   app.innerHTML = `<div class="page-head"><div><h1>Security</h1><div class="sub">Evil-twin / rogue access points, deauthentication floods, handshake-capture attempts, security downgrades, KARMA-style APs, scanners, cloned MAC addresses and weak settings on your own networks.</div></div></div>
     <div class="grid cols-4">
       ${[['high', 'High'], ['medium', 'Medium'], ['low', 'Low']].map(([k, l]) => `<div class="card"><div class="label">${sevTag(k)} open findings</div><div class="value">${cnt[k] || 0}</div></div>`).join('')}
-      <div class="card"><div class="label">My networks</div><div class="value" style="font-size:18px">${s.networks.ssids.map(esc).join(', ') || '<span class="faint">not set</span>'}</div>
+      <div class="card"><div class="label">My networks</div><div class="value" style="font-size:calc(18px * var(--fs,1))">${s.networks.ssids.map(esc).join(', ') || '<span class="faint">not set</span>'}</div>
         <div class="meta"><a href="#/settings?tab=networks">Configure</a></div></div>
     </div>
     ${!s.networks.ssids.length ? `<div class="callout">Add your own SSIDs under <a href="#/settings?tab=networks">Settings → My networks</a> and mark their access points as trusted to enable evil-twin detection and configuration checks.</div>` : ''}
@@ -533,7 +533,10 @@ const SETTINGS_VIEWS = {
       <section class="panel" style="margin-top:16px" id="tfa"></section>
       <section class="panel" style="margin-top:16px"><header><h2>Display</h2></header><div class="body">
       <label class="field form-narrow">Time format on this browser<select id="my-clock"></select></label>
-      <p class="faint small-text" style="margin:0">Only for this browser. Notifications and reports use the default set by an admin under Appearance.</p></div></section>`;
+      <div class="row form-narrow"><label class="field">Font on this browser<select id="my-font"></select></label>
+        <label class="field" id="my-font-custom-wrap" hidden>Font name<input id="my-font-custom" maxlength="40" placeholder="e.g. Atkinson Hyperlegible" autocomplete="off"></label>
+        <label class="field">Text size on this browser<select id="my-fsize"></select></label></div>
+      <p class="faint small-text" style="margin:0">Only for this browser. Notifications and reports use the default set by an admin under Appearance. A font only shows if it is installed on this device.</p></div></section>`;
     twoFactorPanel(el.querySelector('#tfa'));
     const clockSel = el.querySelector('#my-clock');
     let mine = '';
@@ -544,6 +547,27 @@ const SETTINGS_VIEWS = {
       try { if (clockSel.value) localStorage.setItem('sniffowireless.clock', clockSel.value); else localStorage.removeItem('sniffowireless.clock'); } catch { /* private mode */ }
       toast(`Times now shown as ${uses12h() ? '12-hour' : '24-hour'} · ${dt(Date.now() / 1000, false)}`);
     };
+    const fontSel = el.querySelector('#my-font'), fontCustom = el.querySelector('#my-font-custom'), sizeSel = el.querySelector('#my-fsize');
+    const mineFont = myFont() || { font: '', custom: '' };
+    const defFont = (FONT_CHOICES.find(([k]) => k === ((APPEARANCE && APPEARANCE.font) || '')) || FONT_CHOICES[0])[1];
+    fontSel.innerHTML = [['__default', `Use the default — ${defFont}`], ...FONT_CHOICES.map(([k, l]) => [k, l])]
+      .map(([v, l]) => `<option value="${v}" ${(myFont() ? mineFont.font : '__default') === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    fontCustom.value = mineFont.custom || '';
+    el.querySelector('#my-font-custom-wrap').hidden = fontSel.value !== 'custom';
+    const defSize = (APPEARANCE && APPEARANCE.font_size) || FONT_SIZE_DEFAULT;
+    sizeSel.innerHTML = [['', `Use the default — ${defSize} px`], ...Array.from({ length: FONT_SIZE_MAX - FONT_SIZE_MIN + 1 }, (_, i) => [String(FONT_SIZE_MIN + i), `${FONT_SIZE_MIN + i} px`])]
+      .map(([v, l]) => `<option value="${v}" ${String(myFontSize() || '') === v ? 'selected' : ''}>${l}</option>`).join('');
+    const saveFont = () => {
+      try {
+        if (fontSel.value === '__default') localStorage.removeItem('sniffowireless.font');
+        else localStorage.setItem('sniffowireless.font', JSON.stringify({ font: fontSel.value, custom: fontCustom.value.trim() }));
+        if (sizeSel.value) localStorage.setItem('sniffowireless.fontsize', sizeSel.value); else localStorage.removeItem('sniffowireless.fontsize');
+      } catch { /* private mode */ }
+      el.querySelector('#my-font-custom-wrap').hidden = fontSel.value !== 'custom';
+      applyFont(APPEARANCE);
+    };
+    fontSel.onchange = sizeSel.onchange = saveFont;
+    fontCustom.oninput = saveFont;
     el.querySelector('#pw').onsubmit = async e => {
       e.preventDefault();
       const f = e.target;
