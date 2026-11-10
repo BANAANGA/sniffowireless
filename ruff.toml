@@ -1,0 +1,8 @@
+# Correctness checks only (syntax errors, undefined names, unused imports / variables); CI runs `ruff check`.
+target-version = "py312"
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
+
+[lint.per-file-ignores]
+"tests/*" = ["F811"]   # fixtures imported from other test modules are "redefined" by the tests that use them

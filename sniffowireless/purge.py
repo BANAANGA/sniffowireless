@@ -70,7 +70,7 @@ def finding_predicate(module):
 
 def counts(ctx, module):
     """What clearing a module would delete (a preview for the confirmation)."""
-    spec, rows, one = SPEC[module], ctx.rows, ctx.one
+    spec, one = SPEC[module], ctx.one
     entries, logs = {}, {}
     if spec["kinds"]:
         entries["devices"] = one(f"SELECT COUNT(*) n FROM devices WHERE kind IN ({','.join('?' * len(spec['kinds']))})", spec["kinds"])["n"]

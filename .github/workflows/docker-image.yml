@@ -2,7 +2,8 @@ name: Docker Image CI
 
 # Pull requests only test that the image builds. A published release (or a manual run on a tag) pushes it to
 # ghcr.io/<owner>/sniffowireless for linux/amd64, linux/arm64 and linux/arm/v7 (Raspberry Pi, 64- and 32-bit). Only a published release moves
-# `latest` (a manual run on an older tag must not take it back to an old version). A manual run on a branch pushes `edge`.
+# `latest` (a manual run on an older tag must not take it back to an old version). `stable` moves only for a full release (a
+# whole-number tag such as 30, not 30.1), like the `stable` git branch. A manual run on a branch pushes `edge`.
 on:
   pull_request:
     branches: ["main"]
@@ -44,6 +45,7 @@ jobs:
             type=ref,event=tag
             type=ref,event=pr
             type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease != true }}
+            type=raw,value=stable,enable=${{ github.event_name == 'release' && github.event.release.prerelease != true && !contains(github.event.release.tag_name, '.') }}
             type=raw,value=edge,enable=${{ github.ref_type == 'branch' && github.event_name == 'workflow_dispatch' }}
             type=sha,enable=${{ github.event_name != 'pull_request' }}
 

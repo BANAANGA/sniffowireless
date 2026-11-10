@@ -72,6 +72,7 @@ Open **http://<host>:8080** and create the admin account with the setup code fro
 | [Using the UI](docs/ui.md) | Pages, tables, appearance, networks, labels, groups and the watch list |
 | [Device identification](docs/identification.md) | How brand, model and type are worked out |
 | [Alerts & notifications](docs/alerts.md) | Rules, quiet hours, ntfy, Telegram, Discord, webhooks, email |
+| [Hardening](docs/hardening.md) | What protects the application, what is checked on every change, what to set on your side |
 | [Security monitoring](docs/security.md) | Evil twins, deauth floods, trackers, interference, DFS radar |
 | [Ethernet monitoring](docs/ethernet.md) | Where to plug it in and what it learns |
 | [Zigbee & 802.15.4](docs/zigbee.md) | Sticks, scanning, passive listening, choosing channels in the UI |

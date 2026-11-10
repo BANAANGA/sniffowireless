@@ -1,5 +1,4 @@
 """Bluetooth 5.x / 6.0 support: what the controller is, extended + Coded PHY scanning, LE Audio broadcasts, newer HCI events."""
-import os
 import random
 import socket
 import struct
@@ -132,11 +131,17 @@ BT42 = (1 << 0) | (1 << 5)
 
 
 def ops(ctl, n=None):
-    """The opcodes the simulated controller has received (it runs in its own thread: wait until `n` have arrived)."""
+    """The opcodes the simulated controller has received. It runs in its own thread, so wait until `n` have arrived and
+    then until nothing more is arriving (tests slice the list at a point they just read; a late command shifted it)."""
     import time
-    end = time.monotonic() + 2
+    end = time.monotonic() + 3
     while n and len(ctl.commands) < n and time.monotonic() < end:
         time.sleep(0.01)
+    quiet, last = 0, -1
+    while quiet < 5 and time.monotonic() < end:  # five polls in a row with no new command
+        time.sleep(0.01)
+        quiet = quiet + 1 if len(ctl.commands) == last else 0
+        last = len(ctl.commands)
     return [c[0] for c in ctl.commands]
 
 

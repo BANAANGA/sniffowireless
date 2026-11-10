@@ -52,7 +52,7 @@ def eapol_message(pkt):
 def _slug(ssid):
     """A filesystem-safe, non-reversible name for the SSID's files (SSIDs are chosen by whoever broadcasts
     them, so they're never used directly as a path or HTTP header value)."""
-    return hashlib.sha1(ssid.encode("utf-8", "surrogatepass")).hexdigest()[:20]
+    return hashlib.sha1(ssid.encode("utf-8", "surrogatepass"), usedforsecurity=False).hexdigest()[:20]
 
 
 class HandshakeCapture:

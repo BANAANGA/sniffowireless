@@ -741,7 +741,7 @@ def create_app(ctx):
         return re.sub(r'/static/([\w.-]+\.(?:js|css))"', tag, html)
 
     pages = {"index": versioned("index.html"), "login": versioned("login.html")}
-    ui_hash = hashlib.sha1(pages["index"].encode()).hexdigest()[:10]  # changes when any script or style of the UI does
+    ui_hash = hashlib.sha1(pages["index"].encode(), usedforsecurity=False).hexdigest()[:10]  # changes when any script or style of the UI does
 
     @app.get("/login")
     def login_page():

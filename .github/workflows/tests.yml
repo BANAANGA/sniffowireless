@@ -1,0 +1,43 @@
+name: Tests
+
+# Runs the test suite, the lint checks and a dependency vulnerability audit on every pull request and push to main / stable,
+# and once a week (new advisories show up without any code change).
+on:
+  pull_request:
+    branches: ["main", "stable"]
+  push:
+    branches: ["main", "stable"]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"   # the version the image runs
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (syntax errors, undefined names, unused code)
+        run: ruff check
+
+      - name: Tests
+        run: python -m pytest -q -p no:cacheprovider tests
+
+      # scapy's advisory is about loading a pickled session in its interactive shell, which this app never does (see
+      # docs/hardening.md). Anything else found here fails the check.
+      - name: Dependency audit
+        run: pip-audit -r requirements.txt --ignore-vuln GHSA-cq46-m9x9-j8w2

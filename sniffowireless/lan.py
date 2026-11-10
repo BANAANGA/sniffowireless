@@ -3,7 +3,7 @@ rogue-DHCP and ARP-spoofing detection. Runs as a store plugin on the writer thre
 import time
 from collections import defaultdict, deque
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from .auth import current_user, require_admin

@@ -6,7 +6,6 @@ handshake-capture attack), one of the admin's own access points advertising weak
 to, a client probing for an implausibly long list of networks, and one MAC address behind two devices."""
 import time
 from collections import defaultdict, deque
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field

@@ -153,7 +153,7 @@ def merge_wifi(old, new):
 
 
 def probe_hash(sig):
-    return hashlib.sha1(sig.encode()).hexdigest()[:10] if sig else None
+    return hashlib.sha1(sig.encode(), usedforsecurity=False).hexdigest()[:10] if sig else None
 
 
 # ----------------------------------------------------------------- Bluetooth

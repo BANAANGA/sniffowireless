@@ -5,7 +5,7 @@ import pytest
 
 from sniffowireless import channels, status, wifi
 from sniffowireless.channels import WifiControl, check_spec, clean_override, effective
-from sniffowireless.config import Config, band_of, chan_label, parse_channels
+from sniffowireless.config import Config, parse_channels
 from sniffowireless.main import build
 from sniffowireless.sanitize import remote_status
 from sniffowireless.sensors import Forwarder
