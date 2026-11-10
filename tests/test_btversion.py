@@ -113,9 +113,8 @@ def test_bt_company_uses_full_sig_list():
     assert bt_company(0x004C) == "Apple"  # short names still win
 
 
-def test_telink_mac_with_other_company_id_keeps_telink_brand():
+def test_telink_mac_with_awox_company_id_is_awox():
     from sniffowireless.identify import identify
     d = {"kind": "ble", "mac": "a4:c1:38:4c:a5:bc", "vendor": "Telink Semiconductor (Taipei) Co. Ltd.", "randomized": 0,
          "extra": {"company": "AwoX"}}
-    r = identify(d)
-    assert r["brand"].startswith("Telink")
+    assert identify(d)["brand"] == "AwoX"  # AwoX smartlights use Telink chips: the advertised company is the product maker
