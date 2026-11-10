@@ -143,3 +143,16 @@ function btFlagsText(f) {
   parts.push(f & 4 ? 'LE only (no classic Bluetooth)' : 'also supports classic Bluetooth');
   return esc(parts.join(' · '));
 }
+
+function btCompanyHtml(name) {
+  if (/^Unregistered 0x/.test(name)) return `<span class="svc" tabindex="0" title="${esc('This number is not registered to any company (the Bluetooth SIG has assigned IDs only up to about 0x1116). The device most likely uses its own data format, so these bytes are not a company ID. See the raw data below.')}">${esc(name)}</span>`;
+  if (/^Company 0x/.test(name)) return `<span class="svc" tabindex="0" title="${esc('An ID that is not in the Bluetooth SIG list shipped with this app. It may be a company registered after the list was made, or one the SIG has retired.')}">${esc(name)}</span>`;
+  return esc(name);
+}
+
+function btRawMfgHtml(hex) {
+  const b = (String(hex).match(/../g) || []);
+  const id = b.length >= 2 ? `0x${b[1]}${b[0]}`.toUpperCase().replace('0X', '0x') : '';
+  const tip = `The first 32 bytes of the manufacturer-specific data, as sent. ${id ? `The first two bytes (${b[0]} ${b[1]}) are the company ID field, read in reverse order: ${id}. ` : ''}The rest is whatever the manufacturer chose; on a device with an unregistered ID the first bytes may be part of its own format. Apple data is not kept here.`;
+  return `<span class="mono svc" tabindex="0" title="${esc(tip)}" style="word-break:break-all">${esc(b.join(' '))}</span>`;
+}

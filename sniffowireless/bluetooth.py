@@ -17,7 +17,7 @@ import time
 
 from . import status
 from .identify import ble_fingerprint
-from .oui import bt_company
+from .oui import bt_company, bt_company_known
 
 log = logging.getLogger("sniffowireless.bt")
 
@@ -149,6 +149,14 @@ def parse_ad(data):
 
 
 BASE_UUID_TAIL = bytes.fromhex("00001000800000805f9b34fb")  # the Bluetooth base UUID after its first 4 bytes
+
+
+def raw_mfg(cid, mfg):
+    """The manufacturer-specific data as hex, company-ID field first (the way it went over the air), for the device page.
+    Apple's changes constantly and is decoded separately, so it is not kept."""
+    if cid is None or cid == 0x004C:
+        return None
+    return (bytes([cid & 0xFF, cid >> 8]) + bytes(mfg or b"")).hex()
 
 
 def uuid_label(b):
@@ -561,8 +569,9 @@ class BluetoothSensor:
             self.store.put({
                 "t": "bt", "kind": "ble", "ts": now, "mac": ev["mac"], "rssi": ev["rssi"],
                 "name": ad.get("name") or ad.get("broadcast_name"), "randomized": randomized, "addr_random": label != "public",
-                "vendor": bt_company(cid) if label != "public" and cid is not None else None,
+                "vendor": bt_company_known(cid) if label != "public" else None,
                 "extra": {"addr_type": label, "company": bt_company(cid), "appearance": ad.get("appearance"),
+                          "mfg_raw": raw_mfg(cid, ad.get("mfg")),
                           "tx_power": ad.get("tx_power"), "uuids": ad.get("uuids"),
                           "connectable": ev["connectable"], "phy": ev.get("phy") if ev.get("ext") else None,
                           "ext_adv": True if ev.get("ext") else None,

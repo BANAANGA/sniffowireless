@@ -180,9 +180,9 @@ BLE_NEW = {
     "c9:22:bb:02:00:02": {"ext_adv": True, "phy": "1M", "bt_version": "5.3"},  # Galaxy Watch5: connected to the host, version read
     "6c:88:11:02:00:09": {"ext_adv": True, "phy": "1M", "bt_version": "5.0"},
     "f0:55:ee:02:00:06": {"ext_adv": True, "phy": "2M", "encrypted_ad": True, "flags": 6, "conn_interval": [7.5, 15.0], "adv_interval": 30},
-    "cb:99:22:02:00:0a": {"flags": 4, "adv_interval": 1000,
+    "cb:99:22:02:00:0a": {"mfg_raw": "99040503c2a1f0", "flags": 4, "adv_interval": 1000,
                           "ibeacon": {"uuid": "f7826da6-4fa2-4e98-8024-bc5b71e0893e", "major": 100, "minor": 7, "power": -59}},
-    "e1:33:cc:02:00:03": {"ext_adv": True, "phy": "Coded", "flags": 6, "uuids": ["fe95", "6e400001-b5a3-f393-e0a9-e50e24dcca9e"]},
+    "e1:33:cc:02:00:03": {"mfg_raw": "8f031a00ff3c02c4", "ext_adv": True, "phy": "Coded", "flags": 6, "uuids": ["fe95", "6e400001-b5a3-f393-e0a9-e50e24dcca9e"]},
 }
 CLASSIC_VERSIONS = {"ac:bc:32:03:00:03": "5.0", "5c:0a:5b:01:00:04": "5.2"}
 CLASSIC = [

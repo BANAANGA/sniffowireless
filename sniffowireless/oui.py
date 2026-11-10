@@ -37,10 +37,26 @@ def _load_companies():
 _COMPANIES = _load_companies()
 
 
+# The SIG hands out company IDs in sequence (about 4,400 so far); a value far beyond the highest one in the list is not
+# registered at all. The margin allows for companies registered after this list was made.
+_ASSIGNED_MAX = max((c for c in _COMPANIES if c < 0xFFFF), default=0)
+UNREGISTERED_FROM = _ASSIGNED_MAX + 0x400 if _ASSIGNED_MAX else 0x10000
+
+
+def bt_company_known(cid):
+    """The registered name of a company ID, or None."""
+    return _COMPANIES.get(cid) if cid is not None else None
+
+
 def bt_company(cid):
     if cid is None:
         return None
-    return _COMPANIES.get(cid, f"Company 0x{cid:04X}")
+    name = _COMPANIES.get(cid)
+    if name:
+        return name
+    if cid >= UNREGISTERED_FROM:
+        return f"Unregistered 0x{cid:04X}"
+    return f"Company 0x{cid:04X}"
 
 
 class VendorLookup:
