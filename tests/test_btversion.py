@@ -118,3 +118,20 @@ def test_telink_mac_with_awox_company_id_is_awox():
     d = {"kind": "ble", "mac": "a4:c1:38:4c:a5:bc", "vendor": "Telink Semiconductor (Taipei) Co. Ltd.", "randomized": 0,
          "extra": {"company": "AwoX"}}
     assert identify(d)["brand"] == "AwoX"  # AwoX smartlights use Telink chips: the advertised company is the product maker
+
+
+def test_stored_company_ids_get_their_name_on_migration(tmp_path):
+    import json
+    from sniffowireless.config import Config
+    from sniffowireless.oui import VendorLookup
+    from sniffowireless.store import Store
+    cfg = Config(db_path=str(tmp_path / "t.db"))
+    s = Store(cfg, VendorLookup(None))
+    s.process({"t": "wifi_client", "ts": 100, "mac": "a4:c1:38:4c:a5:bc", "frame": "probe", "fp": {"src": "probe"}})
+    s.flush()
+    s.conn.execute("UPDATE devices SET kind='ble', extra=? WHERE mac='a4:c1:38:4c:a5:bc'", (json.dumps({"company": "Company 0x0160"}),))
+    s.conn.execute("DELETE FROM meta WHERE key='bt_company_names'")
+    s.conn.commit()
+    s._migrate()
+    ex = json.loads(s.conn.execute("SELECT extra FROM devices WHERE mac='a4:c1:38:4c:a5:bc'").fetchone()[0])
+    assert ex["company"] == "AwoX"

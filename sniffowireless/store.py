@@ -8,14 +8,17 @@ import json
 import logging
 import os
 import queue
+import re
 import sqlite3
 import time
 
 from . import btversion, identify
 from .config import _int
+from .oui import bt_company
 from .sanitize import clean_str
 
 BT_VERSION_RULES = "2"
+BT_COMPANY_NAMES = "1"
 
 log = logging.getLogger("sniffowireless.store")
 
@@ -242,6 +245,10 @@ class Store:
         if not row or row[0] != BT_VERSION_RULES:  # the rules for deriving it changed (v2: LE Audio services, model lookup)
             self._backfill_bt_versions()
             self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('bt_versions', ?)", (BT_VERSION_RULES,))
+        row = self.conn.execute("SELECT value FROM meta WHERE key='bt_company_names'").fetchone()
+        if not row or row[0] != BT_COMPANY_NAMES:  # company names are stored as seen: re-name the "Company 0x…" ones
+            self._rename_bt_companies()
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('bt_company_names', ?)", (BT_COMPANY_NAMES,))
         row = self.conn.execute("SELECT value FROM meta WHERE key='ident_version'").fetchone()
         if not row or int(row[0]) != identify.IDENT_VERSION:
             self.reidentify_all()
@@ -258,6 +265,27 @@ class Store:
                 n += 1
         if n:
             log.info("Migrated database: worked out the Bluetooth version of %d devices", n)
+
+    def _rename_bt_companies(self):
+        """Devices stored while a company ID was unknown keep "Company 0x0160"; look the names up again."""
+        rx = re.compile(r"^Company 0x([0-9A-Fa-f]{1,4})$")
+        n = 0
+        for r in self.conn.execute("SELECT mac, vendor, extra FROM devices WHERE kind IN ('ble', 'bt_classic')").fetchall():
+            extra = json.loads(r["extra"] or "{}")
+            vendor, changed = r["vendor"], False
+            for key in ("company", "chip"):
+                m = rx.match(extra.get(key) or "")
+                if m and bt_company(int(m.group(1), 16)) != extra[key]:
+                    extra[key] = bt_company(int(m.group(1), 16))
+                    changed = True
+            m = rx.match(vendor or "")
+            if m and bt_company(int(m.group(1), 16)) != vendor:
+                vendor, changed = bt_company(int(m.group(1), 16)), True
+            if changed:
+                self.conn.execute("UPDATE devices SET vendor=?, extra=? WHERE mac=?", (vendor, json.dumps(extra), r["mac"]))
+                n += 1
+        if n:
+            log.info("Migrated database: named the Bluetooth company of %d devices", n)
 
     def reidentify_all(self):
         """Re-run identification for every stored device (after the rules changed)."""
