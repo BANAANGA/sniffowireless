@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (adapters, alerts, appearance, auth, backup, bluetooth, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
+from . import (adapters, alerts, appearance, dataprivacy, macprivacy, auth, backup, bluetooth, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
                matching, metrics, modules, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user, require_admin
@@ -71,7 +71,8 @@ def create_app(ctx):
     static = Path(__file__).parent / "static"
     vendor_dir = Path("/app/vendor")
     ctx.auth.install(app)
-    app.add_middleware(AnonymizeMiddleware, ctx=ctx)  # innermost: masks what the routes return
+    app.add_middleware(macprivacy.MacInputMiddleware)  # innermost: addresses typed in the interface become pseudonyms when privacy mode is on
+    app.add_middleware(AnonymizeMiddleware, ctx=ctx)  # next: masks what the routes return
     app.add_middleware(SecurityMiddleware, allowed_hosts=cfg.allowed_hosts)  # runs before auth
     app.add_middleware(JsonAndStaticGZip, minimum_size=1024, compresslevel=5)  # outermost
     rows, one = ctx.rows, ctx.one
@@ -445,7 +446,10 @@ def create_app(ctx):
         extra = json.loads(d["extra"] or "null") or {}
         addr_type = 0 if extra.get("addr_type") == "public" else 1
         try:
-            tracker_sound.play_sound(cfg.bt_devices[0], mac, addr_type)
+            real = macprivacy.resolve(mac)  # privacy mode: the real address is only known for a device heard minutes ago
+            if real == mac and macprivacy.is_pseudonym(mac):
+                raise HTTPException(409, "In privacy mode the address of this device is not kept; wait until it is heard again")
+            tracker_sound.play_sound(cfg.bt_devices[0], real, addr_type)
         except tracker_sound.SoundError as e:
             raise HTTPException(502, str(e))
         return {"ok": True}
@@ -471,6 +475,9 @@ def create_app(ctx):
             raise HTTPException(409, "This device has not been heard in the last two minutes. It may be gone, and a private address may have changed.")
         if now - probe_last.get(mac, 0) < 60:
             raise HTTPException(429, "This device was asked a moment ago; wait a minute")
+        real = macprivacy.resolve(mac)
+        if real == mac and macprivacy.is_pseudonym(mac):
+            raise HTTPException(409, "In privacy mode the address of this device is not kept; wait until it is heard again")
         extra = json.loads(d["extra"] or "null") or {}
         addr_type = 0 if extra.get("addr_type") == "public" else 1
         heard = rows("SELECT sensor, rssi FROM sightings WHERE mac=? AND last_seen>=? ORDER BY rssi IS NULL, rssi DESC", (mac, now - PROBE_MAX_AGE))
@@ -480,7 +487,7 @@ def create_app(ctx):
                 names = sorted(n for n, sensor in bluetooth.SENSORS.items() if (status.SENSORS.get(n) or {}).get("state") != "error")
                 for name in names:
                     try:
-                        bluetooth.SENSORS[name].request_probe(mac, addr_type)
+                        bluetooth.SENSORS[name].request_probe(real, addr_type)
                     except ValueError as e:
                         raise HTTPException(409, str(e))
                     probe_last[mac] = now
@@ -489,7 +496,7 @@ def create_app(ctx):
             else:
                 names = sorted(x["name"] for x in snap if x.get("type") == "bluetooth" and x.get("remote") == h["sensor"] and x.get("state") != "error")
                 if names:
-                    adapters.queue_probe(h["sensor"], names[0], mac, addr_type)
+                    adapters.queue_probe(h["sensor"], names[0], real, addr_type)
                     probe_last[mac] = now
                     log.info("%s asked %s for its Bluetooth version via %s on sensor %s", user.username, mac, names[0], h["sensor"])
                     return {"ok": True, "queued": True, "adapter": names[0], "sensor": h["sensor"]}
@@ -725,7 +732,7 @@ def create_app(ctx):
     # ------------------------------------------------------------------ static
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
-    for mod in (auth, appearance, modules, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
+    for mod in (auth, appearance, modules, dataprivacy, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
                 trackers, backup, search, logs, matching, handshake, channels):
         app.include_router(mod.routes(ctx))
 

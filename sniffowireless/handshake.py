@@ -15,6 +15,8 @@ import os
 import threading
 import time
 
+from . import macprivacy
+
 log = logging.getLogger("sniffowireless.handshake")
 
 DIR_NAME = "handshakes"
@@ -148,6 +150,8 @@ class HandshakeCapture:
 
     def feed(self, pkt, bssid, sta, msg):
         """Record one EAPOL-Key frame if its BSSID is currently broadcasting a wanted SSID."""
+        if macprivacy.is_active():  # a capture file holds the real addresses of the network and the client
+            return
         ssid = self.bssid_ssid.get(bssid)
         if not ssid or not self.want(ssid):
             return

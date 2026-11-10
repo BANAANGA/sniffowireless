@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time
 
-from . import btversion, identify, wifiattrs
+from . import btversion, identify, macprivacy, wifiattrs
 from .config import _int
 from .oui import bt_company, bt_company_known
 from .sanitize import clean_str
@@ -199,6 +199,9 @@ class Store:
         self.conn = connect(cfg.db_path)
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self.macpriv = None
+        self.retention = {}     # days per kind of data from Settings -> Privacy (0 = RETENTION_DAYS)
+        self._init_macprivacy()
         n = self.conn.execute(
             "UPDATE sessions SET open=0, end_reason=COALESCE(end_reason,'restart') WHERE open=1").rowcount
         if n:
@@ -216,7 +219,7 @@ class Store:
         self._last_event = {}
         self._boots = {}                      # AP mac -> estimated boot time, to notice a restart
         self.seq_linker = wifiattrs.SeqLinker()  # only fed when WIFI_SEQ_LINK is on
-        self.ignore = IgnoreRules(cfg.ignore_macs)
+        self.ignore = IgnoreRules(self._env_macs())
         self.important = set()  # labelled / watched / grouped devices: always log their events
         self.mac_group = {}     # mac -> group id
         self.group_names = {}
@@ -225,6 +228,52 @@ class Store:
         self.sightings_dirty = set()
         self.hooks = []         # plugins with optional observe(store, o, dev) / sweep(store, now) / flush(store, c)
         self.listeners = []     # called with newly committed events (list of dicts)
+
+    # ------------------------------------------------------------------ privacy mode (see macprivacy.py)
+    def _stored_privacy(self):
+        row = self.conn.execute("SELECT value FROM settings WHERE key='privacy'").fetchone() if self._has_table("settings") else None
+        try:
+            return json.loads(row[0]) if row else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def _has_table(self, name):
+        return bool(self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+
+    def _init_macprivacy(self):
+        p = self._stored_privacy()
+        if not (self.cfg.hash_macs or p.get("hash_macs")):
+            return
+        self.enable_macprivacy(p.get("hash_scope") or "static")
+        if p.get("hash_existing"):  # asked for in the interface: done now, before anything else uses the database
+            try:
+                self.macpriv.migrate_existing(self.conn)
+                p["hash_existing"], p["hashed_at"] = False, time.time()
+                self.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('privacy', ?)", (json.dumps(p),))
+            except Exception:
+                log.exception("Privacy: replacing the stored MAC addresses failed; it is tried again at the next start")
+
+    def enable_macprivacy(self, scope="static"):
+        """Switch privacy mode on (also at run time): everything from now on is stored hashed."""
+        key = macprivacy.load_key(self.cfg.data_dir, self.cfg.privacy_key)
+        self.macpriv = macprivacy.MacHasher(connect(self.cfg.db_path), key, scope)
+        macprivacy.set_current(self.macpriv)
+        log.info("Privacy mode on: full static MAC addresses are never stored (scope: %s)", self.macpriv.scope)
+
+    def disable_macprivacy(self):
+        self.macpriv = None
+        macprivacy.set_current(None)
+
+    def _env_macs(self):
+        """IGNORE_MACS from the environment (real addresses), hashed when privacy mode is on."""
+        h = getattr(self, "macpriv", None)
+        return {h.pseudonym(m) for m in self.cfg.ignore_macs} if h else set(self.cfg.ignore_macs)
+
+    def set_retention(self, days):
+        self.retention = {k: int(v) for k, v in (days or {}).items() if isinstance(v, (int, float)) and v > 0}
+
+    def retention_days(self, kind):
+        return self.retention.get(kind) or self.cfg.retention_days
 
     def _migrate(self):
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(devices)")}
@@ -320,7 +369,7 @@ class Store:
         self.q.put({"t": "_cmd", "fn": fn, "mac": "-"})
 
     def set_ignore(self, macs, prefixes, ssids, known_bssids=()):
-        rules = IgnoreRules(set(macs) | set(self.cfg.ignore_macs), prefixes, ssids)
+        rules = IgnoreRules(set(macs) | self._env_macs(), prefixes, ssids)
         for bssid, ssid in known_bssids:
             if ssid in rules.ssids:
                 rules.bssids[bssid] = rules.ssids[ssid]
@@ -406,10 +455,14 @@ class Store:
             o["fn"](self)
             return
         if t in ("chan", "lan_traffic", "dhcp_server", "zb_network", "zb_energy", "zb_frames", "lora_frame"):  # aggregate observations, handled by plugins
+            if self.macpriv is not None:
+                o = self.macpriv.scrub(o)
             for h in self.hooks:
                 if hasattr(h, "observe"):
                     h.observe(self, o, None)
             return
+        if self.macpriv is not None:  # privacy mode: nothing below ever sees a full static address
+            o = self.macpriv.scrub(o)
         mac = o.get("mac")
         if not mac or self.ignore.drop(o):
             return
@@ -767,16 +820,18 @@ class Store:
                 log.exception("Event listener failed")
 
     def prune(self, now):
-        cutoff = now - self.cfg.retention_days * 86400
+        day = 86400
+        cut = lambda kind: now - self.retention_days(kind) * day  # noqa: E731
+        cutoff = now - self.cfg.retention_days * day
         c = self.conn
         c.execute("BEGIN")
-        c.execute("DELETE FROM samples WHERE minute < ?", (cutoff,))
-        c.execute("DELETE FROM presence_hours WHERE hour < ?", (cutoff,))
-        c.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
-        c.execute("DELETE FROM sessions WHERE open=0 AND end_ts < ?", (cutoff,))
-        c.execute("DELETE FROM probes WHERE last_seen < ?", (cutoff,))
-        c.execute("DELETE FROM devices WHERE last_seen < ? AND mac NOT IN (SELECT mac FROM device_meta)", (cutoff,))
-        c.execute("DELETE FROM sightings WHERE last_seen < ?", (cutoff,))
+        c.execute("DELETE FROM samples WHERE minute < ?", (cut("history"),))
+        c.execute("DELETE FROM presence_hours WHERE hour < ?", (cut("history"),))
+        c.execute("DELETE FROM events WHERE ts < ?", (cut("events"),))
+        c.execute("DELETE FROM sessions WHERE open=0 AND end_ts < ?", (cut("sessions"),))
+        c.execute("DELETE FROM probes WHERE last_seen < ?", (cut("probes"),))
+        c.execute("DELETE FROM devices WHERE last_seen < ? AND mac NOT IN (SELECT mac FROM device_meta)", (cut("devices"),))
+        c.execute("DELETE FROM sightings WHERE last_seen < ?", (cut("sightings"),))
         for h in self.hooks:
             if hasattr(h, "prune"):
                 h.prune(self, c, cutoff)

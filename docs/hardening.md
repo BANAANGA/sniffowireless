@@ -37,7 +37,7 @@ One advisory is accepted on purpose: scapy `GHSA-cq46-m9x9-j8w2` is about loadin
 
 ## Not covered
 
-- It is a passive monitor that sees what any radio nearby can see. Anything it stores about the people and devices around you is personal data in many places; the [privacy settings](ui.md) (anonymising, retention, clearing data) are there for that.
+- It is a passive monitor that sees what any radio nearby can see. Anything it stores about the people and devices around you is personal data in many places; the [privacy settings](privacy.md) (hashed storage, retention, anonymising, clearing data) are there for that, and every page carries a notice to respect the law and people's privacy.
 - The size of the daily-use database is not limited by security settings; see retention in the settings.
 - This has not had an independent security audit.
 

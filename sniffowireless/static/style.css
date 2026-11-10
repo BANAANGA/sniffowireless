@@ -570,3 +570,17 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 .svc:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
 .svc-flag { color: var(--warn, #d9a441); font-size: .9em; }
 .svc-risk { border-bottom-style: solid; }
+
+/* Legal / privacy notice: red on purpose, in every theme (it must stay noticeable), full width above everything else */
+.legal-banner { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 10px; padding: 9px 14px; background: #b3261e; color: #fff;
+  font-size: calc(12.5px * var(--fs, 1)); line-height: 1.45; border-bottom: 1px solid #7f1d17; }
+.legal-banner[hidden] { display: none; }
+.legal-banner a { color: #fff; text-decoration: underline; white-space: nowrap; }
+.legal-ico { font-size: calc(15px * var(--fs, 1)); line-height: 1.2; }
+.legal-text { flex: 1; min-width: 0; }
+.legal-x { background: none; border: 0; color: #fff; font-size: calc(20px * var(--fs, 1)); line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 4px; }
+.legal-x:hover, .legal-x:focus-visible { background: rgba(255, 255, 255, .2); outline: none; }
+.login-page .legal-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 20; }
+.notice-red { border: 1px solid #b3261e; background: color-mix(in srgb, #b3261e 14%, transparent); }
+.settings > * { min-width: 0; }   /* a settings page with a wide table must scroll inside its panel, not push the page sideways */
+.set-body .panel .body.flush { overflow-x: auto; }

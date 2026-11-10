@@ -195,6 +195,8 @@ class Config:
     bt_inquiry: bool = True
     bt_inquiry_interval: int = 60
     bt_resolve_names: bool = True
+    hash_macs: bool = False         # privacy mode forced on: never store a full static MAC address (HASH_MACS=1; cannot be switched off in the UI)
+    privacy_key: str = ""           # PRIVACY_KEY: the secret for the hashes, instead of the key file in the data directory
     wifi_seq_link: bool = False     # opt-in: guess that randomised MACs with a continuing frame counter are one device (WIFI_SEQ_LINK=1)
     bt_active_probe: bool = True    # the device page's "read exact version" button (connects to the device); BT_ACTIVE_PROBE=0 removes it
 
@@ -265,6 +267,8 @@ class Config:
             bt_inquiry=_bool("BT_INQUIRY", True),
             bt_inquiry_interval=_int("BT_INQUIRY_INTERVAL", 60),
             bt_resolve_names=_bool("BT_RESOLVE_NAMES", True),
+            hash_macs=_bool("HASH_MACS", False),
+            privacy_key=os.environ.get("PRIVACY_KEY", ""),
             wifi_seq_link=_bool("WIFI_SEQ_LINK", False),
             bt_active_probe=_bool("BT_ACTIVE_PROBE", True),
             zigbee_devices=_list("ZIGBEE_DEVICES"),

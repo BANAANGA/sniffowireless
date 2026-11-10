@@ -30,7 +30,9 @@ DEFAULTS = {
     # Zigbee channels, hop / scan time and passive listening set from the web UI, for this server and per remote sensor id (see zigbee.py).
     "zigbee": {"local": {}, "sensors": {}},
     # Anonymised view (display only): MAC addresses and / or SSIDs shown as pseudonyms to everyone. See anonymize.py.
-    "privacy": {"macs": False, "ssids": False, "secret": ""},
+    "privacy": {"macs": False, "ssids": False, "secret": "", "hash_macs": False, "hash_scope": "static", "hash_existing": False},
+    # Data retention in days per kind of data (0 / missing = RETENTION_DAYS). See privacy settings and Store.prune.
+    "retention": {"devices": 0, "history": 0, "events": 0, "sessions": 0, "probes": 0, "sightings": 0},
     # Kinds of radios whose menu entries, overview cards and statistics are hidden (display only). See modules.py.
     "modules": {"disabled": [], "retention": {}},
     # Performance (admin): the database page cache and memory map; switch off on low-memory machines.
