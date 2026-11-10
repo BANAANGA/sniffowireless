@@ -88,6 +88,8 @@ Search it, tick networks and apply. Networks that are only *looked for* by devic
 
 **Networks** (sidebar under Wi-Fi) lists every SSID seen: broadcast nearby, only looked for by devices, or both. Each shows its access points, clients, devices looking for it, security, bands, best signal and last seen, plus tags if it's yours, ignored or investigated. Click a network for its dossier: a timeline, every access point broadcasting it, connected devices, devices that looked for it, and events. It's the same view as for investigated networks, and **Investigate** adds it to that list.
 
+**Bluetooth services.** On a Bluetooth LE device's page the *Services* row names each advertised service (for example `180f Battery`) and explains it in a tooltip when you hover or focus it. Standard services come from the Bluetooth SIG list; numbers in the `fc00`–`ffff` range belong to member companies, and the tooltip says when the app doesn't know which one.
+
 ## Bluetooth ↔ Wi-Fi matching
 
 Phones, tablets and laptops have both radios, so sniffowireless sees them twice. **Matching** (sidebar under Devices) guesses which Bluetooth address belongs to which Wi-Fi address from the last 7 days. It weighs:

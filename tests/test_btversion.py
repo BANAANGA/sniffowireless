@@ -148,3 +148,12 @@ def test_company_from_an_old_sensor_is_named_on_ingest(tmp_path):
     s.flush()
     ex = json.loads(s.conn.execute("SELECT extra FROM devices WHERE mac='a4:c1:38:4c:a5:bc'").fetchone()[0])
     assert ex["company"] == "AwoX"
+
+
+def test_every_service_the_identifier_knows_has_a_hover_explanation():
+    import re, pathlib
+    from sniffowireless.identify import BLE_UUIDS
+    from sniffowireless.btversion import LE_AUDIO_SERVICES
+    js = (pathlib.Path(__file__).resolve().parent.parent / "sniffowireless" / "static" / "btservices.js").read_text()
+    keys = set(re.findall(r"^\s*'([0-9a-f]{4})':", js, re.M))
+    assert (set(BLE_UUIDS) | LE_AUDIO_SERVICES) <= keys

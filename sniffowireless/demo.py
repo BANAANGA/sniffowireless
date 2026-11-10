@@ -391,7 +391,8 @@ class DemoGenerator:
                             atype != "random-static", "addr_random": atype != "public",
                             "vendor": (bt_company(cid) if cid else None) if atype != "public" else "Govee",
                             "extra": {"addr_type": atype, "company": bt_company(cid) if cid else None, "appearance": app,
-                                      "connectable": True, **BLE_NEW.get(mac, {})}})
+                                      "connectable": True, **BLE_NEW.get(mac, {}),
+                                      **({"uuids": BLE_FPS[mac]["uuids"]} if BLE_FPS.get(mac, {}).get("uuids") else {})}})
         minute = int(t // 60)
         for mac, name, sched, base, cls, connects, cod in CLASSIC:
             if not present(sched, mac, t):
