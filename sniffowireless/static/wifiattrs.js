@@ -42,13 +42,13 @@ function wifiApRows(ex, d) {
   if (a.mlo) gen.push('<span class="tag" title="Multi-link operation: this access point can use several bands at once (Wi-Fi 7).">multi-link (Wi-Fi 7)</span>');
   if (gen.length) rows.push(['Wi-Fi 6 / 7', tags(gen)]);
   const more = [];
-  if (a.mbssid) more.push('multiple BSSID (several networks from one radio)');
-  if (a.interworking) more.push('interworking / Hotspot');
-  if (a.ftm) more.push('FTM location ranging');
-  if (a.beacon_protection) more.push('beacon protection');
-  if (a.mesh_id) more.push(`mesh “${esc(a.mesh_id)}”`);
-  (a.aruba || []).forEach(x => more.push(`Aruba ${esc(x)}`));
-  if (more.length) rows.push(['Also announces', more.map(x => `<span class="tag">${x}</span>`).join(' ')]);
+  if (a.mbssid) more.push(['multiple BSSID (several networks from one radio)', 'One radio serves several networks, each with its own address, from a single set of beacons.']);
+  if (a.interworking) more.push(['interworking / Hotspot', 'Announces Hotspot / interworking information, as carrier and public Wi-Fi does.']);
+  if (a.ftm) more.push(['FTM location ranging', 'Answers fine timing measurement requests, so devices can work out their distance to it.']);
+  if (a.beacon_protection) more.push(['beacon protection', 'Protects its beacons against forgery.']);
+  if (a.mesh_id) more.push([`mesh “${a.mesh_id}”`, 'Part of an 802.11s mesh network with this mesh ID.']);
+  (a.aruba || []).forEach(x => more.push([`Aruba ${x}`, 'An element Aruba access points add to their beacons.']));
+  if (more.length) rows.push(['Also announces', more.map(([l, h]) => tagWithHelp(l, h)).join(' ')]);
   if (a.wps_configured != null || a.wps_locked) rows.push(['WPS', `${a.wps_configured ? 'configured' : 'not configured'}${a.wps_locked ? ' · <span class="warn-text">setup locked</span>' : ''}`]);
   if (a.rnr && a.rnr.length) rows.push(['Neighbouring APs', `<span class="faint">announced in its beacons (often the same device on another band):</span> ${a.rnr.map(n => `${devLink(n.bssid)} <span class="faint">ch ${n.ch}</span>`).join(', ')}`]);
   return rows;
@@ -73,5 +73,5 @@ function wifiFeaturesHtml(ci) {
   if (ci.chan_count) t.push(`${ci.chan_count} channels supported`);
   if (ci.txp) t.push(`TX power ${ci.txp[0]}–${ci.txp[1]} dBm`);
   if (!t.length) return '';
-  return `<div style="margin-top:10px"><span class="faint small-text">What it says it can do: </span>${t.map(x => `<span class="tag" style="margin:0 6px 6px 0">${esc(x)}</span>`).join('')}</div>`;
+  return `<div style="margin-top:10px"><span class="faint small-text">What it says it can do: </span>${t.map(x => tagWithHelp(x, capHelp(x), 'margin:0 6px 6px 0')).join('')}</div>`;
 }

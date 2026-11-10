@@ -584,3 +584,5 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 .notice-red { border: 1px solid #b3261e; background: color-mix(in srgb, #b3261e 14%, transparent); }
 .settings > * { min-width: 0; }   /* a settings page with a wide table must scroll inside its panel, not push the page sideways */
 .set-body .panel .body.flush { overflow-x: auto; }
+
+.hint { cursor: help; text-decoration: underline dotted; text-decoration-color: var(--faint); text-underline-offset: 3px; }

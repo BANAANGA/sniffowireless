@@ -174,3 +174,33 @@ def test_risk_notes_only_for_services_that_are_explained():
     rk = set(re.findall(r"^\s*'([0-9a-f]{4})':", risk, re.M))
     sk = set(re.findall(r"^\s*'([0-9a-f]{4})':", services, re.M))
     assert rk and rk <= sk
+
+
+def test_the_bluetooth_sig_numbers_name_member_and_standard_services():
+    import json, pathlib, re
+    js = (pathlib.Path(__file__).resolve().parent.parent / "sniffowireless" / "static" / "btnumbers.js").read_text()
+    d = json.loads(re.search(r"const BT_NUMBERS = (\{.*\});", js).group(1))
+    assert len(d["member"]) > 600 and len(d["service"]) > 60 and len(d["serviceClass"]) > 60
+    assert d["member"]["fef3"] == "Google LLC" and d["member"]["fd6f"].startswith("Apple") and d["service"]["1854"] == "Hearing Access"
+    assert all(re.fullmatch(r"[0-9a-f]{4}", k) for part in d.values() for k in part)
+    # the explanations written by hand still win over the bare names
+    svc = (pathlib.Path(__file__).resolve().parent.parent / "sniffowireless" / "static" / "btservices.js").read_text()
+    assert svc.index("BT_SERVICES[k]") < svc.index("N.member[k]")
+
+
+def test_every_wifi_row_on_the_device_page_has_a_hover_explanation():
+    import pathlib, re
+    st = pathlib.Path(__file__).resolve().parent.parent / "sniffowireless" / "static"
+    help_js = (st / "devicehelp.js").read_text()
+    keys = set(re.findall(r"^  '([^']+)':", help_js[help_js.index("const LABEL_HELP"):help_js.index("const GEN_HELP")], re.M))
+    pushed = set(re.findall(r"rows\.push\(\['([^']+)'", (st / "wifiattrs.js").read_text()))     # the rows the Wi-Fi code adds
+    app = (st / "app.js").read_text()
+    facts = app[app.index("const facts = ["):app.index("].filter(Boolean);", app.index("const facts = ["))]
+    wifi_facts = {"Address", "Type", "Vendor", "SSID", "Security", "Channel", "Signal (last / best)", "Frames", "First seen", "Last seen", "Room",
+                  "Time present", "Average visit", "Longest visit", "Time connected", "Connected now"}
+    for label in wifi_facts:
+        assert f"['{label}'" in facts, label      # the list below is about rows that really exist
+    missing = (pushed | wifi_facts) - keys
+    assert not missing, sorted(missing)
+    for label in ("Brand", "Model", "Device type", "Operating system", "Wi-Fi", "Wi-Fi chipset", "Estimated age", "Probe fingerprint", "WPS info"):
+        assert label in keys, label
