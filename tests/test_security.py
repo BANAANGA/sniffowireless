@@ -1163,3 +1163,62 @@ def test_dockerfile_pins_the_vendored_scripts_and_does_not_fall_back_to_a_cdn():
     d = (pathlib.Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
     assert len(re.findall(r"\b[0-9a-f]{64}\b", d)) >= 3 and "sha256sum -c" in d
     assert "will load it from the CDN" not in d and "UI will load it from the CDN" not in d
+
+
+def test_privacy_storage_mode_and_typed_addresses(env):
+    ctx, c = env
+    real, other = "a4:83:e7:5c:21:0b", "24:a4:3c:10:00:01"
+    assert c.get("/api/privacy/storage").status_code == 401 and c.get("/api/retention").status_code == 401
+    login(c, "viewer")
+    for path in ("/api/privacy/storage", "/api/retention"):
+        assert c.get(path).status_code == 403, path
+    assert c.put("/api/privacy/storage", json={"hash_macs": True}, headers=H).status_code == 403
+    c.cookies.clear()
+    login(c)
+    s = c.get("/api/privacy/storage").json()
+    assert s["hash_macs"] is False and s["forced"] is False and s["aliases"] == 0
+    assert c.put("/api/privacy/storage", json={"hash_macs": True, "scope": "nonsense"}, headers=H).status_code == 400
+    # without a request header the change is refused (the usual CSRF rule)
+    assert c.put("/api/privacy/storage", json={"hash_macs": True}).status_code == 403
+    s = c.put("/api/privacy/storage", json={"hash_macs": True, "scope": "static"}, headers=H).json()
+    assert s["hash_macs"] is True and s["key"].endswith("privacy.key") and ctx.store.macpriv is not None
+    # an observation arrives with the real address; the device is stored under its pseudonym
+    ctx.store.process({"t": "wifi_client", "ts": time.time(), "mac": real, "bssid": other, "frame": "assoc", "rssi": -50})
+    ctx.store.flush()
+    pseud = ctx.store.macpriv.pseudonym(real)
+    assert pseud != real
+    # the real address typed in a URL, a query and a JSON body is turned into the pseudonym on the way in
+    assert c.get(f"/api/devices/{real}").status_code == 200 and c.get(f"/api/devices/{pseud}").status_code == 200
+    assert c.get(f"/api/devices/{real}").json()["mac"] == pseud
+    assert [d["mac"] for d in c.get(f"/api/devices?q={real}").json()["items"]] == [pseud]
+    assert c.put("/api/settings/ignore", json={"macs": [real], "prefixes": [], "ssids": []}, headers=H).status_code == 200
+    assert ctx.settings.get("ignore")["macs"] == [pseud]                                  # never saved as typed
+    assert real not in json.dumps(c.get("/api/settings/ignore").json())
+    # forced from the environment: cannot be switched off in the interface
+    ctx.cfg.hash_macs = True
+    assert c.put("/api/privacy/storage", json={"hash_macs": False}, headers=H).status_code == 400
+    ctx.cfg.hash_macs = False
+    assert c.put("/api/privacy/storage", json={"hash_macs": False}, headers=H).json()["hash_macs"] is False
+    assert ctx.store.macpriv is None
+    # hashing what is already there needs the mode on, and a restart
+    assert c.post("/api/privacy/storage/hash-existing", headers=H).status_code == 400
+    c.put("/api/privacy/storage", json={"hash_macs": True}, headers=H)
+    r = c.post("/api/privacy/storage/hash-existing", headers=H).json()
+    assert r["restart_required"] is True and r["pending_existing"] is True
+
+
+def test_retention_api(env):
+    ctx, c = env
+    login(c)
+    r = c.get("/api/retention").json()
+    assert r["default"] == 30 and {k["kind"] for k in r["kinds"]} >= {"devices", "history", "events", "probes"}
+    assert all(k["effective"] == 30 and k["days"] == 0 for k in r["kinds"])
+    for bad in ({"days": {"probes": -1}}, {"days": {"probes": 4000}}, {"days": {"nonsense": 5}}, {"days": {"probes": "x"}}):
+        assert c.put("/api/retention", json=bad, headers=H).status_code in (400, 422), bad
+    assert c.put("/api/retention", json={"days": {"probes": 7}}).status_code == 403          # no request header
+    r = c.put("/api/retention", json={"days": {"probes": 7, "events": 90}}, headers=H).json()
+    got = {k["kind"]: k["effective"] for k in r["kinds"]}
+    assert got["probes"] == 7 and got["events"] == 90 and got["devices"] == 30
+    assert ctx.store.retention == {"probes": 7, "events": 90}
+    assert c.put("/api/retention", json={"days": {"probes": 0}}, headers=H).json()["kinds"][4]["effective"] == 30
+    assert c.post("/api/retention/run", headers=H).json() == {"ok": True}

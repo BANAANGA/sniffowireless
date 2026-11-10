@@ -72,6 +72,7 @@ Open **http://<host>:8080** and create the admin account with the setup code fro
 | [Using the UI](docs/ui.md) | Pages, tables, appearance, networks, labels, groups and the watch list |
 | [Device identification](docs/identification.md) | How brand, model and type are worked out |
 | [Alerts & notifications](docs/alerts.md) | Rules, quiet hours, ntfy, Telegram, Discord, webhooks, email |
+| [Privacy and the law](docs/privacy.md) | The red notice, hashed MAC storage, retention, good practice |
 | [Hardening](docs/hardening.md) | What protects the application, what is checked on every change, what to set on your side |
 | [Security monitoring](docs/security.md) | Evil twins, deauth floods, trackers, interference, DFS radar |
 | [Ethernet monitoring](docs/ethernet.md) | Where to plug it in and what it learns |
@@ -311,7 +312,9 @@ All settings are environment variables (put them in `.env`).
 | `ACTIVE_WINDOW` | `300` | "Active now" window used by the overview cards. |
 | `DB_CACHE_MB` | `16` | Page cache SQLite gives each database query (statistics and timeline pages are faster with more). `0` = SQLite's default of 2 MB. |
 | `DB_MMAP_MB` | `256` | Size of the memory map over the database file. `0` disables it. Both can be switched off together at runtime in Settings → Performance (for low-memory machines). |
-| `RETENTION_DAYS` | `30` | Samples, sessions, events and devices older than this are pruned hourly. |
+| `RETENTION_DAYS` | `30` | Samples, sessions, events and devices older than this are pruned hourly. Each kind can get its own limit under Settings → Privacy (see [Privacy and the law](docs/privacy.md)). |
+| `HASH_MACS` | `0` | `1` forces privacy mode on: a full static MAC address is never stored, only a keyed pseudonym (see [Privacy and the law](docs/privacy.md)). The interface cannot switch it off. |
+| `PRIVACY_KEY` | | The secret for those pseudonyms, instead of the key file `privacy.key` in the data directory. |
 | `EVENTS_FOR_RANDOMIZED` | `0` | Also log arrive/leave/new-device events for randomized addresses. |
 | `IGNORE_MACS` | – | Comma-separated addresses to ignore completely (the admin can also maintain an ignore list in the UI). |
 | `WEB_PORT` | `8080` | HTTP port (on the host, because of host networking). |

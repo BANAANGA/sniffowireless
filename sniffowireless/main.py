@@ -127,6 +127,8 @@ def build(cfg):
     store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
                     ctx.zigbee, ctx.lora, ctx.radiowatch]
     store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
+    store.set_retention(ctx.settings.get("retention"))
+    ctx.settings.on_change(lambda k: store.set_retention(ctx.settings.get("retention")) if k == "retention" else None)
     apply_ignore(ctx)
     apply_meta(ctx)
     return ctx
@@ -137,6 +139,8 @@ def main():
     logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     from .logs import install as install_log_buffer
     install_log_buffer(cfg.log_level)  # keeps recent log lines for the live Logs page
+    from .macprivacy import install_log_filter
+    install_log_filter()  # MAC addresses in log lines are replaced while privacy mode is on
     if cfg.mode == "sensor":
         return run_sensor(cfg)
 

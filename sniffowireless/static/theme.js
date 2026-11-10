@@ -130,3 +130,16 @@ function applyFont(a, preview = false) {
     Chart.defaults.font.family = (document.body && getComputedStyle(document.body).fontFamily) || DEFAULT_FONT_STACK;
   }
 }
+
+// ------------------------------------------------------------------ legal / privacy notice
+// The red banner at the top of every page (and the sign-in page). It can be hidden until this browser session ends: it is
+// back in a new tab or after the browser is closed. Nothing about it is stored on the server.
+(() => {
+  const init = () => {
+    const b = document.getElementById('legal-banner'), x = document.getElementById('legal-dismiss');
+    if (!b) return;
+    try { if (sessionStorage.getItem('sniffowireless.legal') === 'off') b.hidden = true; } catch { /* private mode: shown */ }
+    if (x) x.onclick = () => { b.hidden = true; try { sessionStorage.setItem('sniffowireless.legal', 'off'); } catch { /* private mode */ } };
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true }); else init();
+})();
