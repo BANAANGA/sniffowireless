@@ -832,9 +832,9 @@ async function viewDevice(mac, params) {
     ['Type', kindBadge(d.kind)],
     ['Vendor', esc(d.vendor || (d.randomized ? 'Randomized address' : 'Unknown'))],
     isAp ? ['SSID', d.ssid ? `${esc(d.ssid)} <a class="faint" href="#/investigation/${enc(d.ssid)}">dossier →</a>` : esc(d.ssid === '' || ex.hidden ? '<hidden>' : '—')] : null,
-    isAp ? ['Security', esc(d.enc || '—')] : null,
+    isAp ? ['Security', encHtml(d.enc)] : null,
     ...(isAp ? wifiApRows(ex, d) : []),
-    !isBt ? ['Channel', d.channel ? `${d.channel}${d.band ? ` · ${BANDS[d.band] ? BANDS[d.band].label : esc(d.band)}` : ''}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}` : '—'] : null,
+    !isBt ? ['Channel', d.channel ? `<span title="${esc(channelHelp(d))}">${d.channel}${d.band ? ` · ${BANDS[d.band] ? BANDS[d.band].label : esc(d.band)}` : ''}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}</span>` : '—'] : null,
     ...(!isAp && !isBt ? wifiClientRows(ex, d) : []),
     isBt && d.name ? ['Name', esc(d.name)] : null,
     ex.addr_type ? ['Address type', esc(ex.addr_type)] : null,
@@ -876,7 +876,7 @@ async function viewDevice(mac, params) {
         ${d.kind === 'ble' ? `<button class="btn" id="play-sound" type="button" title="Connects and asks the device to play its find-me sound. Doesn't work on genuine Apple AirTags — see the button for why.">Play sound</button>` : ''}
         ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div></div>
     <div class="grid cols-3">
-      <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
+      <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span${lblAttr(k)}>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>
       ${trackPanel(d)}
       ${matchPanel(d)}
       ${lanPanel(d)}
@@ -1415,9 +1415,9 @@ function identPanel(d) {
   const f = idn.fields || {};
   const row = (label, key, fmt = v => esc(v), filter = null) => {
     const x = f[key];
-    if (!x) return `<div><span>${label}</span><b class="faint">unknown</b></div>`;
+    if (!x) return `<div><span${lblAttr(label)}>${label}</span><b class="faint">unknown</b></div>`;
     const val = filter ? `<a href="${hrefWith('/devices', { [filter]: filter === 'dev_type' ? x.value : d[filter] ?? x.value })}">${fmt(x.value)}</a>` : fmt(x.value);
-    return `<div><span>${label}</span><b>${val} <span class="conf conf-${x.level}" title="${x.conf}% confidence">${x.level}</span></b></div>`;
+    return `<div><span${lblAttr(label)}>${label}</span><b>${val} <span class="conf conf-${x.level}" title="${x.conf}% confidence">${x.level}</span></b></div>`;
   };
   const caps = idn.wifi_caps || {};
   const capText = [caps.ss ? `${caps.ss}×${caps.ss} MIMO` : null, caps.width ? `${caps.width} MHz` : null].filter(Boolean).join(' · ');
@@ -1429,14 +1429,14 @@ function identPanel(d) {
       ${row('Model', 'model')}
       ${row('Device type', 'type', typeLabel, 'dev_type')}
       ${row('Operating system', 'os', esc, 'os')}
-      ${row('Wi-Fi', 'wifi', v => esc(v) + (capText ? ` <span class="faint">${capText}</span>` : ''), d.wifi_gen ? 'wifi_gen' : null)}
+      ${row('Wi-Fi', 'wifi', v => `<span title="${esc(wifiRowHelp(v + ' ' + capText))}">${esc(v)}</span>` + (capText ? ` <span class="faint">${capText}</span>` : ''), d.wifi_gen ? 'wifi_gen' : null)}
       ${row('Wi-Fi chipset', 'chipset')}
-      <div><span>Estimated age</span><b>${idn.age_hint ? esc(idn.age_hint) : '<span class="faint">unknown</span>'}</b></div>
-      ${d.fp_hash ? `<div><span>Probe fingerprint</span><b><a class="mono" href="${hrefWith('/devices', { fp: d.fp_hash })}">${esc(d.fp_hash)}</a> <span class="faint">${d.fp_peers ? `shared with ${d.fp_peers} other MAC${d.fp_peers > 1 ? 's' : ''}` : 'unique'}</span></b></div>` : ''}
-      ${wps.device_name || wps.manufacturer ? `<div><span>WPS info</span><b>${esc([wps.manufacturer, wps.model, wps.model_number, wps.device_name].filter(Boolean).join(' · '))}</b></div>` : ''}
+      <div><span${lblAttr('Estimated age')}>Estimated age</span><b>${idn.age_hint ? esc(idn.age_hint) : '<span class="faint">unknown</span>'}</b></div>
+      ${d.fp_hash ? `<div><span${lblAttr('Probe fingerprint')}>Probe fingerprint</span><b><a class="mono" href="${hrefWith('/devices', { fp: d.fp_hash })}">${esc(d.fp_hash)}</a> <span class="faint">${d.fp_peers ? `shared with ${d.fp_peers} other MAC${d.fp_peers > 1 ? 's' : ''}` : 'unique'}</span></b></div>` : ''}
+      ${wps.device_name || wps.manufacturer ? `<div><span${lblAttr('WPS info')}>WPS info</span><b>${esc([wps.manufacturer, wps.model, wps.model_number, wps.device_name].filter(Boolean).join(' · '))}</b></div>` : ''}
     </div>
     ${wifiFeaturesHtml(caps.capinfo)}
-    ${idn.features && idn.features.length ? `<div style="margin-top:14px">${idn.features.map(x => `<span class="tag" style="margin:0 6px 6px 0">${esc(x)}</span>`).join('')}</div>` : ''}
+    ${idn.features && idn.features.length ? `<div style="margin-top:14px">${idn.features.map(x => tagWithHelp(x, featureHelp(x), 'margin:0 6px 6px 0')).join('')}</div>` : ''}
     ${ev.length ? `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Evidence</summary>
       <table style="margin-top:8px"><thead><tr><th>Finding</th><th>Value</th><th>Source</th><th class="num">Confidence</th></tr></thead><tbody>
       ${ev.map(e => `<tr><td class="muted">${esc(e.field)}</td><td>${esc(e.field === 'type' ? typeLabel(e.value) : e.value)}</td><td class="muted" style="white-space:normal">${esc(e.source)}</td><td class="num muted">${e.conf}%</td></tr>`).join('')}

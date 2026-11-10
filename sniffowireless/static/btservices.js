@@ -124,7 +124,13 @@ function btServiceInfo(u) {
   if (k.length === 36) return { name: null, text: 'A vendor-specific (128-bit) service. Manufacturers use these for their own protocol, so the number alone does not say what the device does.', risk: null };
   if (k.length === 8) return { name: null, text: 'A 32-bit service number. Rarely used; the app does not recognise it.', risk: null };
   if (BT_SERVICES[k]) return { name: BT_SERVICES[k][0], text: BT_SERVICES[k][1], risk: BT_RISK[k] || null };
+  const N = typeof BT_NUMBERS !== 'undefined' ? BT_NUMBERS : null;   // the SIG's assigned numbers (btnumbers.js)
+  if (N && N.service[k]) return { name: N.service[k], text: 'A standard Bluetooth service (Bluetooth SIG Assigned Numbers). This app has no plain-language description of it yet.', risk: null };
+  if (N && N.serviceClass[k]) return { name: N.serviceClass[k], text: 'A Bluetooth Classic profile or service class (Bluetooth SIG Assigned Numbers). This app has no plain-language description of it yet.', risk: null };
+  if (N && N.member[k]) return { name: N.member[k], text: `This number is registered to ${N.member[k]}, a Bluetooth SIG member. What the device uses it for is up to that company; a device does not have to be made by them to use it.`, risk: null };
+  if (N && N.sdo[k]) return { name: N.sdo[k], text: 'A number registered to a standards organisation (Bluetooth SIG Assigned Numbers).', risk: null };
   const n = parseInt(k, 16);
+  if (N) return { name: null, text: 'This number is not in the Bluetooth SIG list shipped with this app: it may have been assigned since, or the device may be using a number nobody assigned.', risk: null };
   if (n >= 0xFC00 && n <= 0xFFFF) return { name: null, text: 'A service number assigned to a Bluetooth member company. This app does not know which one, and the device may use it for its own protocol.' };
   return { name: null, text: 'Not a service this app recognises. It may be a newer standard service or a vendor-specific one.' };
 }
