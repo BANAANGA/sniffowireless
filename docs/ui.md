@@ -92,6 +92,8 @@ Search it, tick networks and apply. Networks that are only *looked for* by devic
 
 **Bluetooth advertisement details.** Besides the services, a Bluetooth LE device's page shows what its advertisements say about it, all heard passively: the *Advertised flags* (discoverable mode and whether it is LE only or also classic Bluetooth), the *Preferred connection interval* it asks for, an *Advertising interval* estimated from how often the device was heard (a rounded estimate: the scanner hears one of three channels at a time, so it can be off for devices that advertise slowly or that were heard rarely), and *iBeacon* UUID, major and minor. Services now include 128-bit (vendor-specific) and 32-bit UUIDs; the standard 16-bit ones are listed first and at most 16 are kept. Remote sensors need the newest image to report these.
 
+**Company IDs and raw manufacturer data.** The *Manufacturer data* row names the company behind the ID a device advertises (the full Bluetooth SIG list is bundled). A number that is far beyond the highest registered ID is shown as *Unregistered 0x…*: it is not a company, the device just uses those bytes for its own format, and it is not used as the device's vendor or brand. *Raw manufacturer data* shows the first 32 bytes as sent, company field first (Apple's rotating data is decoded instead and not kept). Remote sensors need the newest image to send it.
+
 ## Bluetooth ↔ Wi-Fi matching
 
 Phones, tablets and laptops have both radios, so sniffowireless sees them twice. **Matching** (sidebar under Devices) guesses which Bluetooth address belongs to which Wi-Fi address from the last 7 days. It weighs:

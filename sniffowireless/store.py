@@ -14,11 +14,11 @@ import time
 
 from . import btversion, identify
 from .config import _int
-from .oui import bt_company
+from .oui import bt_company, bt_company_known
 from .sanitize import clean_str
 
 BT_VERSION_RULES = "2"
-BT_COMPANY_NAMES = "2"
+BT_COMPANY_NAMES = "3"
 _COMPANY_RX = re.compile(r"^Company 0x([0-9A-Fa-f]{1,4})$")
 
 log = logging.getLogger("sniffowireless.store")
@@ -280,8 +280,8 @@ class Store:
                     extra[key] = bt_company(int(m.group(1), 16))
                     changed = True
             m = rx.match(vendor or "")
-            if m and bt_company(int(m.group(1), 16)) != vendor:
-                vendor, changed = bt_company(int(m.group(1), 16)), True
+            if m:  # an unnamed company is not a vendor
+                vendor, changed = bt_company_known(int(m.group(1), 16)), True
             if changed:
                 self.conn.execute("UPDATE devices SET vendor=?, extra=? WHERE mac=?", (vendor, json.dumps(extra), r["mac"]))
                 n += 1
@@ -515,6 +515,9 @@ class Store:
                 dev[f] = v
         if o.get("extra"):
             dev["extra"].update({k: v for k, v in o["extra"].items() if v is not None})
+            m = _COMPANY_RX.match(dev.get("vendor") or "")
+            if m:
+                dev["vendor"] = bt_company_known(int(m.group(1), 16))
             for k in ("company", "chip"):  # remote sensors on an older image still send "Company 0x0160"
                 m = _COMPANY_RX.match(dev["extra"].get(k) or "")
                 if m:

@@ -66,3 +66,34 @@ def test_scan_responses_are_flagged_in_the_event_parser():
     rep = bytes([0x02, 1, 4, 0]) + bytes(6) + bytes([len(data)]) + data + bytes([0xC0])
     ev = parse_event(bytes([0x04, 0x3E, len(rep)]) + rep)
     assert ev and ev[0]["srsp"] is True
+
+
+def test_unregistered_company_ids_are_labelled_as_such():
+    from sniffowireless.oui import bt_company, bt_company_known
+    assert bt_company(0xE89A) == "Unregistered 0xE89A"
+    assert bt_company_known(0xE89A) is None
+    assert bt_company(0x004C) == "Apple"
+    assert bt_company(0x1117).startswith("Company 0x")  # just past the list: may be a new registration
+    assert bt_company(0xFFFF) != "Unregistered 0xFFFF"  # reserved for testing, in the list
+
+
+def test_raw_manufacturer_data_keeps_the_company_field_first_and_skips_apple():
+    from sniffowireless.bluetooth import raw_mfg
+    assert raw_mfg(0xE89A, b"\x01\x02") == "9ae80102"
+    assert raw_mfg(0x004C, b"\x02\x15") is None
+    assert raw_mfg(None, b"") is None
+
+
+def test_an_unnamed_company_is_not_a_brand_or_vendor(tmp_path):
+    import json
+    from sniffowireless.config import Config
+    from sniffowireless.identify import identify
+    from sniffowireless.oui import VendorLookup
+    from sniffowireless.store import Store
+    assert identify({"kind": "ble", "mac": "aa:bb:cc:dd:ee:ff", "randomized": 1, "extra": {"company": "Unregistered 0xE89A"}})["brand"] is None
+    s = Store(Config(db_path=str(tmp_path / "t.db")), VendorLookup(None))
+    s.process({"t": "bt", "kind": "ble", "ts": 100, "mac": "c1:00:00:00:00:01", "rssi": -60, "randomized": True, "addr_random": True,
+               "vendor": "Company 0xE89A", "extra": {"company": "Company 0xE89A", "addr_type": "random-static"}})
+    s.flush()
+    r = s.conn.execute("SELECT vendor, extra FROM devices WHERE mac='c1:00:00:00:00:01'").fetchone()
+    assert r["vendor"] is None and json.loads(r["extra"])["company"] == "Unregistered 0xE89A"

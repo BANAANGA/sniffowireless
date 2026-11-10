@@ -8,7 +8,7 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-IDENT_VERSION = 7
+IDENT_VERSION = 8
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -726,7 +726,7 @@ def identify(dev):
     app = extra.get("appearance")
     if app in APPEARANCE_TYPES:
         ev.add("type", APPEARANCE_TYPES[app], 75, f"BLE appearance “{app}”")
-    if extra.get("company") and kind == "ble":
+    if extra.get("company") and kind == "ble" and not extra["company"].startswith(("Company 0x", "Unregistered 0x")):
         ev.add("brand", extra["company"], 55, "BLE manufacturer data")
 
     # --- Bluetooth Classic class of device
