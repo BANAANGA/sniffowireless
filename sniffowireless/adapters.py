@@ -94,6 +94,8 @@ def reset_bluetooth(entry, usb):
     if not m:
         raise ValueError(f"{dev} is not an HCI device")
     dev_id, steps = int(m.group(1)), []
+    if not hasattr(socket, "AF_BLUETOOTH"):
+        raise OSError("This Python has no Bluetooth socket support (it was built without it)")
     s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
     try:
         for label, req in (("down", HCIDEVDOWN), ("reset", HCIDEVRESET)):
