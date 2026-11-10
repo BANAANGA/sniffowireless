@@ -71,3 +71,16 @@ def test_a_car_makers_bluetooth_company_id_means_a_car(company, brand):
 def test_an_audio_company_is_not_a_car():
     r = identify({"kind": "ble", "mac": "c1:22:33:44:55:66", "randomized": 1, "extra": {"company": "Tivoli Audio, LLC"}})
     assert r["dev_type"] != "car"
+
+
+@pytest.mark.parametrize("name", ["MBUX", "MBUX 1234", "MBUX-5A2B", "MBUX_Hotspot", "mbux1234"])
+def test_mbux_is_a_mercedes(name):
+    for kind, extra in (("ap", {}), ("ble", {})):
+        d = {"kind": kind, "mac": "02:00:00:00:00:01", "randomized": 1, "extra": extra, ("ssid" if kind == "ap" else "name"): name}
+        r = identify(d)
+        assert r["brand"] == "Mercedes-Benz" and r["dev_type"] == "car", (kind, name)
+
+
+@pytest.mark.parametrize("name", ["MBUXY", "ambux", "MBUXtra"])
+def test_words_that_only_contain_mbux_are_not(name):
+    assert identify({"kind": "ap", "mac": "02:00:00:00:00:01", "randomized": 1, "ssid": name, "extra": {}})["dev_type"] != "car"

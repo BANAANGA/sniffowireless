@@ -395,7 +395,7 @@ def _word(p):
 
 # (pattern, brand). Whole words only ("Audio" is not Audi, "Stanford" is not Ford); Ford only with a model or SYNC, as a bare word it is a surname.
 CAR_MAKES = [
-    (_word("Tesla"), "Tesla"), (_word(r"Mercedes(?:[ _-]?Benz)?"), "Mercedes-Benz"), (_word("BMW"), "BMW"), (_word("Audi"), "Audi"),
+    (_word("Tesla"), "Tesla"), (_word(r"Mercedes(?:[ _-]?Benz)?|MBUX"), "Mercedes-Benz"), (_word("BMW"), "BMW"), (_word("Audi"), "Audi"),
     (_word("VW|Volkswagen"), "Volkswagen"), (_word("Toyota"), "Toyota"), (_word("Volvo"), "Volvo"), (_word("Polestar"), "Polestar"),
     (_word("Porsche"), "Porsche"), (_word("Rivian"), "Rivian"),
     (_word(r"Ford[ _-]?(?:SYNC|F-?150|Mustang|Mach-?E|Explorer|Focus|Fiesta|Transit)"), "Ford"),
