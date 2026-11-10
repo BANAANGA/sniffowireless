@@ -8,9 +8,9 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
-from . import wifiattrs
+from . import apmodels, wifiattrs
 
-IDENT_VERSION = 8
+IDENT_VERSION = 9
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -646,6 +646,26 @@ def identify(dev):
                 ev.add("os", os_, 55, f"Network name “{ssid}”")
                 break
 
+    # --- access point models (TP-Link, Ubiquiti, HPE Aruba): from what the AP announces about itself
+    if kind == "ap":
+        apx = extra.get("ap") or {}
+        src_vendor = apx.get("ap_name_src")
+        texts = []
+        if apx.get("ap_name"):
+            texts.append((apx["ap_name"], f"AP name announced in beacons ({src_vendor})", 72))
+            ev.add("name", apx["ap_name"], 70, f"AP name announced in beacons ({src_vendor})")
+        wps_ap = wfp.get("wps") or {}
+        for key, what in (("model", "WPS model"), ("model_number", "WPS model number"), ("device_name", "WPS device name")):
+            if wps_ap.get(key):
+                texts.append((wps_ap[key], what, 80))
+        if ssid:
+            texts.append((ssid, "Network name", 45))
+        if name and name != ssid:
+            texts.append((name, "Device name", 55))
+        apmodels.model_evidence(ev, texts, wfp.get("gen"), hint_brand=short_vendor(vendor) or src_vendor)
+        for label in apx.get("aruba") or []:
+            ev.add("feature", f"Aruba: {label}", 70, "Aruba vendor element in beacons")
+
     # --- Wi-Fi capabilities
     if wfp:
         gen = wfp.get("gen")
@@ -670,6 +690,8 @@ def identify(dev):
                         ev.add("type", "phone", 50, "Apple device probing with private address (iPhone/iPad)")
             elif oui == "00:00:f0":
                 ev.add("brand", "Samsung", 70, "Samsung vendor element in Wi-Fi frames")
+            elif oui in ("00:0b:86", "00:15:6d") and kind == "ap":  # these makers' own elements in a beacon: it is one of their access points
+                ev.add("brand", "HPE Aruba" if oui == "00:0b:86" else "Ubiquiti", 75, f"Vendor element {oui} in beacons")
             elif vname and oui not in ("00:50:f2", "50:6f:9a"):
                 ev.add("chipset", vname, 50, f"Vendor element {oui}")
         for f in wfp.get("wfa", []):

@@ -33,6 +33,7 @@ function wifiApRows(ex, d) {
   }
   if (a.wpa1) rows.push(['Old WPA', '<span class="tag warn" title="Also announces WPA version 1 (TKIP), the pre-WPA2 standard.">WPA 1 offered</span>']);
   if (a.load) rows.push(['Load', `${a.load.sta} connected · ${a.load.util}% of the time busy <span class="faint">(reported by the access point)</span>`]);
+  if (a.ap_name) rows.push(['AP name', `${esc(a.ap_name)} <span class="faint">(announced in its beacons by ${esc(a.ap_name_src || 'the access point')}; an administrator can set it to anything)</span>`]);
   if (a.beacon_tu) rows.push(['Beacon interval', `${a.beacon_tu} TU <span class="faint">≈ ${Math.round(a.beacon_tu * 1.024)} ms</span>`]);
   if (a.country) rows.push(['Country', `${esc(a.country)}${a.country_env ? ` <span class="faint">(${esc(a.country_env)})</span>` : ''}`]);
   if (a.roaming && a.roaming.length) rows.push(['Roaming', tags(a.roaming.map(x => `<span class="tag" title="${esc(ROAM_HELP[x] || '')}">802.${esc(x)}</span>`))]);
@@ -46,6 +47,7 @@ function wifiApRows(ex, d) {
   if (a.ftm) more.push('FTM location ranging');
   if (a.beacon_protection) more.push('beacon protection');
   if (a.mesh_id) more.push(`mesh “${esc(a.mesh_id)}”`);
+  (a.aruba || []).forEach(x => more.push(`Aruba ${esc(x)}`));
   if (more.length) rows.push(['Also announces', more.map(x => `<span class="tag">${x}</span>`).join(' ')]);
   if (a.wps_configured != null || a.wps_locked) rows.push(['WPS', `${a.wps_configured ? 'configured' : 'not configured'}${a.wps_locked ? ' · <span class="warn-text">setup locked</span>' : ''}`]);
   if (a.rnr && a.rnr.length) rows.push(['Neighbouring APs', `<span class="faint">announced in its beacons (often the same device on another band):</span> ${a.rnr.map(n => `${devLink(n.bssid)} <span class="faint">ch ${n.ch}</span>`).join(', ')}`]);

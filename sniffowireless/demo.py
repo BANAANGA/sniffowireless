@@ -108,6 +108,7 @@ BLE_FPS = {
     "6e:11:aa:02:00:0c": {"company": 0x004C, "apple": [0x0C, 0x10]},  # unknown AirTag following Alex every other day
 }
 
+DEMO_AP_NAMES = {"24:a4:3c:10:00:01": "U6-Lite", "24:a4:3c:10:00:02": "U6-Pro", "24:a4:3c:10:00:09": "U7-Pro"}
 APS = [
     ("24:a4:3c:10:00:01", "HomeNet", 1, "WPA2/PSK", -42, "Ubiquiti"),
     ("24:a4:3c:10:00:02", "HomeNet", 36, "WPA2/PSK", -55, "Ubiquiti"),
@@ -370,6 +371,8 @@ class DemoGenerator:
             info["rsn"] = {"akm": ["PSK"], "pairwise": ["CCMP"], "group": "CCMP", "pmf": "off"}
         if vendor in ("Ubiquiti", "Netgear"):
             info["roaming"] = ["11k", "11r", "11v"]
+        if mac in DEMO_AP_NAMES:  # the vendor "AP name" element Ubiquiti access points broadcast (default names are the model names)
+            info["ap_name"], info["ap_name_src"] = DEMO_AP_NAMES[mac], "Ubiquiti"
         if h % 3 == 0:
             info["bss_color"] = 1 + h % 60
         if h % 4 == 0:
