@@ -19,6 +19,7 @@ from .sanitize import clean_str
 
 BT_VERSION_RULES = "2"
 BT_COMPANY_NAMES = "2"
+_COMPANY_RX = re.compile(r"^Company 0x([0-9A-Fa-f]{1,4})$")
 
 log = logging.getLogger("sniffowireless.store")
 
@@ -268,7 +269,7 @@ class Store:
 
     def _rename_bt_companies(self):
         """Devices stored while a company ID was unknown keep "Company 0x0160"; look the names up again."""
-        rx = re.compile(r"^Company 0x([0-9A-Fa-f]{1,4})$")
+        rx = _COMPANY_RX
         n = 0
         for r in self.conn.execute("SELECT mac, vendor, extra FROM devices WHERE kind IN ('ble', 'bt_classic')").fetchall():
             extra = json.loads(r["extra"] or "{}")
@@ -514,6 +515,10 @@ class Store:
                 dev[f] = v
         if o.get("extra"):
             dev["extra"].update({k: v for k, v in o["extra"].items() if v is not None})
+            for k in ("company", "chip"):  # remote sensors on an older image still send "Company 0x0160"
+                m = _COMPANY_RX.match(dev["extra"].get(k) or "")
+                if m:
+                    dev["extra"][k] = bt_company(int(m.group(1), 16))
         fp_changed = self._merge_fp(dev, o.get("fp"))
         ex = dev["extra"]
         key = (dev["kind"], dev["name"], dev["vendor"], dev["ssid"], dev["band"], dev["randomized"],
