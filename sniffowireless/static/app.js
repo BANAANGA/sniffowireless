@@ -847,7 +847,7 @@ async function viewDevice(mac, params) {
     ex.auracast ? ['LE Audio broadcast', esc([ex.auracast.name, ex.auracast.id ? 'ID ' + ex.auracast.id : '', ex.auracast.encrypted ? 'encrypted' : 'open', ex.auracast.quality ? ex.auracast.quality + ' quality' : ''].filter(Boolean).join(' · '))] : null,
     ex.esl ? ['Electronic shelf label', 'yes'] : null,
     ex.encrypted_ad ? ['Encrypted advertising data', 'yes <span class="faint">(Bluetooth 5.4)</span>'] : null,
-    ex.uuids && ex.uuids.length ? ['Services', `<span class="mono">${esc(ex.uuids.join(', '))}</span>`] : null,
+    ex.uuids && ex.uuids.length ? ['Services', btServiceTags(ex.uuids)] : null,
     ['Signal (last / best)', `${rssiBars(d.last_rssi)} <span class="faint">/ ${d.best_rssi ?? '—'}</span>`],
     ['Frames', num(d.packets)],
     ['First seen', `${dt(d.first_seen)} <span class="faint">${ago(d.first_seen)}</span>`],
