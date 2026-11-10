@@ -18,7 +18,7 @@ from .oui import bt_company
 from .sanitize import clean_str
 
 BT_VERSION_RULES = "2"
-BT_COMPANY_NAMES = "1"
+BT_COMPANY_NAMES = "2"
 
 log = logging.getLogger("sniffowireless.store")
 
