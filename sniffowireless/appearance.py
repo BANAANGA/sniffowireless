@@ -24,6 +24,9 @@ COLORS = {
 ICONS = ("dot", "wifi", "radar", "bluetooth", "eye", "shield", "custom")
 STYLES = ("", "vicecity")  # optional decoration on top of the colours (gradients, glow); see style.css
 CLOCKS = ("auto", "24", "12")  # auto: the browser's locale decides
+FONTS = ("", "system", "humanist", "serif", "mono", "custom")  # stacks live in theme.js; "custom" uses font_custom
+FONT_NAME = re.compile(r"^[A-Za-z0-9 ._-]{0,40}$")  # a font installed on the device: letters, digits, space . _ - only
+FONT_SIZES = (11, 20)  # base size in px; the stock look is 13
 ICON_TYPES = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
 MAX_ICON = 256 * 1024
 HEX = re.compile(r"^#[0-9a-f]{6}$")
@@ -50,7 +53,32 @@ class Appearance(BaseModel):
     icon: str = "dot"
     clock: str = "auto"
     style: str = ""
+    font: str = ""
+    font_custom: str = ""
+    font_size: int = 13
     colors: Dict[str, str] = {}
+
+    @field_validator("font")
+    @classmethod
+    def _font(cls, v):
+        if v not in FONTS:
+            raise ValueError("unknown font")
+        return v
+
+    @field_validator("font_custom")
+    @classmethod
+    def _font_custom(cls, v):
+        v = (v or "").strip()
+        if not FONT_NAME.match(v):
+            raise ValueError("font name: letters, digits, spaces and . _ - only (up to 40)")
+        return v
+
+    @field_validator("font_size")
+    @classmethod
+    def _font_size(cls, v):
+        if not FONT_SIZES[0] <= v <= FONT_SIZES[1]:
+            raise ValueError(f"font size must be {FONT_SIZES[0]}-{FONT_SIZES[1]}")
+        return v
 
     @field_validator("clock")
     @classmethod
@@ -108,6 +136,9 @@ def current(ctx):
     return {"name": a.get("name") or "sniffowireless", "icon": icon,
             "clock": a.get("clock") if a.get("clock") in CLOCKS else "auto",
             "style": a.get("style") if a.get("style") in STYLES else "",
+            "font": a.get("font") if a.get("font") in FONTS else "",
+            "font_custom": (a.get("font_custom") or "") if FONT_NAME.match(str(a.get("font_custom") or "")) else "",
+            "font_size": a.get("font_size") if isinstance(a.get("font_size"), int) and FONT_SIZES[0] <= a["font_size"] <= FONT_SIZES[1] else 13,
             "colors": {**COLORS, **(a.get("colors") or {})},
             "custom_colors": sorted((a.get("colors") or {}).keys()), "defaults": COLORS, "icons": list(ICONS),
             "icon_url": f"/api/appearance/icon?v={int(a.get('icon_ver') or 0)}" if custom else None}
@@ -126,7 +157,8 @@ def routes(ctx):
         a = dict(ctx.settings.get("appearance"))
         if body.icon == "custom" and not icon_file(a):
             raise HTTPException(400, "Upload an icon image first")
-        a.update({"name": body.name, "icon": body.icon, "clock": body.clock, "style": body.style, "colors": body.colors})
+        a.update({"name": body.name, "icon": body.icon, "clock": body.clock, "style": body.style, "colors": body.colors,
+                  "font": body.font, "font_custom": body.font_custom, "font_size": body.font_size})
         ctx.settings.set("appearance", a)
         return current(ctx)
 

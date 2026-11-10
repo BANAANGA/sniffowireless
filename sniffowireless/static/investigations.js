@@ -181,7 +181,7 @@ addRoute('/investigations', async (_, params) => {
     <div class="row">${seg('days', [[1, '24h'], [7, '7 days'], [30, '30 days']], days)} ${isAdmin() ? '<a class="btn" href="#/settings?tab=investigate">Manage list</a>' : ''}</div></div>
     ${r.items.length ? `<div class="grid cols-3">${r.items.map(x => `<a class="card" href="#/investigation/${enc(x.ssid)}">
       <div class="label">${x.aps ? `<span class="state-dot ${Date.now() / 1000 - (x.last_seen || 0) < 600 ? 'on' : ''}"></span>${x.aps} access point${x.aps === 1 ? '' : 's'}` : '<span class="state-dot"></span>not broadcast'}${x.enc ? ' · ' + esc(x.enc.split(',')[0]) : ''}</div>
-      <div class="value" style="font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.ssid)}</div>
+      <div class="value" style="font-size:calc(18px * var(--fs,1));overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.ssid)}</div>
       ${x.note ? `<div class="faint small-text" style="margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.note)}</div>` : ''}
       <div class="meta"><span>${num(x.clients)} client${x.clients === 1 ? '' : 's'}</span><span>${num(x.probers)} looked for it</span><span>last seen ${ago(x.last_seen)}</span></div>
       <div class="meta">${Object.entries(INV_EVENT).map(([k, l]) => `<span>${num((x.events || {})[k])} ${l}</span>`).join('')}</div></a>`).join('')}</div>`
@@ -226,9 +226,9 @@ async function renderSsid(ssid, params, base) {
         <div class="meta"><span>${connectedNow} connected now</span></div></div>
       <div class="card"><div class="label">Looked for by</div><div class="value">${num(d.probers.length)}</div>
         <div class="meta"><span>device${d.probers.length === 1 ? '' : 's'} probing</span></div></div>
-      <div class="card"><div class="label">Security</div><div class="value" style="font-size:16px">${encs.length ? esc(encs.join(', ')) : '—'}</div>
+      <div class="card"><div class="label">Security</div><div class="value" style="font-size:calc(16px * var(--fs,1))">${encs.length ? esc(encs.join(', ')) : '—'}</div>
         <div class="meta">${encs.some(e => e.includes('OPN')) ? '<span class="tag bad">open network seen</span>' : encs.length ? '<span class="tag on">encrypted</span>' : ''}</div></div>
-      <div class="card"><div class="label">Best signal</div><div class="value" style="font-size:16px">${bestRssi != null ? rssiBars(bestRssi) : '—'}</div>
+      <div class="card"><div class="label">Best signal</div><div class="value" style="font-size:calc(16px * var(--fs,1))">${bestRssi != null ? rssiBars(bestRssi) : '—'}</div>
         <div class="meta">${channels.length ? `<span>ch ${channels.slice(0, 4).map(c => esc(String(c))).join(', ')}${channels.length > 4 ? '…' : ''}</span>` : ''}</div></div>
     </div>
     <div class="grid cols-3">

@@ -21,14 +21,14 @@ const ICON_NAMES = { dot: 'Dot (default)', wifi: 'Wi-Fi', radar: 'Radar', blueto
 SETTINGS_VIEWS.appearance = async function (el) {
   const saved = await api('/api/appearance');
   const defaults = saved.defaults;
-  let draft = { name: saved.name, icon: saved.icon, clock: saved.clock || 'auto', style: saved.style || '', colors: { ...saved.colors } };
+  let draft = { name: saved.name, icon: saved.icon, clock: saved.clock || 'auto', style: saved.style || '', font: saved.font || '', font_custom: saved.font_custom || '', font_size: saved.font_size || 13, colors: { ...saved.colors } };
   let iconUrl = saved.icon_url;
 
   const asAppearance = () => {
     const custom = Object.keys(draft.colors).filter(k => draft.colors[k] !== defaults[k]);
-    return { ...saved, name: draft.name || 'sniffowireless', icon: draft.icon, clock: draft.clock, style: draft.style, icon_url: iconUrl, colors: { ...draft.colors }, custom_colors: custom };
+    return { ...saved, name: draft.name || 'sniffowireless', icon: draft.icon, clock: draft.clock, style: draft.style, font: draft.font, font_custom: draft.font_custom, font_size: draft.font_size, icon_url: iconUrl, colors: { ...draft.colors }, custom_colors: custom };
   };
-  const preview = () => { applyAppearance(asAppearance(), { cache: false }); themeToJs(); paintPreview(); };
+  const preview = () => { applyAppearance(asAppearance(), { cache: false, preview: true }); themeToJs(); paintPreview(); };
 
   el.innerHTML = `<section class="panel"><header><h2>Appearance</h2><div class="row">
       <select id="ap-preset" aria-label="Preset"><option value="">Presets…</option>${Object.entries(APPEARANCE_PRESETS).map(([k, [l]]) => `<option value="${k}">${l}</option>`).join('')}</select>
@@ -37,6 +37,10 @@ SETTINGS_VIEWS.appearance = async function (el) {
       <p class="muted" style="margin-top:0">Applies to everyone, including the sign-in page. Changes preview right away; <b>Save</b> keeps them, leaving the page without saving undoes them.</p>
       <div class="row form-narrow"><label class="field">Name<input id="ap-name" maxlength="32" value="${esc(draft.name)}" autocomplete="off"></label>
         <label class="field">Time format (default)<select id="ap-clock">${CLOCK_CHOICES.map(([v, l]) => `<option value="${v}" ${draft.clock === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+      <div class="row form-narrow"><label class="field">Font<select id="ap-font">${FONT_CHOICES.map(([k, l]) => `<option value="${k}" ${draft.font === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+        <label class="field" id="ap-font-custom-wrap" ${draft.font === 'custom' ? '' : 'hidden'}>Font name<input id="ap-font-custom" maxlength="40" value="${esc(draft.font_custom)}" placeholder="e.g. Atkinson Hyperlegible" autocomplete="off"></label>
+        <label class="field">Text size<select id="ap-fsize">${Array.from({ length: FONT_SIZE_MAX - FONT_SIZE_MIN + 1 }, (_, i) => FONT_SIZE_MIN + i).map(n => `<option value="${n}" ${draft.font_size === n ? 'selected' : ''}>${n} px${n === FONT_SIZE_DEFAULT ? ' (default)' : ''}</option>`).join('')}</select></label></div>
+      <p class="faint small-text" style="margin-top:-4px">A font only shows if it is installed on the device that views the page (nothing is downloaded). Each person can choose their own under Settings → Account.</p>
       <div class="field"><span>Icon</span><div class="ap-icons" id="ap-icons"></div>
         <div class="row" style="margin-top:8px"><label class="btn small">Upload image…<input type="file" id="ap-upload" accept="image/png,image/jpeg,image/webp" hidden></label>
         <button class="btn small" id="ap-remove" type="button" ${iconUrl ? '' : 'hidden'}>Remove uploaded image</button>
@@ -76,6 +80,9 @@ SETTINGS_VIEWS.appearance = async function (el) {
     i.onchange = () => { if (!setColor(i.dataset.hex, i.value)) { i.value = draft.colors[i.dataset.hex]; toast('Use a #rrggbb colour', true); } };
   });
   $('#ap-name').oninput = e => { draft.name = e.target.value; preview(); };
+  $('#ap-font').onchange = e => { draft.font = e.target.value; $('#ap-font-custom-wrap').hidden = draft.font !== 'custom'; preview(); };
+  $('#ap-font-custom').oninput = e => { draft.font_custom = e.target.value.trim(); preview(); };
+  $('#ap-fsize').onchange = e => { draft.font_size = +e.target.value; preview(); };
   $('#ap-clock').onchange = e => { draft.clock = e.target.value; preview(); };
   $('#ap-preset').onchange = e => {
     const p = APPEARANCE_PRESETS[e.target.value];
@@ -86,7 +93,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
     paintColors();
     preview();
   };
-  $('#ap-reset').onclick = () => { draft = { name: 'sniffowireless', icon: 'dot', clock: 'auto', style: '', colors: { ...defaults } }; $('#ap-name').value = 'sniffowireless'; $('#ap-clock').value = 'auto'; paintIcons(); paintColors(); preview(); };
+  $('#ap-reset').onclick = () => { draft = { name: 'sniffowireless', icon: 'dot', clock: 'auto', style: '', font: '', font_custom: '', font_size: 13, colors: { ...defaults } }; $('#ap-name').value = 'sniffowireless'; $('#ap-clock').value = 'auto'; $('#ap-font').value = ''; $('#ap-font-custom').value = ''; $('#ap-font-custom-wrap').hidden = true; $('#ap-fsize').value = '13'; paintIcons(); paintColors(); preview(); };
   $('#ap-upload').onchange = async e => {
     const f = e.target.files[0];
     e.target.value = '';
@@ -111,7 +118,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
   };
   $('#ap-save').onclick = async () => {
     try {
-      const d = await send('PUT', '/api/appearance', { name: draft.name.trim() || 'sniffowireless', icon: draft.icon, clock: draft.clock, style: draft.style, colors: draft.colors });
+      const d = await send('PUT', '/api/appearance', { name: draft.name.trim() || 'sniffowireless', icon: draft.icon, clock: draft.clock, style: draft.style, font: draft.font, font_custom: draft.font === 'custom' ? draft.font_custom : '', font_size: draft.font_size, colors: draft.colors });
       Object.assign(saved, d);
       applyAppearance(d);
       themeToJs();

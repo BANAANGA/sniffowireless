@@ -20,9 +20,10 @@ function brandIconHtml(a, size = 18) {
   return '<span class="dot"></span>';
 }
 
-function applyAppearance(a, { cache = true } = {}) {
+function applyAppearance(a, { cache = true, preview = false } = {}) {
   if (!a || !a.colors) return;
   APPEARANCE = a;
+  applyFont(a, preview);
   const c = a.colors, root = document.documentElement.style;
   const custom = new Set(a.custom_colors || []);
   const set = (v, val) => { if (HEX_RE.test(val)) root.setProperty(v, val); };
@@ -87,4 +88,45 @@ function hourLabel(h, short = false) {
   if (!uses12h()) return short ? String(h) : `${String(h).padStart(2, '0')}:00`;
   const n = h % 12 || 12, ap = h < 12 ? 'AM' : 'PM';
   return short ? `${n}${ap[0].toLowerCase()}` : `${n} ${ap}`;
+}
+
+// ------------------------------------------------------------------ font and size
+// This browser's choice (Settings → Account) wins over the admin default (Settings → Appearance). Only a fixed set of
+// font stacks, or a plain installed-font name (letters, digits, space . _ -), ever reaches the stylesheet.
+const DEFAULT_FONT_STACK = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
+const FONT_CHOICES = [
+  ['', 'Default (Inter, else the system font)', null],
+  ['system', 'System font', 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif'],
+  ['humanist', 'Humanist (Segoe UI, Candara, Optima…)', '"Segoe UI", Candara, Optima, "Gill Sans", Ubuntu, Cantarell, sans-serif'],
+  ['serif', 'Serif (Georgia, Times)', 'Georgia, "Times New Roman", Times, serif'],
+  ['mono', 'Monospace', 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace'],
+  ['custom', 'Another font installed on the device…', null],
+];
+const FONT_NAME_RE = /^[A-Za-z0-9 ._-]{1,40}$/;
+const FONT_SIZE_MIN = 11, FONT_SIZE_MAX = 20, FONT_SIZE_DEFAULT = 13;
+
+function myFont() {
+  try { const m = JSON.parse(localStorage.getItem('sniffowireless.font') || 'null'); if (m && typeof m.font === 'string') return m; } catch { /* private mode / bad value */ }
+  return null;
+}
+function myFontSize() {
+  try { const n = parseInt(localStorage.getItem('sniffowireless.fontsize') || '', 10); if (n >= FONT_SIZE_MIN && n <= FONT_SIZE_MAX) return n; } catch { /* private mode */ }
+  return null;
+}
+function fontStack(font, custom) {
+  if (font === 'custom') return FONT_NAME_RE.test(custom || '') ? `"${custom}", ${DEFAULT_FONT_STACK}` : null;
+  const c = FONT_CHOICES.find(([k]) => k === font);
+  return c && c[2] ? c[2] : null;
+}
+// preview: an admin editing the defaults sees them even if this browser has its own choice.
+function applyFont(a, preview = false) {
+  const root = document.documentElement.style, mine = preview ? null : myFont(), mineSize = preview ? null : myFontSize();
+  const stack = mine ? fontStack(mine.font, mine.custom) : fontStack((a && a.font) || '', a && a.font_custom);
+  if (stack) root.setProperty('--font-ui', stack); else root.removeProperty('--font-ui');
+  const size = mineSize || (a && a.font_size) || FONT_SIZE_DEFAULT, scale = size / FONT_SIZE_DEFAULT;
+  if (Math.abs(scale - 1) > 0.001) root.setProperty('--fs', scale.toFixed(4)); else root.removeProperty('--fs');
+  if (window.Chart) {
+    Chart.defaults.font.size = Math.round(11 * scale * 10) / 10;
+    Chart.defaults.font.family = (document.body && getComputedStyle(document.body).fontFamily) || DEFAULT_FONT_STACK;
+  }
 }
