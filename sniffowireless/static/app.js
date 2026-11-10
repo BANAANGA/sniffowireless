@@ -1417,7 +1417,9 @@ function identPanel(d) {
     const x = f[key];
     if (!x) return `<div><span${lblAttr(label)}>${label}</span><b class="faint">unknown</b></div>`;
     const val = filter ? `<a href="${hrefWith('/devices', { [filter]: filter === 'dev_type' ? x.value : d[filter] ?? x.value })}">${fmt(x.value)}</a>` : fmt(x.value);
-    return `<div><span${lblAttr(label)}>${label}</span><b>${val} <span class="conf conf-${x.level}" title="${x.conf}% confidence">${x.level}</span></b></div>`;
+    const agree = x.agree > 1 ? ` · ${x.agree} independent kinds of evidence agree` : '';
+    const rivals = (x.also || []).map(o => `${o.value} (${o.conf}%, ${o.source})`).join('; ');
+    return `<div><span${lblAttr(label)}>${label}</span><b>${val} <span class="conf conf-${x.level}" title="${x.conf}% confidence${esc(agree)}">${x.level}</span>${rivals ? ` <span class="tag warn" title="${esc('Other evidence points elsewhere, so the confidence is lowered. Also suggested: ' + rivals)}">contested</span>` : ''}</b></div>`;
   };
   const caps = idn.wifi_caps || {};
   const capText = [caps.ss ? `${caps.ss}×${caps.ss} MIMO` : null, caps.width ? `${caps.width} MHz` : null].filter(Boolean).join(' · ');

@@ -19,7 +19,7 @@ log = logging.getLogger("sniffowireless.purge")
 
 # kinds: rows of `devices`; tables: deleted completely; finding_types: security findings that belong to the module
 SPEC = {
-    "wifi": {"kinds": ("ap", "wifi_client"), "tables": ("channel_stats", "interference", "dfs_events", "ap_enc"), "findings": "wifi"},
+    "wifi": {"kinds": ("ap", "wifi_client"), "tables": ("channel_stats", "interference", "dfs_events", "ap_enc", "os_signatures", "os_sig_devices"), "findings": "wifi"},
     "bluetooth": {"kinds": ("ble", "bt_classic"), "tables": (), "findings": ("unknown_tracker",)},
     "lan": {"kinds": ("lan",), "tables": ("lan_dns", "lan_flows", "lan_traffic", "dhcp_servers"), "findings": ("rogue_dhcp", "arp_spoof")},
     "zigbee": {"kinds": (), "tables": ("zigbee_networks", "zigbee_radios", "zigbee_channels", "zigbee_energy"), "seen": "zigbee"},

@@ -258,6 +258,7 @@ def routes(ctx):
                             (m, int(known), gid, time.time()))
             from .manage import apply_meta
             apply_meta(ctx)
+        ctx.store.command(lambda st: st.propagate_linked_os())  # the OS of one side is shared with the other (or taken away)
         return {"ok": True}
 
     @r.delete("/api/links/{a}/{b}")
