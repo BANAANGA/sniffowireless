@@ -5,12 +5,18 @@
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'];
 const LOG_MAX = 5000;
 
-addRoute('/logs', async () => {
+addRoute('/logs', async (_, params) => {
   if (!isAdmin()) { app.innerHTML = '<div class="empty">Only admins can view the logs.</div>'; return; }
-  const snap = await api('/api/logs?limit=1000');
-  app.innerHTML = `<div class="page-head"><div><h1>Logs</h1><div class="sub">Live application log · <span id="lg-state" class="live ok">connecting…</span></div></div>
-    <div class="row"><label class="muted small-text">Log level</label>
-      <select id="lg-level">${['DEBUG', 'INFO', 'WARNING', 'ERROR'].map(l => `<option ${l === snap.level ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+  const sensor = params.get('sensor') || '';  // '' = this server, else a remote sensor's id
+  let snap;
+  try { snap = await api(`/api/logs?limit=1000${sensor ? '&sensor=' + enc(sensor) : ''}`); }
+  catch (e) { if (sensor) { location.hash = '#/logs'; return; } throw e; }  // a sensor that was deleted
+  const remote = !!snap.sensor, cur = (snap.sensors.find(x => x.id === sensor) || {});
+  const tabs = [{ id: '', name: 'This server' }, ...snap.sensors].map(x => `<a href="${hrefWith('/logs', { sensor: x.id })}" class="${x.id === sensor ? 'on' : ''}">${x.id && !x.online ? '<span class="state-dot"></span>' : x.id ? '<span class="state-dot on"></span>' : ''}${esc(x.name)}${x.id && !x.lines ? ' <span class="faint">(no logs yet)</span>' : ''}</a>`).join('');
+  app.innerHTML = `<div class="page-head"><div><h1>Logs</h1><div class="sub">${remote ? `Log of the remote sensor ${esc(cur.name || sensor)}${cur.online ? '' : ' <span class="tag warn">offline</span>'}` : 'Live application log'} · <span id="lg-state" class="live ok">connecting…</span></div></div>
+    ${remote ? '' : `<div class="row"><label class="muted small-text">Log level</label>
+      <select id="lg-level">${['DEBUG', 'INFO', 'WARNING', 'ERROR'].map(l => `<option ${l === snap.level ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`}</div>
+    ${snap.sensors.length ? `<nav class="tabbar" aria-label="Log source">${tabs}</nav>` : ''}
     <div class="filters">
       <select id="lg-min"><option value="0">All levels</option><option value="1" selected>Info and up</option><option value="2">Warnings and errors</option><option value="3">Errors only</option></select>
       <select id="lg-src"><option value="">All sources</option></select>
@@ -23,7 +29,9 @@ addRoute('/logs', async () => {
       <span class="faint small-text" id="lg-count"></span>
     </div>
     <section class="panel"><div class="logview" id="lg"></div></section>
-    <p class="faint small-text">Keeps the last ${snap.capacity.toLocaleString()} lines in memory (also in <code>docker compose logs sniffowireless</code>). Debug level shows details such as Bluetooth command failures; switch back to Info afterwards.</p>`;
+    <p class="faint small-text">${remote
+      ? `The sensor sends its new log lines with every upload and this server keeps the last ${snap.capacity.toLocaleString()} in memory (also in <code>docker logs sniffowireless-sensor</code> on the sensor). Its log level is the sensor's own <code>LOG_LEVEL</code>; a sensor that has not been updated yet sends none.`
+      : `Keeps the last ${snap.capacity.toLocaleString()} lines in memory (also in <code>docker compose logs sniffowireless</code>). Debug level shows details such as Bluetooth command failures; switch back to Info afterwards.`}</p>`;
 
   const view = document.getElementById('lg');
   view.style.setProperty('--lg-time', uses12h() ? '16ch' : '13ch');  // "11:48:29.958 PM" vs "23:48:29.958"
@@ -98,7 +106,7 @@ addRoute('/logs', async () => {
   // Live stream; EventSource reconnects by itself and resumes after the last received id.
   let es = null;
   function connect() {
-    es = new EventSource(`/api/logs/stream?after=${lastId}`);
+    es = new EventSource(`/api/logs/stream?after=${lastId}${sensor ? '&sensor=' + encodeURIComponent(sensor) : ''}`);
     es.addEventListener('logs', e => { try { append(JSON.parse(e.data)); } catch { /* ignore malformed */ } });
     es.onopen = () => { st.textContent = 'live'; st.className = 'live ok'; };
     es.onerror = () => {
@@ -132,11 +140,12 @@ addRoute('/logs', async () => {
   document.getElementById('lg-dl').onclick = () => {
     const text = lines.filter(visible).map(r => `${new Date(r.ts * 1000).toISOString()} ${r.level.padEnd(8)} ${r.logger}: ${r.msg}`).join('\n');
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text + '\n'], { type: 'text/plain' })),
-      download: `sniffowireless-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt` });
+      download: `sniffowireless-log${sensor ? '-' + sensor : ''}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
-  document.getElementById('lg-level').onchange = async e => {
+  const levelSel = document.getElementById('lg-level');
+  if (levelSel) levelSel.onchange = async e => {
     try { await send('PUT', '/api/logs/level', { level: e.target.value }); toast(`Log level: ${e.target.value}`); if (e.target.value === 'DEBUG') { minSel.value = '0'; render(); } }
     catch (err) { toast(err.message, true); }
   };

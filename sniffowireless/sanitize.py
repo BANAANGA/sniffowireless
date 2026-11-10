@@ -260,6 +260,24 @@ def remote_version(v):
     return out or None
 
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+LOG_KEEP = {"\n", "\t"}
+
+
+def remote_log_line(x, now, adjust=0.0):
+    """One log line a remote sensor sent: level, source and text only, with control and bidi characters removed (newlines of a
+    traceback stay), and the time moved by the sensor's clock offset and kept within a sane range. None when it is not a line."""
+    if not isinstance(x, dict) or x.get("level") not in LOG_LEVELS or not isinstance(x.get("msg"), str):
+        return None
+    ts = clean_num(x.get("ts"), 0, 4_000_000_000)
+    ts = ts + adjust if ts is not None else now
+    if not now - 7 * 86400 <= ts <= now + 300:
+        ts = now
+    msg = "".join(ch for ch in x["msg"][:2000] if ch in LOG_KEEP or unicodedata.category(ch)[0] != "C")
+    return {"src_id": clean_num(x.get("id"), 0, 10 ** 12, True) or 0, "ts": ts, "level": x["level"],
+            "logger": clean_str(x.get("logger"), 64) or "?", "msg": msg, "thread": clean_str(x.get("thread"), 40)}
+
+
 def remote_system(s):
     """A remote sensor's load and memory figures (the shape of sysinfo.snapshot, without the database): numbers in
     sane ranges only, since the server shows them and exports them to Prometheus."""

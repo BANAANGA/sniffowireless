@@ -46,3 +46,7 @@ The sensor itself must run a version that has this feature; the page says *senso
 ### LoRa bands and Zigbee channels from the web UI
 
 **Settings → LoRa bands** and **Settings → Zigbee** work the same way as Wi-Fi channels: they list this server and every remote sensor with its boards or sticks, apply at once on the server, reach a remote sensor with its next upload (*waiting for the sensor…*, then *applied*), keep what is left empty at the sensor's own environment settings, and say *sensor software too old* for a sensor that needs updating. See [LoRa](lora.md) and [Zigbee](zigbee.md) for what each page lets you choose.
+
+### Logs of remote sensors
+
+**Logs** (admin) has a tab for *This server* and one per remote sensor. A sensor sends the log lines it has not sent yet with every upload (up to 200 at a time) and the server keeps the last 2,000 per sensor in memory, so they are gone after a server restart and are removed with the sensor. A dot shows whether the sensor is online. The sensor's log level is its own `LOG_LEVEL` (the level selector only exists on the server's tab); the lines are the same ones `docker logs sniffowireless-sensor` shows. Like the server's own log they can contain device names and SSIDs, and the usual redaction of tokens and setup codes applies on both ends. A sensor needs the image from the release that added this before its tab fills up.

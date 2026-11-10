@@ -50,6 +50,53 @@ class RingHandler(logging.Handler):
 
 HANDLER = RingHandler()
 
+REMOTE_CAPACITY = 2000   # lines kept per remote sensor
+REMOTE_BATCH = 200       # lines a sensor may send with one upload
+
+
+class RemoteLogs:
+    """The recent log lines of each remote sensor, which sends the new ones with every upload. Memory only, like the server's own buffer.
+    Lines get this server's own increasing id (what the live stream resumes from); a sensor that restarts starts counting from 1 again,
+    so its `epoch` tells a new run from a retried upload (a batch whose answer got lost is not added twice)."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.by = {}
+
+    def add(self, sid, epoch, lines):
+        with self.lock:
+            s = self.by.setdefault(sid, {"buf": collections.deque(maxlen=REMOTE_CAPACITY), "seq": 0, "epoch": None, "last": 0})
+            if epoch != s["epoch"]:
+                s["epoch"], s["last"] = epoch, 0
+            for ln in lines[-REMOTE_BATCH:]:
+                if ln["src_id"] and ln["src_id"] <= s["last"]:
+                    continue
+                msg = ln["msg"]
+                for rx, repl in REDACT:  # the sensor redacts too; this server does not rely on it
+                    msg = rx.sub(repl, msg)
+                s["seq"] += 1
+                s["last"] = max(s["last"], ln["src_id"])
+                s["buf"].append({"id": s["seq"], "ts": ln["ts"], "level": ln["level"], "logger": ln["logger"], "msg": msg,
+                                 "thread": ln["thread"]})
+
+    def since(self, sid, after=0, limit=1000):
+        with self.lock:
+            s = self.by.get(sid)
+            items = [r for r in s["buf"] if r["id"] > after] if s else []
+        return items[-limit:]
+
+    def count(self, sid):
+        with self.lock:
+            s = self.by.get(sid)
+            return len(s["buf"]) if s else 0
+
+    def drop(self, sid):
+        with self.lock:
+            self.by.pop(sid, None)
+
+
+REMOTE = RemoteLogs()
+
 
 def install(level):
     """Attach the ring buffer to the root logger (call once, after logging.basicConfig)."""
@@ -68,13 +115,31 @@ class LevelBody(BaseModel):
 def routes(ctx):
     r = APIRouter()
 
+    def sensor_tabs():
+        now = time.time()
+        return [{"id": x["id"], "name": x["name"], "online": (x["last_seen"] or 0) > now - 90, "lines": REMOTE.count(x["id"])}
+                for x in ctx.rows("SELECT id, name, last_seen FROM sensors WHERE id != 'local' ORDER BY name")]
+
+    def source(sensor):
+        """The buffer a request asks for: this server's own (empty `sensor`) or a remote sensor's."""
+        if not sensor or sensor == "local":
+            return HANDLER.since
+        if not ctx.one("SELECT 1 FROM sensors WHERE id=?", (sensor,)):
+            raise HTTPException(404, "No such sensor")
+        return lambda after, limit: REMOTE.since(sensor, after, limit)
+
     @r.get("/api/logs")
-    def snapshot(after: int = 0, limit: int = 1000, _=Depends(require_admin)):
-        return {"items": HANDLER.since(after, max(1, min(limit, CAPACITY))),
-                "level": logging.getLevelName(logging.getLogger().level), "capacity": CAPACITY}
+    def snapshot(after: int = 0, limit: int = 1000, sensor: str = "", _=Depends(require_admin)):
+        since = source(sensor)
+        remote = bool(sensor and sensor != "local")
+        return {"items": since(after, max(1, min(limit, CAPACITY))),
+                "level": None if remote else logging.getLevelName(logging.getLogger().level),
+                "capacity": REMOTE_CAPACITY if remote else CAPACITY, "sensors": sensor_tabs(), "sensor": sensor if remote else ""}
 
     @r.get("/api/logs/stream")
-    async def stream(request: Request, after: int = 0, _=Depends(require_admin)):
+    async def stream(request: Request, after: int = 0, sensor: str = "", _=Depends(require_admin)):
+        since = source(sensor)
+
         async def gen():
             last = after
             idle = 0.0
@@ -82,7 +147,7 @@ def routes(ctx):
             while True:
                 if await request.is_disconnected():
                     break
-                items = HANDLER.since(last, 500)
+                items = since(last, 500)
                 if items:
                     last = items[-1]["id"]
                     yield f"id: {last}\nevent: logs\ndata: {json.dumps(items)}\n\n"
