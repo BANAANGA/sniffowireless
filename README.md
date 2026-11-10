@@ -303,6 +303,7 @@ All settings are environment variables (put them in `.env`).
 | `BT_INQUIRY` | `1` | Periodic Bluetooth Classic inquiry (finds *discoverable* classic devices). |
 | `BT_INQUIRY_INTERVAL` | `60` | Seconds between inquiries. |
 | `BT_RESOLVE_NAMES` | `1` | Ask newly found classic devices for their name. |
+| `WIFI_SEQ_LINK` | `0` | Opt-in. Lets the server guess that randomised Wi-Fi addresses whose frame counter carries on are one device (see [Wi-Fi details](docs/ui.md)). It is a heuristic and removes some of the privacy a randomised address gives. |
 | `BT_ACTIVE_PROBE` | `1` | Allows the device page's *Read exact version…* button, which connects to a Bluetooth LE device for a few seconds to read its version (see [Bluetooth 5 and 6 adapters](docs/adapters.md#bluetooth-5-and-6-adapters)). `0` removes it; everything else stays passive. |
 | `WIFI_SESSION_TIMEOUT` | `300` | Seconds of silence before a Wi-Fi visit or connection is closed. |
 | `BT_SESSION_TIMEOUT` | `180` | Same for Bluetooth. |

@@ -8,6 +8,8 @@ from frames the device broadcasts itself.
 import hashlib
 import re
 
+from . import wifiattrs
+
 IDENT_VERSION = 8
 
 TYPE_LABELS = {
@@ -118,6 +120,9 @@ def wifi_fingerprint(elts):
     gen = 7 if fp.get("eht") else 6 if fp.get("he") else 5 if fp.get("vht") else 4 if fp.get("ht") else None
     if gen:
         fp["gen"] = gen
+    caps = wifiattrs.client_caps(elts)
+    if caps:
+        fp["capinfo"] = caps  # what the capability elements say (11k/v/r, beamforming, supported channels...)
     fp["sig"] = ",".join(sig)
     return {k: v for k, v in fp.items() if v not in ([], None)}
 
@@ -134,6 +139,14 @@ def merge_wifi(old, new):
             m[k] = max(m.get(k) or 0, v)
         elif k == "wps":
             m[k] = {**m.get(k, {}), **v}
+        elif k == "capinfo":  # probe and association requests each show part of it
+            old = m.get(k) or {}
+            merged = {**old, **v}
+            caps = list(old.get("caps") or [])
+            caps += [c for c in v.get("caps") or [] if c not in caps]
+            if caps:
+                merged["caps"] = caps
+            m[k] = merged
         else:
             m[k] = v
     return m
@@ -777,7 +790,7 @@ def identify(dev):
                    for f in ("brand", "model", "type", "os", "wifi", "chipset") if out[f]},
         "features": sorted({e["value"] for e in ev.items if e["field"] == "feature"}),
         "era": era[0] if era else None, "age_hint": hint,
-        "wifi_caps": {k: wfp[k] for k in ("gen", "ss", "width", "vendors", "wfa") if wfp.get(k)} if wfp else None,
+        "wifi_caps": {k: wfp[k] for k in ("gen", "ss", "width", "vendors", "wfa", "capinfo") if wfp.get(k)} if wfp else None,
         "wps": wfp.get("wps") if wfp else None,
         "evidence": sorted(ev.items, key=lambda e: -e["conf"]),
     }

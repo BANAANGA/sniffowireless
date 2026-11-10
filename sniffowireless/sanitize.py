@@ -218,7 +218,7 @@ def remote_observation(o, now):
         else:
             r.update(bssid=clean_mac(o.get("bssid")), frame=o.get("frame") if o.get("frame") in FRAMES else None,
                      probe=clean_str(o.get("probe"), 64), reason=clean_num(o.get("reason"), 0, 65535, True),
-                     from_ap=True if o.get("from_ap") else None)
+                     from_ap=True if o.get("from_ap") else None, seq=clean_num(o.get("seq"), 0, 4095, True))
     elif t in ("bt", "bt_conn"):
         if o.get("kind") not in ("ble", "bt_classic"):
             return None

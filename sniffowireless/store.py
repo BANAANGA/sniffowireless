@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time
 
-from . import btversion, identify
+from . import btversion, identify, wifiattrs
 from .config import _int
 from .oui import bt_company, bt_company_known
 from .sanitize import clean_str
@@ -108,7 +108,7 @@ LAN_KIND = "lan"  # seen only on the wired / LAN side
 # Within a radio family a device can be "upgraded" (a client that starts beaconing is an AP,
 # a BLE address that answers an inquiry is dual-mode classic).
 KIND_RANK = {"wifi_client": 1, "ap": 2, "ble": 1, "bt_classic": 2}
-DEDUPE_EVENTS = {"deauth_broadcast": 60, "deauth": 30, "deauth_flood": 300, "rogue_ap": 3600, "karma_ap": 3600,
+DEDUPE_EVENTS = {"ap_restart": 600, "deauth_broadcast": 60, "deauth": 30, "deauth_flood": 300, "rogue_ap": 3600, "karma_ap": 3600,
                  "moved": 600, "lora_flood": 600, "lora_join_flood": 1800, "lora_fcnt_reset": 3600, "zigbee_permit_join": 600}
 
 
@@ -214,6 +214,8 @@ class Store:
         self.probe_updates = {}  # (mac, ssid) -> [first, last, count]
         self.known_probes = set()
         self._last_event = {}
+        self._boots = {}                      # AP mac -> estimated boot time, to notice a restart
+        self.seq_linker = wifiattrs.SeqLinker()  # only fed when WIFI_SEQ_LINK is on
         self.ignore = IgnoreRules(cfg.ignore_macs)
         self.important = set()  # labelled / watched / grouped devices: always log their events
         self.mac_group = {}     # mac -> group id
@@ -287,6 +289,15 @@ class Store:
                 n += 1
         if n:
             log.info("Migrated database: named the Bluetooth company of %d devices", n)
+
+    def _link_same(self, dev, old, step, ts):
+        """Record that two randomised addresses are possibly one device (frame counter carried on). Both pages show it."""
+        for a_dev, other in ((dev, old), (self.devices.get(old), dev["mac"])):
+            if a_dev is None:
+                continue
+            links = [x for x in (a_dev["extra"].get("same_as") or []) if x.get("mac") != other][-4:]
+            links.append({"mac": other, "step": step, "ts": int(ts)})
+            a_dev["extra"]["same_as"] = links
 
     def reidentify_all(self):
         """Re-run identification for every stored device (after the rules changed)."""
@@ -416,10 +427,21 @@ class Store:
         if t == "wifi_ap":
             dev = self._device(mac, "ap", ts, rssi, o, ("ssid", "channel", "freq", "band", "enc", "vendor"))
             self._presence(dev, ts, rssi)
+            boot = ((o.get("extra") or {}).get("ap") or {}).get("boot")  # estimated boot time from the beacon timestamp
+            if isinstance(boot, (int, float)):
+                prev = self._boots.get(mac)
+                if len(self._boots) > 5000:
+                    self._boots.clear()
+                self._boots[mac] = boot
+                if prev and boot - prev > 90:  # its timer started over: the AP restarted (or reset its timer)
+                    self._event(ts, mac, "ap_restart", None, "timer restarted (estimated from the beacon timestamp)", dev=dev, always=True)
 
         elif t == "wifi_client":
             dev = self._device(mac, "wifi_client", ts, rssi, o, ("channel", "freq", "band", "vendor"))
             self._presence(dev, ts, rssi)
+            if o.get("seq") is not None and self.cfg.wifi_seq_link and dev.get("randomized"):
+                for old, step in self.seq_linker.feed(mac, ts, o["seq"]):
+                    self._link_same(dev, old, step, ts)
             bssid, frame = o.get("bssid"), o.get("frame")
             if frame in ("deauth", "disassoc"):
                 s = self.assoc.get(mac)

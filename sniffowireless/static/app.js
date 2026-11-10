@@ -833,7 +833,9 @@ async function viewDevice(mac, params) {
     ['Vendor', esc(d.vendor || (d.randomized ? 'Randomized address' : 'Unknown'))],
     isAp ? ['SSID', d.ssid ? `${esc(d.ssid)} <a class="faint" href="#/investigation/${enc(d.ssid)}">dossier →</a>` : esc(d.ssid === '' || ex.hidden ? '<hidden>' : '—')] : null,
     isAp ? ['Security', esc(d.enc || '—')] : null,
+    ...(isAp ? wifiApRows(ex, d) : []),
     !isBt ? ['Channel', d.channel ? `${d.channel}${d.band ? ` · ${BANDS[d.band] ? BANDS[d.band].label : esc(d.band)}` : ''}${d.freq ? ` <span class="faint">(${d.freq} MHz)</span>` : ''}` : '—'] : null,
+    ...(!isAp && !isBt ? wifiClientRows(ex, d) : []),
     isBt && d.name ? ['Name', esc(d.name)] : null,
     ex.addr_type ? ['Address type', esc(ex.addr_type)] : null,
     ex.company ? ['Manufacturer data', btCompanyHtml(ex.company)] : null,
@@ -1433,6 +1435,7 @@ function identPanel(d) {
       ${d.fp_hash ? `<div><span>Probe fingerprint</span><b><a class="mono" href="${hrefWith('/devices', { fp: d.fp_hash })}">${esc(d.fp_hash)}</a> <span class="faint">${d.fp_peers ? `shared with ${d.fp_peers} other MAC${d.fp_peers > 1 ? 's' : ''}` : 'unique'}</span></b></div>` : ''}
       ${wps.device_name || wps.manufacturer ? `<div><span>WPS info</span><b>${esc([wps.manufacturer, wps.model, wps.model_number, wps.device_name].filter(Boolean).join(' · '))}</b></div>` : ''}
     </div>
+    ${wifiFeaturesHtml(caps.capinfo)}
     ${idn.features && idn.features.length ? `<div style="margin-top:14px">${idn.features.map(x => `<span class="tag" style="margin:0 6px 6px 0">${esc(x)}</span>`).join('')}</div>` : ''}
     ${ev.length ? `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Evidence</summary>
       <table style="margin-top:8px"><thead><tr><th>Finding</th><th>Value</th><th>Source</th><th class="num">Confidence</th></tr></thead><tbody>
