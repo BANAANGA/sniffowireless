@@ -135,3 +135,16 @@ def test_stored_company_ids_get_their_name_on_migration(tmp_path):
     s._migrate()
     ex = json.loads(s.conn.execute("SELECT extra FROM devices WHERE mac='a4:c1:38:4c:a5:bc'").fetchone()[0])
     assert ex["company"] == "AwoX"
+
+
+def test_company_from_an_old_sensor_is_named_on_ingest(tmp_path):
+    import json
+    from sniffowireless.config import Config
+    from sniffowireless.oui import VendorLookup
+    from sniffowireless.store import Store
+    s = Store(Config(db_path=str(tmp_path / "t.db")), VendorLookup(None))
+    s.process({"t": "bt", "kind": "ble", "ts": 100, "mac": "a4:c1:38:4c:a5:bc", "rssi": -60,
+               "extra": {"company": "Company 0x0160", "addr_type": "public"}})
+    s.flush()
+    ex = json.loads(s.conn.execute("SELECT extra FROM devices WHERE mac='a4:c1:38:4c:a5:bc'").fetchone()[0])
+    assert ex["company"] == "AwoX"
