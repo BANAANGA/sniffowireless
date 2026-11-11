@@ -572,8 +572,7 @@ class DemoGenerator:
         if int(t // 60) % 10 == 0:
             res += [{"t": "zb_network", "ts": t, "mac": "-", "ext_pan": ext, "pan": pan, "channel": ch, "permit_join": False,
                      "stack_profile": 2, "update_id": 3, "lqi": lqi, "rssi": rssi, "routers": []}
-                    for ext, pan, ch, lqi, rssi in (("00:12:4b:00:1e:a0:44:01", 0x1a62, 15, 214, -51),
-                                                    ("dd:a1:7c:33:90:5e:12:08", 0x4e20, 25, 96, -82))]
+                    for ext, pan, ch, lqi, rssi in (("00:12:4b:00:1e:a0:44:01", 0x1a62, 15, 214, -51),)]
             res.append({"t": "zb_energy", "ts": t, "mac": "-",
                         "readings": [[c, -92 + (c % 5) * 3 + self.rng.randint(-2, 2)] for c in range(11, 27)]})
         mask = lambda c: 1 << c  # noqa: E731
@@ -585,8 +584,12 @@ class DemoGenerator:
             channels[str(ch)] = channels.get(str(ch), 0) + sent
             radios.append([pan, addr, mask(ch), sent, 0, sent if hint == 1 else 0, hint, typ,
                            rssi + self.rng.randint(-3, 3), max(20, min(255, (rssi + 100) * 4))])
-        if radios:
-            res.append({"t": "zb_frames", "ts": t, "mac": "-", "undecoded": 0, "channels": channels, "radios": radios})
+        if radios or int(t // 60) % 10 == 0:
+            o = {"t": "zb_frames", "ts": t, "mac": "-", "undecoded": 0, "channels": channels, "radios": radios}
+            if int(t // 60) % 10 == 0:   # a Thread router answers someone's beacon request: its network name and extended PAN ID are in the clear
+                o["networks"] = [{"ext_pan": "dd:a1:7c:33:90:5e:12:08", "pan": 0x4e20, "channel": 25, "name": "OpenThread-4e20", "version": 2,
+                                  "joining": False, "native": False, "rssi": -82, "lqi": 96}]
+            res.append(o)
         return res
 
     def lan(self, t, out):

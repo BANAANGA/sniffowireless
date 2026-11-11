@@ -583,11 +583,12 @@ HINT_UNKNOWN, HINT_ENCRYPTED, HINT_THREAD, HINT_ZIGBEE = range(4)
 
 
 class MacFrame:
-    __slots__ = ("type", "secured", "sequence", "dst_pan", "dst", "src_pan", "src", "payload")
+    __slots__ = ("type", "secured", "sequence", "dst_pan", "dst", "src_pan", "src", "payload", "sec_level", "key_mode")
 
-    def __init__(self, type_, secured, sequence, dst_pan, dst, src_pan, src, payload):
+    def __init__(self, type_, secured, sequence, dst_pan, dst, src_pan, src, payload, sec_level=None, key_mode=None):
         self.type, self.secured, self.sequence = type_, secured, sequence
         self.dst_pan, self.dst, self.src_pan, self.src, self.payload = dst_pan, dst, src_pan, src, payload
+        self.sec_level, self.key_mode = sec_level, key_mode  # from the auxiliary security header (None: not secured / not read)
 
     @property
     def hint(self):
@@ -595,6 +596,10 @@ class MacFrame:
         if self.type == "beacon":
             return _beacon_hint(p)
         if self.secured:  # Zigbee encrypts above this layer, not here
+            # Thread secures every frame at the MAC layer with security level 5 (encryption + 32-bit MIC) and key mode 1 (data) or 2 (MLE):
+            # OpenThread accepts nothing else (mac.cpp). Zigbee does not use MAC security, so this combination is a good sign, not proof.
+            if self.type in ("data", "command") and self.sec_level == 5 and self.key_mode in (1, 2):
+                return HINT_THREAD
             return HINT_ENCRYPTED
         if self.type == "data" and len(p) >= 8 and p[0] & 3 <= 1 and (p[0] >> 2) & 15 == 2:
             return HINT_ZIGBEE
@@ -603,18 +608,42 @@ class MacFrame:
         return HINT_UNKNOWN
 
 
-def _beacon_hint(p):
+def _beacon_body(p):
+    """Offset of the beacon payload after the superframe specification, GTS fields and pending addresses, or None."""
     if len(p) < 4:
-        return HINT_UNKNOWN
+        return None
     gts = p[2] & 7
     at = 3 + (1 if gts else 0) + gts * 3
     if at >= len(p):
-        return HINT_UNKNOWN
+        return None
     pending = p[at]
     body = at + 1 + (pending & 7) * 2 + ((pending >> 4) & 7) * 8
-    if body >= len(p):
+    return body if body < len(p) else None
+
+
+def _beacon_hint(p):
+    body = _beacon_body(p)
+    if body is None:
         return HINT_UNKNOWN
     return {0: HINT_ZIGBEE, 3: HINT_THREAD}.get(p[body], HINT_UNKNOWN)
+
+
+THREAD_PROTOCOL_ID = 3
+THREAD_BEACON_SIZE = 26   # protocol id, flags, 16-byte network name, 8-byte extended PAN ID (OpenThread: src/core/mac/mac_beacon.hpp)
+
+
+def parse_thread_beacon(p):
+    """A Thread beacon's payload: {"version", "native", "joining", "name", "ext_pan"}, or None if `p` is not one. Layout (OpenThread,
+    mac_beacon.hpp): protocol ID 3; flags (version in the high four bits, bit 3 = native commissioner, bit 0 = joining permitted);
+    the network name in 16 bytes padded with zeros; the extended PAN ID in 8 bytes."""
+    body = _beacon_body(p)
+    if body is None or p[body] != THREAD_PROTOCOL_ID or len(p) - body < THREAD_BEACON_SIZE:
+        return None
+    flags = p[body + 1]
+    name = bytes(p[body + 2:body + 18]).split(b"\x00")[0].decode("utf-8", "replace")
+    name = "".join(ch for ch in name if ch.isprintable()).strip()
+    return {"version": flags >> 4, "native": bool(flags & 0x08), "joining": bool(flags & 0x01), "name": name[:16],
+            "ext_pan": ":".join(f"{b:02x}" for b in p[body + 18:body + 26])}  # as OpenThread prints it: the bytes in the order sent, not reversed like an address
 
 
 def _pans_present(version, dst_mode, src_mode, compressed):
@@ -685,7 +714,15 @@ def parse_mac(data):
         src = address(src_mode) if src_mode else None
     except IndexError:
         return None
-    return MacFrame(type_, secured, sequence, dst_pan, dst, src_pan, src, bytes(data[at:]))
+    sec_level = key_mode = None
+    if secured and at < len(data):  # auxiliary security header: control (level, key mode), frame counter, key identifier
+        control_byte = data[at]
+        sec_level, key_mode = control_byte & 7, (control_byte >> 3) & 3
+        suppressed = version == 2 and control_byte & 0x20          # 2015 revision: the frame counter may be left out
+        aux = 1 + (0 if suppressed else 4) + (0, 1, 5, 9)[key_mode]
+        if at + aux <= len(data):
+            at += aux
+    return MacFrame(type_, secured, sequence, dst_pan, dst, src_pan, src, bytes(data[at:]), sec_level, key_mode)
 
 
 def is_broadcast(address):
@@ -700,9 +737,12 @@ class FrameBatch:
     def __init__(self):
         self.clear()
 
+    MAX_NETWORKS = 64
+
     def clear(self):
         self.channels = {}
         self.radios = {}
+        self.threads = {}   # (pan, extended PAN ID, channel) -> a Thread network announced in a beacon
         self.frames = self.undecoded = 0
 
     def add(self, captured):
@@ -713,6 +753,12 @@ class FrameBatch:
         if mac is None:
             self.undecoded += 1
             return
+        if mac.type == "beacon":
+            tb = parse_thread_beacon(mac.payload)
+            pan = mac.src_pan if mac.src_pan is not None else mac.dst_pan
+            if tb and pan is not None and len(self.threads) < self.MAX_NETWORKS:
+                self.threads[(pan, tb["ext_pan"], captured["channel"])] = {**tb, "pan": pan, "channel": captured["channel"],
+                                                                         "rssi": captured["rssi"], "lqi": captured["lqi"]}
         if mac.src:
             self._record(mac.src_pan if mac.src_pan is not None else mac.dst_pan, mac.src, mac, captured, True)
         if mac.dst and not is_broadcast(mac.dst):
@@ -745,5 +791,7 @@ class FrameBatch:
              "channels": {str(c): n for c, n in self.channels.items()},
              "radios": [[pan, addr, r["channels"], r["sent"], r["received"], r["encrypted"], r["hint"], r["types"],
                          r["rssi"], r["lqi"]] for (pan, addr), r in self.radios.items()]}
+        if self.threads:
+            o["networks"] = list(self.threads.values())
         self.clear()
         return o

@@ -164,7 +164,21 @@ def _zigbee_observation(o, t, ts):
                 continue
             radios.append([pan, addr, mask, sent, received, encrypted, hint, types,
                            clean_num(it[8], -127, 20, True), clean_num(it[9], 0, 255, True)])
+        networks = []   # Thread networks decoded from beacons
+        for it in (o.get("networks") or [])[:64] if isinstance(o.get("networks"), list) else []:
+            if not isinstance(it, dict) or not (isinstance(it.get("ext_pan"), str) and ZB_EUI64.fullmatch(it["ext_pan"])):
+                continue
+            pan, ch = clean_num(it.get("pan"), 0, 0xFFFF, True), _zb_channel(it.get("channel"))
+            if pan is None or ch is None:
+                continue
+            net = {"ext_pan": it["ext_pan"], "pan": pan, "channel": ch, "name": clean_str(it.get("name"), 16) or "",
+                   "version": clean_num(it.get("version"), 0, 15, True), "joining": bool(it.get("joining")),
+                   "native": bool(it.get("native")), "rssi": clean_num(it.get("rssi"), -127, 20, True),
+                   "lqi": clean_num(it.get("lqi"), 0, 255, True)}
+            networks.append({k: v for k, v in net.items() if v is not None})
         r.update(channels=channels, radios=radios)
+        if networks:
+            r["networks"] = networks
     return {k: v for k, v in r.items() if v is not None}
 
 
