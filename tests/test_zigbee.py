@@ -485,3 +485,24 @@ def test_sensor_sends_scan_and_capture_results_then_stops(ctx):
 def test_channel_setting():
     assert zigbee_channels("") == list(range(11, 27))
     assert zigbee_channels("15,20-21,99") == [15, 20, 21]
+
+
+def test_a_network_gets_no_vendor_guessed_from_its_extended_pan_id(ctx, monkeypatch):
+    """The coordinator picks the extended PAN ID, often at random: whatever the vendor database says about its prefix must not name a maker."""
+    from sniffowireless.zigbee import ZigbeeMonitor
+    monkeypatch.setattr(ctx.store.vendors, "lookup", lambda address: "Texas Instruments")      # a database that knows every prefix
+    now = time.time()
+    feed(ctx, {"t": "zb_network", "ts": now, "mac": "-", "ext_pan": "00:12:4b:aa:bb:cc:dd:ee", "pan": 0x1234, "channel": 15, "permit_join": False,
+               "stack_profile": 2, "update_id": 0, "lqi": 200, "rssi": -50, "routers": []})
+    ctx.store.flush()
+    assert ctx.one("SELECT vendor FROM zigbee_networks WHERE pan=?", (0x1234,))["vendor"] is None
+    mon = ZigbeeMonitor(ctx)                                                                      # what a radio's own addresses still give
+    assert mon._vendor(ctx.store, "00:12:4b:aa:bb:cc:dd:ee") == "Texas Instruments"              # a 64-bit IEEE address names the maker
+    assert mon._vendor(ctx.store, "0x1234") is None and mon._vendor(ctx.store, "02:12:4b:aa:bb:cc:dd:ee") is None   # short / locally administered: no
+
+
+def test_a_vendor_stored_by_an_older_version_is_cleared_at_start(ctx):
+    from sniffowireless.zigbee import ZigbeeMonitor
+    ctx.store.conn.execute("INSERT INTO zigbee_networks(ext_pan, pan, channel, vendor, first_seen, last_seen, sightings) VALUES('00:80:c0:60:b0:e9:71:bd', 1, 25, 'Penril Datacomm', 1, 1, 1)")
+    ZigbeeMonitor(ctx)
+    assert ctx.one("SELECT vendor FROM zigbee_networks WHERE pan=1")["vendor"] is None
