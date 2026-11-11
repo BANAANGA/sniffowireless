@@ -509,23 +509,117 @@ addRoute('/reports', async (_, params) => {
 });
 
 // ===================================================================== settings
-const SETTINGS_TABS = [['account', 'Account'], ['users', 'Users'], ['networks', 'My networks'], ['investigate', 'Investigations'], ['ignore', 'Ignore list'], ['sensors', 'Sensors'], ['modules', 'Modules'], ['privacy', 'Privacy'], ['purge', 'Clear data'], ['wifichannels', 'Wi-Fi channels'], ['lorabands', 'LoRa bands'], ['zigbee', 'Zigbee'], ['loraflasher', 'LoRa flasher'],
-  ['notify', 'Notifications'], ['report', 'Weekly report'], ['security', 'Detection'], ['mqtt', 'MQTT'], ['performance', 'Performance'], ['tokens', 'API tokens'], ['backup', 'Backup'], ['appearance', 'Appearance'], ['about', 'About']];
+// Settings pages in groups. Each: [key, label, icon, one-line description, extra search words].
+const SETTINGS_GROUPS = [
+  ['You', [
+    ['account', 'Account', 'user', 'Password, two-factor login and how this browser shows times and text', 'password 2fa totp font clock'],
+  ]],
+  ['Monitoring', [
+    ['networks', 'My networks', 'home', 'Which SSIDs and access points are yours', 'ssid trusted evil twin'],
+    ['investigate', 'Investigations', 'search', 'Networks to keep an eye on, with a dossier per network', 'watch follow dossier'],
+    ['ignore', 'Ignore list', 'eye-off', 'Devices and networks that are dropped before anything is stored', 'exclude filter mac prefix'],
+    ['security', 'Detection', 'shield', 'Thresholds for deauth floods, KARMA, handshake capture and scanners', 'deauth karma handshake threshold'],
+  ]],
+  ['Radios & sensors', [
+    ['sensors', 'Sensors', 'radio', 'Remote sensors, their rooms, versions and load', 'remote pi room token'],
+    ['modules', 'Modules', 'grid', 'Show or hide Wi-Fi, Bluetooth, LAN, Zigbee and LoRa, and how long each keeps its data', 'enable disable hide retention'],
+    ['wifichannels', 'Wi-Fi channels', 'wifi', 'Which channels each adapter listens on', 'hop 6ghz 5ghz regdomain', 'wifi'],
+    ['lorabands', 'LoRa bands', 'wave', 'Frequencies the LoRa boards listen on, per sensor', 'meshtastic lorawan region', 'lora'],
+    ['zigbee', 'Zigbee', 'hex', 'Channels, hop and scan timing of each Zigbee stick, per sensor', 'thread 802.15.4 channel', 'zigbee'],
+    ['loraflasher', 'LoRa flasher', 'chip', 'Write the sniffer firmware to a LoRa board', 'firmware heltec flash'],
+  ]],
+  ['Alerts & integrations', [
+    ['notify', 'Notifications', 'bell', 'Where alerts are sent: email, ntfy, Telegram, webhooks', 'email smtp ntfy telegram webhook'],
+    ['report', 'Weekly report', 'calendar', 'A weekly occupancy and activity summary', 'email summary'],
+    ['mqtt', 'MQTT', 'link', 'Presence for labelled devices, e.g. for Home Assistant', 'home assistant broker'],
+    ['tokens', 'API tokens', 'key', 'Tokens for Prometheus and scripts', 'bearer prometheus metrics api'],
+  ]],
+  ['Data & privacy', [
+    ['privacy', 'Privacy', 'lock', 'Hashed MAC addresses, how long data is kept and the anonymised view', 'anonymise hash retention gdpr'],
+    ['purge', 'Clear data', 'trash', 'Delete what is stored for one kind of radio, or its events', 'delete wipe reset'],
+    ['backup', 'Backup', 'archive', 'Configuration and full backups, and restoring them', 'restore export download'],
+  ]],
+  ['System', [
+    ['users', 'Users', 'users', 'Who can sign in and what they may change', 'admin viewer role'],
+    ['appearance', 'Appearance', 'palette', 'Theme, style, font and time format for everyone', 'theme dark light font'],
+    ['performance', 'Performance', 'gauge', 'Database cache and memory use', 'cache memory raspberry'],
+    ['about', 'About', 'info', 'Version, build and where this runs', 'version release commit'],
+  ]],
+];
+const SETTINGS_VIEWER = ['account', 'networks', 'investigate', 'ignore', 'about'];
+// Small line icons (24×24, stroke = currentColor).
+const SET_ICONS = {
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2.4.6 4 2.3 4 5.2"/>',
+  home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+  'eye-off': '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3 3.6M6.6 6.6A17 17 0 0 0 2 12s4 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  radio: '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  wifi: '<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/>',
+  wave: '<path d="M2 12c2-5 4-5 6 0s4 5 6 0 4-5 6 0"/><path d="M2 18h20" opacity=".5"/>',
+  hex: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><circle cx="12" cy="12" r="2.5"/>',
+  chip: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  bell: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v11h14V9M10 13h4"/>',
+  palette: '<path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2s-1-1.5-1-2.5 1-1.5 2-1.5h2a4 4 0 0 0 4-4c0-4.5-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/>',
+  gauge: '<path d="M3.5 17a9 9 0 1 1 17 0"/><path d="M12 13l4-5"/><circle cx="12" cy="14" r="1.5"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+};
+const setIcon = k => `<svg class="set-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SET_ICONS[k] || ''}</svg>`;
+
+// The groups and pages this user may see (viewers get a few; pages of switched-off modules are left out).
+function settingsGroups() {
+  return SETTINGS_GROUPS.map(([g, items]) => [g, items.filter(([k, , , , , mod]) => (isAdmin() || SETTINGS_VIEWER.includes(k)) && (!mod || modOn(mod)))])
+    .filter(([, items]) => items.length);
+}
 
 addRoute('/settings', async (_, params) => {
-  const tabs = (isAdmin() ? SETTINGS_TABS : SETTINGS_TABS.filter(([k]) => ['account', 'networks', 'investigate', 'ignore', 'about'].includes(k)))
-    .filter(([k]) => k !== 'wifichannels' || modOn('wifi'))
-    .filter(([k]) => (k !== 'lorabands' || modOn('lora')) && (k !== 'zigbee' || modOn('zigbee')));
-  let tab = params.get('tab') || 'account';
-  app.innerHTML = `<div class="page-head"><div><h1>Settings</h1></div></div><div class="settings"><nav class="subnav">${tabs.map(([k, l]) => `<a href="${hrefWith('/settings', { tab: k })}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</nav><div id="set-body" class="set-body"></div></div>`;
-  const el = document.getElementById('set-body');
-  const fn = SETTINGS_VIEWS[tab] || SETTINGS_VIEWS.account;
-  await fn(el);
+  const groups = settingsGroups();
+  const all = groups.flatMap(([g, items]) => items.map(it => [g, ...it]));
+  const tab = all.some(x => x[1] === params.get('tab')) ? params.get('tab') : 'account';
+  const [group, , label, icon, desc] = all.find(x => x[1] === tab);
+  app.innerHTML = `<div class="page-head"><div><h1>Settings</h1></div></div>
+    <div class="settings">
+      <nav class="subnav" aria-label="Settings">
+        <input type="search" class="set-filter" placeholder="Find a setting…" aria-label="Find a setting" autocomplete="off">
+        ${groups.map(([g, items]) => `<div class="set-group"><div class="set-group-title">${esc(g)}</div>${items.map(([k, l, ic, d, words]) =>
+          `<a href="${hrefWith('/settings', { tab: k })}" class="${k === tab ? 'active' : ''}" data-find="${esc(`${l} ${d} ${words || ''}`.toLowerCase())}" ${k === tab ? 'aria-current="page"' : ''}>${setIcon(ic)}<span>${esc(l)}</span></a>`).join('')}</div>`).join('')}
+        <div class="set-none faint small-text" hidden>Nothing matches</div>
+      </nav>
+      <select class="set-pick" aria-label="Settings page">${groups.map(([g, items]) => `<optgroup label="${esc(g)}">${items.map(([k, l]) => `<option value="${k}" ${k === tab ? 'selected' : ''}>${esc(l)}</option>`).join('')}</optgroup>`).join('')}</select>
+      <div class="set-main">
+        <div class="set-head">${setIcon(icon)}<div><div class="set-crumb">${esc(group)}</div><h2 class="set-title">${esc(label)}</h2><p class="set-desc">${esc(desc)}</p></div></div>
+        <div id="set-body" class="set-body"></div>
+      </div>
+    </div>`;
+  const nav = app.querySelector('.subnav');
+  const filter = nav.querySelector('.set-filter');
+  filter.oninput = () => {
+    const q = filter.value.trim().toLowerCase();
+    let any = false;
+    nav.querySelectorAll('.set-group').forEach(grp => {
+      let shown = 0;
+      grp.querySelectorAll('a').forEach(a => { const ok = !q || a.dataset.find.includes(q); a.hidden = !ok; shown += ok; });
+      grp.hidden = !shown;
+      any = any || shown > 0;
+    });
+    nav.querySelector('.set-none').hidden = any;
+  };
+  filter.onkeydown = e => { if (e.key === 'Enter') { const a = [...nav.querySelectorAll('a')].find(x => !x.hidden); if (a) location.hash = a.getAttribute('href').slice(1); } };
+  app.querySelector('.set-pick').onchange = e => { location.hash = hrefWith('/settings', { tab: e.target.value }).slice(1); };
+  await SETTINGS_VIEWS[tab](document.getElementById('set-body'));
 });
 
 const SETTINGS_VIEWS = {
   async account(el) {
-    el.innerHTML = `<section class="panel"><header><h2>Account</h2></header><div class="body"><p>Signed in as <b>${esc(ME.username)}</b> (${esc(ME.role)}).</p>
+    el.innerHTML = `<section class="panel"><header><h2>Password</h2></header><div class="body"><p style="margin-top:0">Signed in as <b>${esc(ME.username)}</b> (${esc(ME.role)}).</p>
       <form id="pw" class="form-narrow"><label class="field">Current password<input type="password" name="current" autocomplete="current-password" required></label>
       <label class="field">New password<input type="password" name="password" autocomplete="new-password" minlength="10" required></label>
       <label class="field">Repeat new password<input type="password" name="password2" autocomplete="new-password" required></label>
