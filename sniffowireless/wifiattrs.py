@@ -118,9 +118,22 @@ def _wps_state(info):
     return state, locked
 
 
-def ap_attributes(elts, beacon_tu=None):
+def beacon_signature(elts, capability=None, beacon_tu=None):
+    """A short hash of how an access point builds its beacon: the order of its information elements (vendor ones by OUI and type),
+    the capability bits and the beacon interval. The same firmware on the same chipset builds beacons the same way, so this tells
+    models and firmware apart without reading any name; an administrator cannot change it from the settings page."""
+    import hashlib
+    parts = []
+    for eid, info in elts:
+        parts.append(f"{eid}-{bytes(info[:4]).hex()}" if eid == 221 else str(eid))
+    parts.append(f"cap{capability if capability is not None else ''}")
+    parts.append(f"tu{beacon_tu if beacon_tu is not None else ''}")
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()[:12]
+
+
+def ap_attributes(elts, beacon_tu=None, capability=None):
     """What a beacon / probe response says about the access point itself. Empty values are left out."""
-    out = {}
+    out = {"bsig": beacon_signature(elts, capability, beacon_tu)}
     roaming = []
     for eid, info in elts:
         if eid == 7 and len(info) >= 3:  # Country

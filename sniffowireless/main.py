@@ -155,6 +155,8 @@ def main():
     ctx.mqtt.start(stop)
     ctx.reports.start(stop)
     ctx.backups.start(stop)
+    from .mobility import MobilityUpdater
+    MobilityUpdater(ctx, first_after=90 if cfg.demo else 120).start(stop)
     if cfg.demo:
         from .demo import DemoGenerator
         demo = DemoGenerator(cfg, store, ctx)

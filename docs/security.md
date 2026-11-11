@@ -35,6 +35,10 @@ While the sensor hops channels it records each channel's noise floor and retrans
 
 Episodes are listed on the **Channels** page and can trigger alerts (event type *Radio interference episode*). Detection needs a day of measurements as a baseline. Adapters that don't report a noise level are judged on retransmissions only.
 
+## Cloned access-point addresses
+
+Every beacon carries the access point's own timer. Heard over a few minutes, the timer of one access point runs on a straight line (a few parts per million fast or slow; shown as *Clock drift* on the device page). Two access points sending under the same BSSID have two timers that were started at different moments, so the readings jump back and forth. When two such lines each hold several readings and the readings alternate, the event *Two access points share one address* (`ap_clock_conflict`, high severity) is raised, at most once an hour per address. It needs about 5 minutes of beacons (one reading per 10 seconds) and is kept apart per sensor. It is a strong hint, not proof: an access point that resets its timer on its own can look the same, and a clone that copies the timer is not seen.
+
 ## DFS / radar
 
 5 GHz channels 52–144 are shared with weather, airport and military radar. An access point on one of these **DFS** channels has to listen for radar; when it hears it, it must leave the channel within seconds and stay away for 30 minutes. Most access points warn their clients first with a **Channel Switch Announcement** (CSA) in their beacons. sniffowireless reads these from every beacon it hears, along with each access point's channel, and records:

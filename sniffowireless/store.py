@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time
 
-from . import btversion, identify, macprivacy, ossig, wifiattrs
+from . import apclock, btversion, identify, macprivacy, ossig, scanbehavior, wifiattrs
 from .config import _int
 from .oui import bt_company, bt_company_known
 from .sanitize import clean_str
@@ -109,7 +109,7 @@ LAN_KIND = "lan"  # seen only on the wired / LAN side
 # a BLE address that answers an inquiry is dual-mode classic).
 KIND_RANK = {"wifi_client": 1, "ap": 2, "ble": 1, "bt_classic": 2}
 DEDUPE_EVENTS = {"ap_restart": 600, "deauth_broadcast": 60, "deauth": 30, "deauth_flood": 300, "rogue_ap": 3600, "karma_ap": 3600,
-                 "moved": 600, "lora_flood": 600, "lora_join_flood": 1800, "lora_fcnt_reset": 3600, "zigbee_permit_join": 600}
+                 "moved": 600, "ap_clock_conflict": 3600, "lora_flood": 600, "lora_join_flood": 1800, "lora_fcnt_reset": 3600, "zigbee_permit_join": 600}
 
 
 class IgnoreRules:
@@ -199,11 +199,15 @@ class Store:
         self.conn = connect(cfg.db_path)
         self.conn.executescript(SCHEMA)
         self.learner = ossig.OsLearner(self.conn)  # Wi-Fi signatures learned from devices whose OS is known (ossig.py)
-        identify.set_learner(self.learner.lookup)
+        self.scan_learner = ossig.OsLearner(self.conn, prefix="scan")   # ... and the same for how a client scans (scanbehavior.py)
+        identify.set_learner(self.learner.lookup, self.scan_learner.lookup)
+        self.scans = scanbehavior.ScanTracker()
         self._migrate()
         self.macpriv = None
+        self.clockwatch = apclock.ClockWatch()
         self.retention = {}     # days per kind of data from Settings -> Privacy (0 = RETENTION_DAYS)
         self._init_macprivacy()
+        self.scan_learner.reload()
         self.learner.reload()   # (addresses may just have been replaced by pseudonyms)
         n = self.conn.execute(
             "UPDATE sessions SET open=0, end_reason=COALESCE(end_reason,'restart') WHERE open=1").rowcount
@@ -359,6 +363,9 @@ class Store:
         fam = ossig.trusted_family(((dev.get("ident") or {}).get("evidence")))
         if sig and fam:
             self.learner.observe(dev["mac"], sig, fam)
+        ssig = ossig.scan_signature(dev)
+        if ssig and fam:
+            self.scan_learner.observe(dev["mac"], ssig, fam)
 
     def _load_dev(self, mac):
         dev = self.devices.get(mac)
@@ -371,6 +378,39 @@ class Store:
             dev["ident"] = json.loads(dev["ident"] or "null")
             self.devices[mac] = dev
         return dev
+
+    def _beacon_clock(self, dev, mac, sensor, ts, tsf):
+        """Clock-drift check (apclock.py): two timers under one BSSID is a cloned address; the drift itself is kept for the page."""
+        why = self.clockwatch.feed(sensor, mac, ts, tsf)
+        if why:
+            self._event(ts, mac, "ap_clock_conflict", None, why + " - possibly a second access point using this address", dev=dev, always=True)
+        if ts - (dev["extra"].get("skew") or {}).get("ts", 0) > 120:
+            ppm = self.clockwatch.skew_ppm(sensor, mac)
+            if ppm is not None and abs(ppm) < 5000:
+                dev["extra"]["skew"] = {"ppm": ppm, "ts": int(ts)}
+                self.dirty.add(mac)
+
+    def apply_mobility(self, results):
+        """results: {mac: {"c", "std", "bins", "ts"}} from mobility.compute; stored in extra["mobility"] (writer thread)."""
+        for mac, m in results.items():
+            dev = self._load_dev(mac)
+            if dev is None or dev["extra"].get("mobility") == m:
+                continue
+            dev["extra"]["mobility"] = m
+            self.conn.execute("UPDATE devices SET extra=? WHERE mac=?", (json.dumps(dev["extra"]), mac))
+
+    def clear_mobility(self, keep):
+        """A device that no longer has enough recent signal samples loses its old class (a stale 'fixed' would mislead)."""
+        for mac, dev in list(self.devices.items()):
+            if "mobility" in dev["extra"] and mac not in keep:
+                del dev["extra"]["mobility"]
+                self.conn.execute("UPDATE devices SET extra=? WHERE mac=?", (json.dumps(dev["extra"]), mac))
+        for r in self.conn.execute("SELECT mac, extra FROM devices WHERE extra LIKE '%\"mobility\"%'").fetchall():
+            if r["mac"] in keep or r["mac"] in self.devices:
+                continue
+            extra = json.loads(r["extra"] or "{}")
+            if extra.pop("mobility", None) is not None:
+                self.conn.execute("UPDATE devices SET extra=? WHERE mac=?", (json.dumps(extra), r["mac"]))
 
     def propagate_linked_os(self):
         """Carry the OS across Bluetooth <-> Wi-Fi links that a person confirmed: a phone has both radios, and its Wi-Fi side often
@@ -547,6 +587,9 @@ class Store:
         if t == "wifi_ap":
             dev = self._device(mac, "ap", ts, rssi, o, ("ssid", "channel", "freq", "band", "enc", "vendor"))
             self._presence(dev, ts, rssi)
+            tsf = o.get("tsf")
+            if isinstance(tsf, int) and tsf > 0:
+                self._beacon_clock(dev, mac, o.get("sensor") or "local", ts, tsf)
             boot = ((o.get("extra") or {}).get("ap") or {}).get("boot")  # estimated boot time from the beacon timestamp
             if isinstance(boot, (int, float)):
                 prev = self._boots.get(mac)
@@ -573,6 +616,11 @@ class Store:
                 self._assoc(dev, bssid, ts, rssi)
             if o.get("probe"):
                 self._probe(dev, o["probe"], ts)
+            if frame == "probe":
+                got = self.scans.feed(mac, ts)
+                if got:
+                    dev["extra"]["scan"] = got
+                    self.dirty.add(mac)
 
         elif t == "bt":
             dev = self._device(mac, o["kind"], ts, rssi, o, ("name", "vendor"))

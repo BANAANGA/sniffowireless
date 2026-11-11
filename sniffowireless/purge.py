@@ -19,7 +19,7 @@ log = logging.getLogger("sniffowireless.purge")
 
 # kinds: rows of `devices`; tables: deleted completely; finding_types: security findings that belong to the module
 SPEC = {
-    "wifi": {"kinds": ("ap", "wifi_client"), "tables": ("channel_stats", "interference", "dfs_events", "ap_enc", "os_signatures", "os_sig_devices"), "findings": "wifi"},
+    "wifi": {"kinds": ("ap", "wifi_client"), "tables": ("channel_stats", "interference", "dfs_events", "ap_enc", "os_signatures", "os_sig_devices", "scan_signatures", "scan_sig_devices"), "findings": "wifi"},
     "bluetooth": {"kinds": ("ble", "bt_classic"), "tables": (), "findings": ("unknown_tracker",)},
     "lan": {"kinds": ("lan",), "tables": ("lan_dns", "lan_flows", "lan_traffic", "dhcp_servers"), "findings": ("rogue_dhcp", "arp_spoof")},
     "zigbee": {"kinds": (), "tables": ("zigbee_networks", "zigbee_radios", "zigbee_channels", "zigbee_energy"), "seen": "zigbee"},
@@ -30,7 +30,7 @@ OTHER_FINDINGS = SPEC["bluetooth"]["findings"] + SPEC["lan"]["findings"]
 EVENT_TYPES = {  # (events about watched radios have lora: / zb: addresses and are found through those)
     "wifi": ("ap_restart", "rogue_ap", "deauth_flood", "deauth_broadcast", "karma_ap", "security_finding", "interference", "dfs_radar", "channel_switch_announced",
              "channel_change", "investigated_seen", "investigated_connect", "investigated_probe", "fingerprint_changed", "handshake_attack",
-             "ap_downgrade", "probe_scan", "mac_duplicate"),
+             "ap_downgrade", "probe_scan", "mac_duplicate", "ap_clock_conflict"),
     "bluetooth": ("tracker_following",),
     "lan": ("rogue_dhcp", "arp_spoof"),
     "zigbee": (),

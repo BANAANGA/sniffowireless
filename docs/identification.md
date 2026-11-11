@@ -17,6 +17,8 @@ sniffowireless works out what each device is purely from what it broadcasts. Not
 | **Bikes** | Bluetooth "Cycling" appearance or cycling speed/cadence/power services, and names such as VanMoof `ES3-…`/`EX3-…` or Cowboy → *Bike / e-bike* |
 | **Names / SSIDs** | “iPhone”, “Galaxy Watch5”, “DESKTOP-XXXXXXX” (Windows), “[TV] Samsung…”, “DIRECT-xx-HP…” printers, phone hotspots, car hotspots |
 | **MAC vendor (OUI)** | Brand, plus a type hint for single-purpose vendors (Espressif → IoT, Sonos → speaker, Hikvision → camera…) |
+| **Beacon fingerprint** (access points) | A short code (*Beacon fingerprint* on the device page) for how an access point builds its beacons: element order, capability bits, interval. The same model and firmware give the same code, whatever the network is called |
+| **Scan behaviour** (Wi-Fi clients) | The rhythm of a device's probe-request bursts (frames per burst, spacing, pause). It depends on the driver and OS and survives MAC randomisation. After three bursts it is a signature; when other devices with that signature have a known OS it is weak evidence (at most 55) for the OS. A sensor that hops over channels hears only part of each burst, so the numbers are blurry |
 
 **Samsung phones and Google Pixels.** Android phones are the hardest to tell apart, because they randomize their address and say little. What is used:
 
@@ -56,3 +58,7 @@ What does **not** work: most cars use a supplier's network chip (Harman, Contine
 **Estimated age** comes from the newest standard a device supports (it can't predate it), or from the model's release year when that is known (AirPods/Beats). For phones, computers, TVs and routers sniffowireless also gives an upper bound: a laptop with only Wi-Fi 5 is typically from 2013–2020. Printers and IoT devices still ship with Wi-Fi 4 today, so for those only "N or newer" is shown.
 
 **Limits:** results are best-effort. Devices with randomized MACs and no name (most phones while idle) can often only be identified as "Apple phone, Wi-Fi 6" or "phone". Clients only reveal capabilities in probe/association frames, so a device first has to scan or (re)connect while the sensor is on its channel. When the rules improve in a new version, all stored devices are re-identified automatically on startup.
+
+## Fixed or mobile
+
+The device page has a *Movement* row, the Devices page a `mobility` filter and Statistics a *Movement* breakdown. From the per-minute signal samples of the last 48 hours the signal is averaged in 10-minute bins; the spread of those averages decides: up to 2.5 dB **fixed**, up to 5 dB **mostly fixed**, above that **mobile**. At least 2 hours of presence are needed, and it is recomputed every 3 hours. The limits are rules of thumb, not calibrated: doors and people change the signal of a fixed device, and a phone left on a desk looks fixed. A sensor that is itself moved changes everything it hears.

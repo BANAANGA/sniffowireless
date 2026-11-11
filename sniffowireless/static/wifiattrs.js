@@ -18,8 +18,10 @@ function wifiAkmTag(a) {
 
 function wifiApRows(ex, d) {
   const a = ex && ex.ap;
-  if (!a) return [];
   const rows = [], tags = xs => xs.join(' ');
+  if (ex && ex.skew) rows.push(['Clock drift', `${ex.skew.ppm > 0 ? '+' : ''}${ex.skew.ppm} ppm <span class="faint">(how fast or slow its beacon timer runs; each timer has its own value, and two timers under one address raise an alert)</span>`]);
+  if (!a) return rows;
+  if (a.bsig) rows.push(['Beacon fingerprint', `<span class="mono">${esc(a.bsig)}</span> <span class="faint">(how its beacons are built; the same model and firmware give the same value)</span>`]);
   if (a.boot) {
     const secs = Math.max(0, Date.now() / 1000 - a.boot);
     rows.push(['Up for', `${dur(secs)} <span class="faint">(since ${dt(a.boot)}, estimated from the beacon timestamp; some access points reset it on their own)</span>`]);
@@ -56,6 +58,7 @@ function wifiApRows(ex, d) {
 
 function wifiClientRows(ex, d) {
   const rows = [];
+  if (ex.scan) rows.push(['Scan behaviour', `${ex.scan.size} probe request${ex.scan.size === 1 ? '' : 's'} per burst${ex.scan.size > 1 ? `, ${ex.scan.gap_ms} ms apart` : ''}, a burst about every ${ex.scan.period} s <span class="faint">(median of ${ex.scan.bursts} bursts)</span>`]);
   if (ex.rate_up != null || ex.rate_down != null) {
     rows.push(['Link rate', [ex.rate_up != null ? `↑ ${ex.rate_up} Mbit/s` : '', ex.rate_down != null ? `↓ ${ex.rate_down} Mbit/s` : ''].filter(Boolean).join(' &nbsp; ') + ' <span class="faint">(last data frame heard)</span>']);
   }
