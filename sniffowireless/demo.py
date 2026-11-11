@@ -373,6 +373,7 @@ class DemoGenerator:
             info["roaming"] = ["11k", "11r", "11v"]
         if mac in DEMO_AP_NAMES:  # the vendor "AP name" element Ubiquiti access points broadcast (default names are the model names)
             info["ap_name"], info["ap_name_src"] = DEMO_AP_NAMES[mac], "Ubiquiti"
+        info["bsig"] = f"{_h(vendor or mac, 5) & 0xffffffffff:010x}ab"
         if h % 3 == 0:
             info["bss_color"] = 1 + h % 60
         if h % 4 == 0:

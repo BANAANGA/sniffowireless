@@ -199,7 +199,7 @@ def create_app(ctx):
     def device_filters(kind=None, active=0, q=None, vendor=None, ssid=None, probe=None, bssid=None,
                        channel=None, randomized=None, connected=0, band=None, dev_type=None, brand=None,
                        os=None, wifi_gen=None, era=None, fp=None, known=None, watch=None, group=None,
-                       addr_type=None, company=None, bt_ver=None):
+                       addr_type=None, company=None, bt_ver=None, mobility=None):
         where, params = [], []
         if kind:
             ks = [k for k in kind.split(",") if k in KINDS]
@@ -249,7 +249,7 @@ def create_app(ctx):
             where.append("d.era = ?" if era else "d.era IS NULL")
             if era:
                 params.append(era)
-        for path, val in (("$.addr_type", addr_type), ("$.company", company), ("$.bt_ver", bt_ver)):  # Bluetooth details
+        for path, val in (("$.addr_type", addr_type), ("$.company", company), ("$.bt_ver", bt_ver), ("$.mobility.c", mobility)):  # Bluetooth details, movement
             if val == "Unknown":
                 where.append(f"json_extract(d.extra, '{path}') IS NULL")
             elif val:
@@ -274,10 +274,11 @@ def create_app(ctx):
                     probe: str = None, bssid: str = None, channel: int = None, randomized: int = None,
                     connected: int = 0, band: str = None, dev_type: str = None, brand: str = None, os: str = None,
                     wifi_gen: int = None, era: int = None, fp: str = None, known: int = None, watch: int = 0,
-                    group: int = None, addr_type: str = None, company: str = None, bt_ver: str = None):
+                    group: int = None, addr_type: str = None, company: str = None, bt_ver: str = None,
+                    mobility: str = None):
         """The device filters as query parameters; shared by the list and the exports so both mean the same thing."""
         return device_filters(kind, active, q, vendor, ssid, probe, bssid, channel, randomized, connected, band,
-                              dev_type, brand, os, wifi_gen, era, fp, known, watch, group, addr_type, company, bt_ver)
+                              dev_type, brand, os, wifi_gen, era, fp, known, watch, group, addr_type, company, bt_ver, mobility)
 
     @app.get("/api/devices", dependencies=[Depends(current_user)])
     def devices(flt=Depends(filter_args), sort: str = "last_seen", order: str = "desc", limit: int = 100, offset: int = 0,
@@ -298,6 +299,7 @@ def create_app(ctx):
         for i in items:  # also in the slim rows, which drop `extra`
             i["bt_ver"] = i["extra"].get("bt_ver")
             i["bt_basis"] = i["extra"].get("bt_basis")
+            i["mobility"] = (i["extra"].get("mobility") or {}).get("c")
         if slim:  # tables only show the identification label; the evidence and raw fingerprints are ~70% of each row
             for i in items:
                 i["ident"] = {"label": (i.get("ident") or {}).get("label")}
@@ -634,6 +636,8 @@ def create_app(ctx):
                             f"AND last_seen>=? GROUP BY v ORDER BY n DESC", (since,))
         out["bt_ver"] = rows("SELECT json_extract(extra, '$.bt_ver') v, kind, COUNT(*) n FROM devices WHERE kind IN ('ble', 'bt_classic') "
                              "AND last_seen>=? GROUP BY v, kind ORDER BY n DESC", (since,))
+        out["mobility"] = rows("SELECT json_extract(extra, '$.mobility.c') v, kind, COUNT(*) n FROM devices WHERE last_seen>=? "
+                               "GROUP BY v, kind ORDER BY n DESC", (since,))
         # Which kinds of device each sensor heard in the period (a device heard by two sensors counts for both).
         out["sensor_kinds"] = rows(
             "SELECT w.sensor id, COALESCE(s.name, w.sensor) name, d.kind, COUNT(*) n FROM sightings w "

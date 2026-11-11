@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS ap_enc(mac TEXT PRIMARY KEY, enc TEXT, rank INTEGER, 
 """
 SECURITY_EVENTS = ("rogue_ap", "deauth_flood", "karma_ap", "deauth_broadcast", "security_finding", "rogue_dhcp",
                    "arp_spoof", "tracker_following", "fingerprint_changed", "handshake_attack", "ap_downgrade",
-                   "probe_scan", "mac_duplicate")
+                   "probe_scan", "mac_duplicate", "ap_clock_conflict")
 KNOWN_MACS_REFRESH = 15  # seconds between re-reading device_meta.known (no on_change hook for device_meta)
 REJOIN_GAP = 15          # a client that reassociates within this many seconds of being kicked completed a "cycle"
 DOWNGRADE_FRAMES = 3     # consecutive beacons showing weaker security before it's believed (one glitchy frame isn't)

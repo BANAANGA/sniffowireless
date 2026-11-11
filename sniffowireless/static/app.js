@@ -178,7 +178,8 @@ function btVerDetail(ex) {
   if (!basis || basis === 'reported by the device') return `${esc(v)}${ex.chip ? ` <span class="faint">(${esc(ex.chip)})</span>` : ''}`;
   return `${esc(v)} <span class="faint">${esc(basis)}</span>`;
 }
-const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v), addr_type: v => ADDR_TYPES[v] || v, bt_ver: v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v };
+const MOBILITY = { fixed: 'Fixed', mostly: 'Mostly fixed', mobile: 'Mobile' };
+const FILTER_FMT = { wifi_gen: v => genLabel(+v), dev_type: typeLabel, era: v => eraLabel(+v), addr_type: v => ADDR_TYPES[v] || v, bt_ver: v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v, mobility: v => MOBILITY[v] || v };
 function identCell(x) {
   const id = x.ident || {};
   const label = id.label || (x.vendor ? esc(x.vendor) : '');
@@ -718,7 +719,7 @@ function linkRows(root) {
 // ------------------------------------------------------------------ devices
 const FILTER_LABELS = { vendor: 'Vendor', brand: 'Brand', dev_type: 'Device type', os: 'OS', wifi_gen: 'Wi-Fi', era: 'Age', fp: 'Fingerprint',
   ssid: 'SSID', probe: 'Probed', bssid: 'Connected to', channel: 'Channel', connected: 'Connected now',
-  addr_type: 'Address type', company: 'Bluetooth company', bt_ver: 'Bluetooth version' };
+  addr_type: 'Address type', company: 'Bluetooth company', bt_ver: 'Bluetooth version', mobility: 'Movement' };
 
 async function viewDevices(params) {
   const st = Object.fromEntries(params.entries());
@@ -848,6 +849,7 @@ async function viewDevice(mac, params) {
     ex.adv_interval ? ['Advertising interval', `≈ ${ex.adv_interval} ms <span class="faint">(estimated from how often it was heard)</span>`] : null,
     ex.ibeacon ? ['iBeacon', `<span class="mono">${esc(ex.ibeacon.uuid)}</span> <span class="faint">major</span> ${ex.ibeacon.major} <span class="faint">minor</span> ${ex.ibeacon.minor}${ex.ibeacon.power != null ? ` <span class="faint">· ${ex.ibeacon.power} dBm at 1 m</span>` : ''}`] : null,
     ex.bt_ver || ex.bt_version ? ['Bluetooth version', btVerDetail(ex)] : null,
+    ex.mobility ? ['Movement', `${esc(MOBILITY[ex.mobility.c] || ex.mobility.c)} <span class="faint">(signal varies ±${ex.mobility.std} dB over ${ex.mobility.bins} ten-minute periods)</span>`] : null,
     ex.bt_probe ? ['Last version request', ex.bt_probe.ok ? `answered <span class="faint">${ago(ex.bt_probe.ts)}${ex.bt_probe.adapter ? ' via ' + esc(ex.bt_probe.adapter) : ''}</span>`
       : `<span class="warn-text">failed</span> <span class="faint">${ago(ex.bt_probe.ts)}: ${esc(ex.bt_probe.error || 'unknown error')}</span>`] : null,
     ex.phy ? ['Radio (PHY)', esc(ex.phy) + (ex.phy === 'Coded' ? ' <span class="faint">(long range)</span>' : '')] : null,
@@ -1126,6 +1128,7 @@ function breakdown(el, s, kind) {
   if (kind === 'ble') charts.push(['Address type', of(s.addr_type), 'addr_type', v => ADDR_TYPES[v] || v],
     ['Bluetooth company', of(s.company), 'company', v => v]);
   if (kind === 'ble' || kind === 'bt_classic') charts.push(['Bluetooth version', of(s.bt_ver), 'bt_ver', v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v]);
+  charts.push(['Movement', of(s.mobility), 'mobility', v => MOBILITY[v] || v]);
   const total = charts[0][1].reduce((a, r) => a + r.n, 0);
   el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices</span>
       ${seg('bkind', BREAKDOWN_KINDS.filter(([k]) => kindOn(k)), kind)}</header>

@@ -142,6 +142,7 @@ class AttrGates:
 
     def __init__(self, ap_interval=60, link_interval=30):
         self.ap, self.link = FingerprintGate(ap_interval), FingerprintGate(link_interval)
+        self.skew = FingerprintGate(10)   # beacon timer readings for the clock-drift check: one per access point per 10 seconds
 
 
 def parse_frame(pkt, fp_gate=None, tuned=None, gates=None, seq_on=False):
@@ -209,14 +210,17 @@ def parse_frame(pkt, fp_gate=None, tuned=None, gates=None, seq_on=False):
             csa, primary = _chan_elts(pkt)
             extra = {"hidden": True} if st == 8 and ssid == "" else {}
             if gates and gates.ap(a2 or a3, "ap", ts):
-                info = ap_attributes(_elts(pkt), getattr(layer, "beacon_interval", None))
+                cap = getattr(layer, "cap", None)
+                info = ap_attributes(_elts(pkt), getattr(layer, "beacon_interval", None), int(cap) if cap is not None else None)
                 tsf = getattr(layer, "timestamp", None)
                 if isinstance(tsf, int) and 0 < tsf < 5 * 365 * 86400 * 1_000_000:  # AP timer in µs: roughly its uptime
                     info["boot"] = int(ts - tsf / 1e6)
                 if info:
                     extra["ap"] = info
+            tsf = getattr(layer, "timestamp", None)
+            tsf = tsf if st == 8 and isinstance(tsf, int) and tsf > 0 and gates and gates.skew(a2 or a3, "skew", ts) else None
             ap(a2 or a3, rssi, ssid=ssid or None, channel=stats.get("channel") or primary,
-               enc=",".join(sorted(crypto)) or None, extra=extra or None,
+               enc=",".join(sorted(crypto)) or None, extra=extra or None, tsf=tsf,
                fp=fingerprint(a2 or a3, "beacon"), csa=csa)
             if st == 5:
                 client(a1, None, "probe_resp")

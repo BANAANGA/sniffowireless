@@ -651,12 +651,13 @@ class Evidence:
         return top
 
 
-_learner = {"fn": None}
+_learner = {"fn": None, "scan": None}
 
 
-def set_learner(fn):
+def set_learner(fn, scan=None):
     """fn(signature, mac) -> (os family, devices, share) or None: what the store has learned about Wi-Fi signatures (ossig.OsLearner.lookup)."""
     _learner["fn"] = fn
+    _learner["scan"] = scan
 
 
 def identify(dev):
@@ -866,6 +867,13 @@ def identify(dev):
         if got:
             fam, n, share = got
             ev.add("os", fam, ossig.learned_conf(n, share), f"Wi-Fi capability pattern shared with {n} device{'s' if n != 1 else ''} identified as {fam}")
+    # --- learned from the network: the same scanning rhythm as devices whose OS is known
+    if kind == "wifi_client" and _learner["scan"]:
+        sig = ossig.scan_signature(dev)
+        got = _learner["scan"](sig, dev.get("mac")) if sig else None
+        if got:
+            fam, n, share = got
+            ev.add("os", fam, ossig.scan_conf(n, share), f"Wi-Fi scan behaviour shared with {n} device{'s' if n != 1 else ''} identified as {fam}")
     # --- carried over a Bluetooth <-> Wi-Fi link that was confirmed by a person
     linked = extra.get("linked_os")
     if isinstance(linked, dict) and linked.get("os"):
