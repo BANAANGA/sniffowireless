@@ -26,7 +26,16 @@ ZIGBEE_DEVICES=/dev/serial/by-id/usb-...
 - A network scan only reaches routers and coordinators. Battery devices appear only if they transmit while the stick is on their channel, so a hopping sensor easily misses them: set `ZIGBEE_CHANNELS` to one channel to watch them.
 - A short address only means something within its PAN, and it can change if a device rejoins.
 - A vendor shown with a question mark comes from a radio's 64-bit (IEEE) address, whose first bytes name the maker. It is a hint. A network's extended PAN ID is **not** used for this: the coordinator chooses it and many (Zigbee2MQTT, ZHA) pick random bytes, so a maker name taken from it would usually be a coincidence. (Versions before 30.5 showed one; it is cleared at the next start.)
-- This has only been run against simulated sticks so far. Real USB behaviour, and whether a given firmware includes `mfglib`, are unproven.
+- Tested on real hardware with one stick: a Sonoff Zigbee 3.0 USB Dongle Plus V2 (EmberZNet 7.4.4.0, EZSP v13): firmware detection, scanning, passive listening and changing the channels from the web interface all worked. Z-Stack and the other firmware have only been run against simulated sticks, and whether a given firmware includes `mfglib` is still something to check on yours.
+
+**Thread (and Matter).** Thread is the IPv6 mesh that many Matter devices use. It runs on the same 802.15.4 radio, so the stick hears it too. What can be seen, and how:
+
+- **Thread-likely frames.** Thread secures every frame at the MAC layer with *security level 5* (encryption plus a 32-bit integrity check) and key mode 1 (data) or 2 (its MLE messages); OpenThread accepts nothing else. Zigbee does not use MAC-layer security at all. So a MAC-secured data or command frame at level 5 with key mode 1 or 2 is labelled *Looks like Thread*; other secured frames stay *Encrypted, protocol unknown*. Unsecured 6LoWPAN frames are labelled Thread as before. It is a strong sign, not proof: another stack could use the same settings.
+- **Thread beacons.** A Thread router answers a beacon request with a beacon whose payload is in the clear: protocol ID 3, flags (protocol version, "native commissioner", **joining permitted**), the **network name** (16 bytes) and the **extended PAN ID** (8 bytes), in the layout from OpenThread's source (`mac_beacon.hpp`). When one is heard, the network appears in the Networks table with its name, protocol version and joining flag, a *new network* event is raised, and a network that is accepting new devices raises the same event as an open Zigbee network. The extended PAN ID is shown in the order it is sent (as OpenThread prints it), not reversed like an address.
+- **Why beacons are rare.** The stick only listens, so a Thread beacon is heard only when something else (a person joining a device, another scanner) sends a beacon request on that channel. The stick's own network scan reports Zigbee networks only, not Thread ones. So most Thread networks show up as *radios* grouped by PAN, labelled Thread-likely, without a name.
+- **What stays hidden.** The contents are encrypted with the network key: no addresses of devices behind a router, no Matter traffic, no names beyond the beacon. Remote sensors report Thread networks too.
+
+On the stick used for testing, 4.5 minutes on all channels gave two Thread-likely secured frames (level 5, key mode 1) and two unsecured 6LoWPAN frames, and no beacon.
 
 **Connecting the stick:**
 

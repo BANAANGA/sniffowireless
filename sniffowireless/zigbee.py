@@ -28,7 +28,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS zigbee_networks(
   ext_pan TEXT NOT NULL, pan INTEGER NOT NULL, channel INTEGER NOT NULL, permit_join INTEGER, stack_profile INTEGER,
   update_id INTEGER, lqi INTEGER, rssi INTEGER, routers TEXT, vendor TEXT, first_seen REAL, last_seen REAL,
-  sightings INTEGER DEFAULT 0, PRIMARY KEY(ext_pan, pan, channel)) WITHOUT ROWID;
+  sightings INTEGER DEFAULT 0, protocol TEXT DEFAULT 'zigbee', name TEXT, version INTEGER, PRIMARY KEY(ext_pan, pan, channel)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_zigbee_networks_last ON zigbee_networks(last_seen);
 CREATE TABLE IF NOT EXISTS zigbee_radios(
   pan INTEGER NOT NULL, addr TEXT NOT NULL, channels INTEGER DEFAULT 0, sent INTEGER DEFAULT 0, received INTEGER DEFAULT 0,
@@ -323,6 +323,10 @@ class ZigbeeMonitor:
     def __init__(self, ctx):
         self.ctx = ctx
         ctx.store.conn.executescript(SCHEMA)
+        have = {r[1] for r in ctx.store.conn.execute("PRAGMA table_info(zigbee_networks)")}
+        for col, typ in (("protocol", "TEXT DEFAULT 'zigbee'"), ("name", "TEXT"), ("version", "INTEGER")):  # Thread networks (added after the first release)
+            if col not in have:
+                ctx.store.conn.execute(f"ALTER TABLE zigbee_networks ADD COLUMN {col} {typ}")
         ctx.store.conn.execute("UPDATE zigbee_networks SET vendor=NULL WHERE vendor IS NOT NULL")  # older versions guessed one from the extended PAN ID
         self.networks = {}
         self.radios = {}
@@ -368,14 +372,16 @@ class ZigbeeMonitor:
     def _network(self, store, o):
         key = (o["ext_pan"], o["pan"], o["channel"])
         mac = f"zb:{o['pan']:04x}"
+        thread = o.get("protocol") == "thread"
+        label = f"Thread network “{o['name']}”" if thread and o.get("name") else "Thread network" if thread else "Zigbee network"
         if key not in self.known_nets and len(self.known_nets) < 10_000:
             self.known_nets.add(key)
             store._event(o["ts"], mac, "zigbee_new_network", f"ext:{o['ext_pan']}",
-                         f"New Zigbee network: PAN 0x{o['pan']:04x} on channel {o['channel']}, extended ID {o['ext_pan']}", always=True)
+                         f"New {label}: PAN 0x{o['pan']:04x} on channel {o['channel']}, extended ID {o['ext_pan']}", always=True)
         if o.get("permit_join") and key not in self.open_nets:
             self.open_nets.add(key)
             store._event(o["ts"], mac, "zigbee_permit_join", f"ext:{o['ext_pan']}",
-                         f"Zigbee network PAN 0x{o['pan']:04x} (channel {o['channel']}) is accepting new devices", always=True)
+                         f"{label[0].upper() + label[1:]} PAN 0x{o['pan']:04x} (channel {o['channel']}) is accepting new devices", always=True)
         elif not o.get("permit_join"):
             self.open_nets.discard(key)
         n = self.networks.get(key)
@@ -388,6 +394,7 @@ class ZigbeeMonitor:
         n["rssi"] = max((v for v in (n["rssi"], o.get("rssi")) if v is not None), default=None)
         n["routers"].update(o.get("routers") or [])
         n["stack_profile"], n["update_id"], n["last"] = o.get("stack_profile"), o.get("update_id"), o["ts"]
+        n["protocol"], n["name"], n["version"] = o.get("protocol") or "zigbee", o.get("name") or None, o.get("version")
         n["vendor"] = None  # no maker is guessed from the extended PAN ID: the coordinator picks it, often at random (see _vendor)
         n["sightings"] += 1
         self.pending = True
@@ -398,6 +405,10 @@ class ZigbeeMonitor:
         for ch, frames in (o.get("channels") or {}).items():
             k = (minute, int(ch))
             self.channels[k] = self.channels.get(k, 0) + frames
+        for t in o.get("networks") or []:  # Thread networks that announced themselves in a beacon we heard
+            self._network(store, {"ts": ts, "protocol": "thread", "ext_pan": t["ext_pan"], "pan": t["pan"], "channel": t["channel"],
+                                  "permit_join": t.get("joining"), "name": t.get("name"), "version": t.get("version"),
+                                  "lqi": t.get("lqi"), "rssi": t.get("rssi"), "routers": []})
         for pan, addr, channels, sent, received, encrypted, hint, types, rssi, lqi in o.get("radios") or []:
             if len(self.seen) < 100_000:
                 self.seen.add((int(ts // SEEN_SLOT) * SEEN_SLOT, f"{pan}:{addr}"))
@@ -426,12 +437,16 @@ class ZigbeeMonitor:
                             (ext_pan, pan, channel)).fetchone()
             routers = n["routers"] | set(json.loads(row[0] or "[]") if row else [])
             c.execute(
-                "INSERT INTO zigbee_networks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ext_pan, pan, channel) DO UPDATE "
+                "INSERT INTO zigbee_networks(ext_pan, pan, channel, permit_join, stack_profile, update_id, lqi, rssi, routers, vendor, "
+                "first_seen, last_seen, sightings, protocol, name, version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(ext_pan, pan, channel) DO UPDATE "
                 "SET permit_join=excluded.permit_join, stack_profile=excluded.stack_profile, update_id=excluded.update_id, "
                 "lqi=excluded.lqi, rssi=excluded.rssi, routers=excluded.routers, vendor=COALESCE(excluded.vendor, vendor), "
-                "last_seen=excluded.last_seen, sightings=sightings+excluded.sightings",
+                "last_seen=excluded.last_seen, sightings=sightings+excluded.sightings, protocol=excluded.protocol, "
+                "name=COALESCE(excluded.name, name), version=COALESCE(excluded.version, version)",
                 (ext_pan, pan, channel, int(n["permit_join"]), n.get("stack_profile"), n.get("update_id"), n["lqi"], n["rssi"],
-                 json.dumps(sorted(routers)), n["vendor"], n["first"], n["last"], n["sightings"]))
+                 json.dumps(sorted(routers)), n["vendor"], n["first"], n["last"], n["sightings"], n.get("protocol", "zigbee"),
+                 n.get("name"), n.get("version")))
         c.executemany(
             "INSERT INTO zigbee_radios VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(pan, addr) DO UPDATE SET "
             "channels=channels|excluded.channels, sent=sent+excluded.sent, received=received+excluded.received, "
@@ -539,7 +554,7 @@ def routes(ctx):
 
     @r.get("/api/export/zigbee-networks.csv")
     def export_networks(_=Depends(current_user)):
-        cols = ["ext_pan", "pan", "channel", "permit_join", "stack_profile", "update_id", "lqi", "rssi", "vendor", "first_seen", "last_seen", "sightings"]
+        cols = ["protocol", "name", "version", "ext_pan", "pan", "channel", "permit_join", "stack_profile", "update_id", "lqi", "rssi", "first_seen", "last_seen", "sightings"]
         return csv_response("zigbee-networks.csv", cols, ctx.rows("SELECT * FROM zigbee_networks ORDER BY last_seen DESC LIMIT 10000"))
 
     @r.get("/api/zigbee")
