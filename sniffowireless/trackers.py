@@ -24,6 +24,9 @@ MIN_MATCHES = 2         # arrivals + departures that coincide
 def tracker_type(d):
     fp = (((d.get("extra") or {}).get("fp") or {}).get("ble") or {})
     uuids = set(fp.get("uuids") or [])
+    kind = (fp.get("findmy") or {}).get("kind") if isinstance(fp.get("findmy"), dict) else None
+    if kind in (1, 2, 3):
+        return {1: "AirTag", 2: "Find My accessory", 3: "AirPods (away from their owner)"}[kind]
     if 0x12 in (fp.get("apple") or []):
         return "AirTag / Find My"
     if uuids & {"feed", "feec"}:
@@ -85,8 +88,8 @@ class TrackerMonitor:
     def candidates(self, since):
         rows = self.ctx.rows(
             "SELECT d.mac, d.name, d.vendor, d.extra, d.first_seen, d.last_seen, d.room, m.known, m.label "
-            "FROM devices d LEFT JOIN device_meta m ON m.mac=d.mac WHERE d.kind='ble' AND d.dev_type='tag' "
-            "AND d.last_seen >= ?", (since,))
+            "FROM devices d LEFT JOIN device_meta m ON m.mac=d.mac WHERE d.kind='ble' AND (d.dev_type='tag' OR d.extra LIKE ?) "
+            "AND d.last_seen >= ?", ('%"findmy": {"kind": 3%', since))   # also AirPods that travel without their owner
         for r in rows:
             self.ctx.jsonf(r, "extra")
             r["tracker"] = tracker_type(r)
