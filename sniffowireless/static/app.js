@@ -927,7 +927,7 @@ async function viewDevice(mac, params) {
       <div class="crumbs"><a href="#/devices">Devices</a> / <a href="#/devices?kind=${enc(d.kind)}">${esc(m.label)}</a></div>
       <h1>${esc(title)}</h1><div class="sub mono">${esc(d.mac)}${d.randomized ? ' · randomized address' : ''}</div></div>
       <div class="row">${d.kind === 'ble' && isAdmin() ? `<button class="btn" id="read-bt-version" type="button" ${d.now - d.last_seen > 120 ? 'disabled' : ''} title="${d.now - d.last_seen > 120 ? 'Only for a device heard in the last two minutes' : 'Connects to the device for a few seconds to read its exact Bluetooth version. This transmits.'}">Read exact version…</button>` : ''}
-        ${d.kind === 'ble' ? `<button class="btn" id="play-sound" type="button" title="Connects and asks the device to play its find-me sound. Doesn't work on genuine Apple AirTags — see the button for why.">Play sound</button>` : ''}
+        ${d.kind === 'ble' && isAdmin() ? `<button class="btn" id="play-sound" type="button" title="Connects and asks the device to play its find-me sound. Doesn't work on genuine Apple AirTags — see the button for why.">Play sound</button>` : ''}
         ${seg('range', [[1, '1h'], [6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], range)}</div></div>
     <div class="grid cols-3">
       <section class="panel span-3"><div class="body"><div class="kv">${facts.map(([k, v]) => `<div><span${lblAttr(k)}>${k}</span><b>${v}</b></div>`).join('')}</div></div></section>

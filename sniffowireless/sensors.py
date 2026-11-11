@@ -235,6 +235,13 @@ class LocationTracker:
 IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "svg": "image/svg+xml"}
 
 
+def floorplan_file(fp):
+    """The stored floor plan file name, only if it is one we wrote. The setting can come from a restored configuration
+    backup, which could hold any path (e.g. ../../etc/shadow): never serve or delete anything else."""
+    name = (fp or {}).get("image")
+    return name if isinstance(name, str) and re.fullmatch(r"floorplan\.(png|jpg|webp|svg)", name) else None
+
+
 def image_type(data):
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "png"
@@ -425,10 +432,10 @@ def routes(ctx):
 
     @r.delete("/api/floorplan")
     def delete_floorplan(_=Depends(require_admin)):
-        fp = ctx.settings.get("floorplan")
-        if fp.get("image"):
+        name = floorplan_file(ctx.settings.get("floorplan"))
+        if name:
             try:
-                os.remove(os.path.join(data_dir, fp["image"]))
+                os.remove(os.path.join(data_dir, name))
             except OSError:
                 pass
         ctx.settings.set("floorplan", {"image": None, "width": None, "height": None})
@@ -436,11 +443,11 @@ def routes(ctx):
 
     @r.get("/api/floorplan/image")
     def floorplan_image(_=Depends(current_user)):
-        fp = ctx.settings.get("floorplan")
-        path = os.path.join(data_dir, fp["image"]) if fp.get("image") else None
+        name = floorplan_file(ctx.settings.get("floorplan"))
+        path = os.path.join(data_dir, name) if name else None
         if not path or not os.path.exists(path):
             raise HTTPException(404)
-        return FileResponse(path, media_type=IMAGE_TYPES[fp["image"].rsplit(".", 1)[-1]],
+        return FileResponse(path, media_type=IMAGE_TYPES[name.rsplit(".", 1)[-1]],
                             headers={"Cache-Control": "no-cache"})
 
     @r.get("/api/map")
