@@ -460,6 +460,12 @@ async function viewOverview(params) {
         <section class="panel"><header><h2>Sensors</h2><span id="sensors-health"></span></header><div class="body flush" id="sensors"></div></section>
         <section class="panel" id="sensor-sys-panel" hidden><header><h2>Sensor load</h2><span class="faint small-text">remote sensors</span></header><div class="body" id="sensor-systems"></div></section>
       </div>
+      <section class="panel" id="ov-bt" ${modOn('bluetooth') ? '' : 'hidden'}><header><h2>Bluetooth</h2><span class="faint small-text">devices per period, by address type</span></header>
+        <div class="body"><div class="legend" id="bt-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="bt-chart"></canvas></div></div></section>
+      <section class="panel" id="ov-zbg" ${modOn('zigbee') ? '' : 'hidden'}><header><h2>Zigbee, Thread &amp; 802.15.4</h2><span class="faint small-text">radios per period, by protocol</span></header>
+        <div class="body"><div class="legend" id="zb-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="zb-chart"></canvas></div></div></section>
+      <section class="panel" id="ov-lorag" ${modOn('lora') ? '' : 'hidden'}><header><h2>LoRa</h2><span class="faint small-text">nodes per period, by protocol</span></header>
+        <div class="body"><div class="legend" id="lora-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="lora-chart"></canvas></div></div></section>
       <section class="panel span-3">
         <header><h2>Interface activity</h2><span class="faint small-text">Packets/sec per capturing interface, live over the last ${Math.round(IFACE_HIST_MAX * 10 / 60)} minutes</span></header>
         <div class="body"><div class="legend" id="iface-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="iface-chart"></canvas></div></div>
@@ -638,7 +644,36 @@ async function viewOverview(params) {
       },
     });
   }
+  // Bluetooth (random against static addresses), Zigbee / Thread / other 802.15.4 and LoRa each get a graph of their own.
+  async function loadRadios() {
+    if (!modOn('bluetooth') && !modOn('zigbee') && !modOn('lora')) return;
+    const t = await api(`/api/timeline/radios?hours=${hours}`);
+    if (!document.getElementById('bt-chart')) return;  // left the page meanwhile
+    const span = hours * 3600, xy = arr => t.t.map((x, i) => ({ x, y: (arr || [])[i] || 0 }));
+    const avg = arr => (arr && arr.length) ? Math.round(arr.reduce((a, v) => a + (v || 0), 0) / arr.length) : 0;
+    const sw = (c, label) => `<span><span class="swatch" style="background:${c}"></span>${label}</span>`;
+    const draw = (id, legendId, defs) => {
+      const live = defs.filter(([, arr]) => arr && arr.some(v => v));
+      const shown = live.length ? live : defs.slice(0, 1);
+      document.getElementById(legendId).innerHTML = shown.map(([label, arr, color]) => sw(color, `${label} · avg ${num(avg(arr))}`)).join('');
+      chart(document.getElementById(id), { type: 'line', options: {
+        maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        scales: { x: { ...timeScale(span), min: t.t[0], max: t.t[t.t.length - 1], ticks: { ...timeScale(span).ticks, maxTicksLimit: 4 } }, y: yScale({}) },
+        plugins: { tooltip: { callbacks: { title: i => dt(i[0].parsed.x) } } } },
+        data: { datasets: shown.map(([label, arr, color]) => ({ label, data: xy(arr), borderColor: color, fill: false, borderWidth: 1.5, pointRadius: 0, tension: .3 })) } });
+    };
+    if (modOn('bluetooth')) draw('bt-chart', 'bt-legend', [['Random addresses', t.bluetooth.ble_random, KINDS.ble.color],
+      ['Static addresses', t.bluetooth.ble_static, '#4cc2ff'], ['Classic', t.bluetooth.classic, KINDS.bt_classic.color]]);
+    if (modOn('zigbee')) draw('zb-chart', 'zb-legend', [['Zigbee', t.zigbee.zigbee, EXTRA_KINDS.zigbee.color],
+      ['Thread', t.zigbee.thread, '#4cc2ff'], ['Other 802.15.4', t.zigbee.other, '#8b95a5']]);
+    if (modOn('lora')) {
+      const colors = typeof LORA_COLORS !== 'undefined' ? LORA_COLORS : {};
+      const names = Object.keys(t.lora).sort();
+      draw('lora-chart', 'lora-legend', names.length ? names.map(n => [n, t.lora[n], colors[n] || EXTRA_KINDS.lora.color]) : [['No nodes heard', [], EXTRA_KINDS.lora.color]]);
+    }
+  }
   async function loadTimeline() {
+    loadRadios();
     const t = await api(`/api/timeline?hours=${hours}`);
     const span = hours * 3600;
     const box = document.getElementById('tl-box');
