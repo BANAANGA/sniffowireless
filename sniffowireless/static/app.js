@@ -890,6 +890,8 @@ async function viewDevice(mac, params) {
     ex.phy ? ['Radio (PHY)', esc(ex.phy) + (ex.phy === 'Coded' ? ' <span class="faint">(long range)</span>' : '')] : null,
     ex.auracast ? ['LE Audio broadcast', esc([ex.auracast.name, ex.auracast.id ? 'ID ' + ex.auracast.id : '', ex.auracast.encrypted ? 'encrypted' : 'open', ex.auracast.quality ? ex.auracast.quality + ' quality' : ''].filter(Boolean).join(' · '))] : null,
     ex.esl ? ['Electronic shelf label', 'yes'] : null,
+    ex.matter ? ['Matter commissioning', `${ex.matter.vendor != null ? 'vendor ID 0x' + ex.matter.vendor.toString(16).padStart(4, '0') : ''} ${ex.matter.product != null ? 'product ID 0x' + ex.matter.product.toString(16).padStart(4, '0') : ''} <span class="faint">· discriminator ${ex.matter.discriminator} (a Matter device waiting to be set up)</span>`] : null,
+    ((ex.fp || {}).lan || {}).mdns && ex.fp.lan.mdns.meshcop ? ['Thread border router', `${esc(ex.fp.lan.mdns.meshcop.nn || 'Thread network')} <span class="mono faint">${esc(ex.fp.lan.mdns.meshcop.xp)}</span> <a class="faint" href="#/zigbee">networks →</a>`] : null,
     ex.encrypted_ad ? ['Encrypted advertising data', 'yes <span class="faint">(Bluetooth 5.4)</span>'] : null,
     ex.uuids && ex.uuids.length ? ['Services', btServiceTags(ex.uuids)] : null,
     ['Signal (last / best)', `${rssiBars(d.last_rssi)} <span class="faint">/ ${d.best_rssi ?? '—'}</span>`],

@@ -283,6 +283,7 @@ MDNS_SERVICES = {  # service -> (label, type, brand, os, confidence)
     "_hue._tcp": ("Philips Hue bridge", "smart_home", "Philips Hue", None, 85),
     "_amzn-wplay._tcp": ("Amazon Fire TV", "streaming", "Amazon", "Fire OS", 75),
     "_androidtvremote2._tcp": ("Android TV remote", "tv", None, "Android TV", 75),
+    "_meshcop._udp": ("Thread border router", "router", None, None, 80),
     "_matter._tcp": ("Matter", "smart_home", None, None, 60), "_matterc._udp": ("Matter", "smart_home", None, None, 55),
     "_esphomelib._tcp": ("ESPHome", "iot", "Espressif", None, 85), "_home-assistant._tcp": ("Home Assistant", "server", None, "Home Assistant OS", 80),
     "_workstation._tcp": ("Linux workstation (Avahi)", "computer", None, "Linux", 50), "_ssh._tcp": ("SSH", "computer", None, None, 25),
@@ -344,6 +345,11 @@ def lan_evidence(ev, lfp, years):
             ev.add("brand", brand, conf, src)
             ev.add("os", os_, conf, src)
             ev.add("feature", label, 70, src)
+    mc = mdns.get("meshcop") or {}   # a Thread border router names its maker and model itself
+    if mc.get("vn"):
+        ev.add("brand", mc["vn"], 85, "Thread border router announcement (meshcop)")
+    if mc.get("mn"):
+        ev.add("model", mc["mn"], 85, "Thread border router announcement (meshcop)")
     txt = mdns.get("txt") or {}
     model = txt.get("model") or txt.get("am")
     if model:
@@ -860,6 +866,9 @@ def identify(dev):
         ev.add("type", {"audio/video": "media", "computer": "computer", "phone": "phone",
                         "wearable": "wearable"}.get(extra["class"]), 55, f"Bluetooth device class “{extra['class']}”")
 
+    if extra.get("matter"):
+        ev.add("type", "smart_home", 70, "Matter commissioning advertisement (Bluetooth)")
+        ev.add("feature", "Matter device waiting to be set up", 70, "Matter commissioning advertisement (Bluetooth)")
     # --- learned from the network: the same Wi-Fi capability pattern as devices whose OS is known
     if kind == "wifi_client" and _learner["fn"]:
         sig = ossig.wifi_signature(dev)

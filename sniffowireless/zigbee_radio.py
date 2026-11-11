@@ -725,6 +725,51 @@ def parse_mac(data):
     return MacFrame(type_, secured, sequence, dst_pan, dst, src_pan, src, bytes(data[at:]), sec_level, key_mode)
 
 
+ROLE_POLLS, ROLE_PARENT, ROLE_RELAYS, ROLE_BEACONS, ROLE_ROUTER_BROADCAST = 1, 2, 4, 8, 16
+ROUTER_MASK = ROLE_PARENT | ROLE_RELAYS | ROLE_BEACONS | ROLE_ROUTER_BROADCAST
+ROLE_LABELS = ((ROLE_POLLS, "polls a parent"), (ROLE_PARENT, "answers polls"), (ROLE_RELAYS, "relays frames of others"),
+               (ROLE_BEACONS, "sends beacons"), (ROLE_ROUTER_BROADCAST, "broadcasts to all routers"))
+
+
+def role_of(roles):
+    """What the observed behaviour says a radio is: "router" (relays, beacons, answers polls or broadcasts to routers),
+    "end device" (only polls a parent: a sleepy device), or None. A router does not poll, so any router behaviour wins."""
+    if not roles:
+        return None
+    if roles & ROUTER_MASK:
+        return "router"
+    return "end device" if roles & ROLE_POLLS else None
+
+
+def parse_nwk(p):
+    """The Zigbee network header (it is not encrypted; the payload after it is): {"type", "dst", "src", "radius", "eui", "dst_eui", "src_eui"}
+    or None. eui is the sender's 64-bit address when the security header (which carries it in the clear) is present."""
+    if len(p) < 8 or p[0] & 3 > 1 or (p[0] >> 2) & 15 != 2:
+        return None
+    fc = p[0] | p[1] << 8
+    dst, src, radius = p[2] | p[3] << 8, p[4] | p[5] << 8, p[6]
+    at = 8   # frame control, destination, source, radius, sequence
+    dst_eui = src_eui = eui = None
+    if fc & 0x0800:   # destination IEEE address present
+        if at + 8 > len(p):
+            return None
+        dst_eui, at = eui64(p[at:at + 8]), at + 8
+    if fc & 0x1000:   # source IEEE address present
+        if at + 8 > len(p):
+            return None
+        src_eui, at = eui64(p[at:at + 8]), at + 8
+    if fc & 0x0100:   # multicast control
+        at += 1
+    if fc & 0x0400:   # source route subframe: relay count, relay index, relay list
+        if at + 2 > len(p):
+            return None
+        at += 2 + 2 * p[at]
+    if fc & 0x0200 and at + 14 <= len(p):   # auxiliary security header: control, frame counter, extended source, key sequence
+        if p[at] & 0x20:
+            eui = eui64(p[at + 5:at + 13])
+    return {"type": "command" if p[0] & 3 else "data", "dst": dst, "src": src, "radius": radius, "eui": eui or src_eui, "dst_eui": dst_eui}
+
+
 def is_broadcast(address):
     return address is not None and address.startswith("0x") and int(address, 16) >= 0xFFFC
 
@@ -743,6 +788,7 @@ class FrameBatch:
         self.channels = {}
         self.radios = {}
         self.threads = {}   # (pan, extended PAN ID, channel) -> a Thread network announced in a beacon
+        self.detail = {}    # (pan, address) -> {"roles": bit mask, "eui": 64-bit address learned from the network header}
         self.frames = self.undecoded = 0
 
     def add(self, captured):
@@ -759,10 +805,57 @@ class FrameBatch:
             if tb and pan is not None and len(self.threads) < self.MAX_NETWORKS:
                 self.threads[(pan, tb["ext_pan"], captured["channel"])] = {**tb, "pan": pan, "channel": captured["channel"],
                                                                          "rssi": captured["rssi"], "lqi": captured["lqi"]}
+        self._behaviour(mac)
         if mac.src:
             self._record(mac.src_pan if mac.src_pan is not None else mac.dst_pan, mac.src, mac, captured, True)
         if mac.dst and not is_broadcast(mac.dst):
             self._record(mac.dst_pan if mac.dst_pan is not None else mac.src_pan, mac.dst, mac, captured, False)
+
+    def _detail(self, pan, address):
+        k = (pan if pan is not None else -1, address)
+        d = self.detail.get(k)
+        if d is None and len(self.detail) < self.MAX_RADIOS:
+            d = self.detail[k] = {"roles": 0, "eui": None}
+        return d
+
+    def _behaviour(self, mac):
+        """What a radio's frames say about its role: who polls (end devices ask their parent for waiting data), who relays others' frames,
+        who sends beacons, and (Zigbee) each sender's 64-bit address from the network header. Payloads stay encrypted; this reads headers."""
+        pan = mac.src_pan if mac.src_pan is not None else mac.dst_pan
+        if mac.src is None:
+            return
+        if mac.type == "beacon":
+            d = self._detail(pan, mac.src)
+            if d:
+                d["roles"] |= ROLE_BEACONS
+        elif mac.type == "command" and mac.payload:
+            # the data request is command 4; with Thread's encryption the identifier is hidden, but such a frame is then 5 bytes (1 + 4 byte MIC)
+            poll = (not mac.secured and mac.payload[0] == 4) or (mac.secured and mac.sec_level == 5 and len(mac.payload) == 5 and mac.hint == HINT_THREAD)
+            if poll:
+                d = self._detail(pan, mac.src)
+                if d:
+                    d["roles"] |= ROLE_POLLS
+                if mac.dst and not is_broadcast(mac.dst):
+                    d = self._detail(pan, mac.dst)
+                    if d:
+                        d["roles"] |= ROLE_PARENT
+        elif mac.type == "data" and mac.hint == HINT_ZIGBEE:
+            n = parse_nwk(mac.payload)
+            if not n:
+                return
+            origin = f"0x{n['src']:04x}"
+            if mac.src != origin and mac.src.startswith("0x"):   # the last hop is not the originator: it forwards, so it is a router
+                d = self._detail(pan, mac.src)
+                if d:
+                    d["roles"] |= ROLE_RELAYS
+            if n["dst"] == 0xFFFC:
+                d = self._detail(pan, origin)
+                if d:
+                    d["roles"] |= ROLE_ROUTER_BROADCAST
+            if n["eui"] and not int(n["eui"][:2], 16) & 1:
+                d = self._detail(pan, origin)
+                if d:
+                    d["eui"] = n["eui"]
 
     def _record(self, pan, address, mac, captured, sent):
         key = (pan if pan is not None else -1, address)
@@ -793,5 +886,8 @@ class FrameBatch:
                          r["rssi"], r["lqi"]] for (pan, addr), r in self.radios.items()]}
         if self.threads:
             o["networks"] = list(self.threads.values())
+        detail = [[pan, addr, d["roles"], d["eui"]] for (pan, addr), d in self.detail.items() if d["roles"] or d["eui"]]
+        if detail:
+            o["detail"] = detail
         self.clear()
         return o

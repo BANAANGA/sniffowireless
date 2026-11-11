@@ -37,6 +37,7 @@ LE_FEATURES = {8: "2M PHY", 11: "Coded PHY", 12: "Ext. adv", 13: "Periodic adv",
 PHY_NAMES = {1: "1M", 2: "2M", 3: "Coded"}
 # Service UUIDs of LE Audio broadcasts (Auracast): Public Broadcast Announcement and Broadcast Audio Announcement.
 UUID_PBA, UUID_BAA = 0x1856, 0x1852
+UUID_MATTER = 0xFFF6   # Matter commissioning service (Connectivity Standards Alliance)
 
 # Reading a device's version by connecting to it (btprobe.py, on request only): limits per adapter, and the addresses being asked
 # right now, so the passive scan does not record those connections as the sensor's own Bluetooth links.
@@ -129,6 +130,8 @@ def parse_ad(data):
             uuids.append(f"{u:04x}")
             if u == UUID_PBA and len(v) >= 3:  # Public Broadcast Announcement: bit 0 encrypted, bit 1 standard / bit 2 high quality audio
                 out["auracast"] = {"encrypted": bool(v[2] & 1), "quality": "high" if v[2] & 4 else "standard" if v[2] & 2 else None}
+            elif u == UUID_MATTER and len(v) >= 9 and v[2] == 0:   # Matter commissionable device: opcode 0, discriminator + version, vendor ID, product ID
+                out["matter"] = {"discriminator": (v[3] | v[4] << 8) & 0x0FFF, "vendor": v[5] | v[6] << 8, "product": v[7] | v[8] << 8}
             elif u == UUID_BAA and len(v) >= 5:  # Broadcast Audio Announcement: the 3-byte Broadcast_ID
                 out["broadcast_id"] = bytes(v[2:5][::-1]).hex()
         elif t == 0x30 and v:  # Broadcast_Name (LE Audio / Auracast)
@@ -577,7 +580,7 @@ class BluetoothSensor:
                           "ext_adv": True if ev.get("ext") else None,
                           "auracast": {k: v for k, v in broadcast.items() if v is not None} or None,
                           "esl": True if ad.get("esl") else None, "encrypted_ad": True if ad.get("encrypted_ad") else None,
-                          "flags": ad.get("flags"), "conn_interval": ad.get("conn_interval"), "ibeacon": ad.get("ibeacon"),
+                          "matter": ad.get("matter"), "flags": ad.get("flags"), "conn_interval": ad.get("conn_interval"), "ibeacon": ad.get("ibeacon"),
                           "adv_interval": est},
                 "fp": {"ble": fp} if fp else None,
             })
