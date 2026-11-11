@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from . import adapters, status
 from .auth import current_user, require_admin
-from .zigbee_radio import ALL_CHANNELS, HINTS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect
+from .zigbee_radio import ALL_CHANNELS, HINTS, ROLE_LABELS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect, role_of
 
 from .modules import cutoff_for
 from .radiowatch import watch_map
@@ -327,6 +327,10 @@ class ZigbeeMonitor:
         for col, typ in (("protocol", "TEXT DEFAULT 'zigbee'"), ("name", "TEXT"), ("version", "INTEGER")):  # Thread networks (added after the first release)
             if col not in have:
                 ctx.store.conn.execute(f"ALTER TABLE zigbee_networks ADD COLUMN {col} {typ}")
+        have = {r[1] for r in ctx.store.conn.execute("PRAGMA table_info(zigbee_radios)")}
+        for col, typ in (("roles", "INTEGER DEFAULT 0"), ("eui", "TEXT")):   # behaviour seen in the radio's frames, 64-bit address from the network header
+            if col not in have:
+                ctx.store.conn.execute(f"ALTER TABLE zigbee_radios ADD COLUMN {col} {typ}")
         ctx.store.conn.execute("UPDATE zigbee_networks SET vendor=NULL WHERE vendor IS NOT NULL")  # older versions guessed one from the extended PAN ID
         self.networks = {}
         self.radios = {}
@@ -416,7 +420,8 @@ class ZigbeeMonitor:
             if r is None:
                 self.radios[(pan, addr)] = {
                     "channels": channels, "sent": sent, "received": received, "encrypted": encrypted, "hint": hint,
-                    "types": types, "rssi": rssi, "lqi": lqi, "vendor": self._vendor(store, addr), "first": ts, "last": ts}
+                    "types": types, "rssi": rssi, "lqi": lqi, "vendor": self._vendor(store, addr), "first": ts, "last": ts,
+                    "roles": 0, "eui": None}
                 continue
             r["channels"] |= channels
             r["types"] |= types
@@ -427,6 +432,15 @@ class ZigbeeMonitor:
             r["last"] = ts
             if rssi is not None:
                 r["rssi"], r["lqi"] = rssi, lqi
+        for pan, addr, roles, eui in o.get("detail") or []:
+            r = self.radios.get((pan, addr))
+            if r is None:
+                continue
+            r["roles"] |= roles
+            if eui:
+                r["eui"] = eui
+                if r["vendor"] is None:   # a short address has no maker; the 64-bit address the radio announced in its network header does
+                    r["vendor"] = self._vendor(store, eui)
         self.pending = True
 
     def flush(self, store, c):
@@ -448,13 +462,14 @@ class ZigbeeMonitor:
                  json.dumps(sorted(routers)), n["vendor"], n["first"], n["last"], n["sightings"], n.get("protocol", "zigbee"),
                  n.get("name"), n.get("version")))
         c.executemany(
-            "INSERT INTO zigbee_radios VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(pan, addr) DO UPDATE SET "
+            "INSERT INTO zigbee_radios(pan, addr, channels, sent, received, encrypted, hint, types, rssi, lqi, vendor, first_seen, last_seen, roles, eui) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(pan, addr) DO UPDATE SET roles=roles|excluded.roles, eui=COALESCE(excluded.eui, eui), "
             "channels=channels|excluded.channels, sent=sent+excluded.sent, received=received+excluded.received, "
             "encrypted=encrypted+excluded.encrypted, hint=MAX(hint, excluded.hint), types=types|excluded.types, "
             "rssi=COALESCE(excluded.rssi, rssi), lqi=COALESCE(excluded.lqi, lqi), "
             "vendor=COALESCE(excluded.vendor, vendor), last_seen=excluded.last_seen",
             [(pan, addr, r["channels"], r["sent"], r["received"], r["encrypted"], r["hint"], r["types"], r["rssi"], r["lqi"],
-              r["vendor"], r["first"], r["last"]) for (pan, addr), r in self.radios.items()])
+              r["vendor"], r["first"], r["last"], r["roles"], r["eui"]) for (pan, addr), r in self.radios.items()])
         c.executemany("INSERT INTO zigbee_channels VALUES(?,?,?) ON CONFLICT(minute, channel) DO UPDATE SET "
                       "frames=frames+excluded.frames", [(m, ch, n) for (m, ch), n in self.channels.items()])
         c.executemany("INSERT OR REPLACE INTO zigbee_energy VALUES(?,?,?)",
@@ -549,7 +564,7 @@ def routes(ctx):
 
     @r.get("/api/export/zigbee-radios.csv")
     def export_radios(_=Depends(current_user)):
-        cols = ["pan", "addr", "channels", "sent", "received", "encrypted", "hint", "types", "rssi", "lqi", "vendor", "first_seen", "last_seen"]
+        cols = ["pan", "addr", "channels", "sent", "received", "encrypted", "hint", "types", "rssi", "lqi", "vendor", "first_seen", "last_seen", "roles", "eui"]
         return csv_response("zigbee-radios.csv", cols, ctx.rows("SELECT * FROM zigbee_radios ORDER BY last_seen DESC LIMIT 100000"))
 
     @r.get("/api/export/zigbee-networks.csv")
@@ -563,9 +578,23 @@ def routes(ctx):
         since = now - hours * 3600
         networks = ctx.rows("SELECT * FROM zigbee_networks WHERE last_seen >= ? ORDER BY last_seen DESC, lqi DESC LIMIT 200",
                             (since,))
+        # Thread border routers (a LAN device that announces the network in mDNS) name their network exactly: extended PAN ID, name, maker, model
+        border = {}
+        for b in ctx.rows("SELECT mac, name, ip, json_extract(extra, '$.fp.lan.mdns.meshcop') mc FROM devices WHERE kind NOT IN ('ble', 'bt_classic') "
+                          "AND extra LIKE '%meshcop%' LIMIT 500"):
+            try:
+                mc = json.loads(b["mc"] or "null") or {}
+            except ValueError:
+                continue
+            if mc.get("xp"):
+                border.setdefault(mc["xp"], []).append({"mac": b["mac"], "name": b["name"], "ip": b["ip"], "maker": mc.get("vn"), "model": mc.get("mn"),
+                                                        "network": mc.get("nn"), "version": mc.get("tv")})
         for n in networks:
             n["routers"] = json.loads(n["routers"] or "[]")
             n["permit_join"] = bool(n["permit_join"])
+            n["border_routers"] = border.get(n["ext_pan"], [])
+            if not n.get("name") and n["border_routers"]:
+                n["name"] = next((b["network"] for b in n["border_routers"] if b["network"]), None)
         radios = ctx.rows("SELECT * FROM zigbee_radios WHERE last_seen >= ? ORDER BY sent+received DESC LIMIT 500", (since,))
         watched = watch_map(ctx, "zigbee")
         for d in radios:
@@ -576,6 +605,8 @@ def routes(ctx):
             d["types"] = [name for i, name in enumerate(TYPE_NAMES) if d["types"] >> i & 1]
             d["hint"] = HINTS[d["hint"]] if 0 <= d["hint"] < len(HINTS) else "unknown"
             d["hint_label"] = HINT_LABELS[d["hint"]]
+            d["role"] = role_of(d["roles"] or 0)
+            d["behaviour"] = [label for bit, label in ROLE_LABELS if (d["roles"] or 0) & bit]
         frames = {x["channel"]: x["frames"] for x in ctx.rows(
             "SELECT channel, SUM(frames) frames FROM zigbee_channels WHERE minute >= ? GROUP BY channel", (since,))}
         energy = {x["channel"]: x for x in ctx.rows(

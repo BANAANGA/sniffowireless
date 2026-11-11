@@ -45,6 +45,8 @@ const LABEL_HELP = {
   'Beacon fingerprint': 'A short code for how this access point builds its beacons (order of the information elements, capability bits, interval). The same model and firmware produce the same code, so it identifies the model without reading any name.',
   'Clock drift': 'How fast or slow the access point\'s beacon timer runs, in parts per million. Every timer has its own value; two timers alternating under one address means a second access point is using the address (an evil twin).',
   'Scan behaviour': 'How the device searches for networks: probe requests come in bursts. The size of a burst, the spacing inside it and the pause between bursts depend on the Wi-Fi driver and the operating system, and stay the same when the MAC address changes. Used as a weak hint for the operating system.',
+  'Thread border router': 'A device on your network that connects a Thread network (smart-home devices such as Matter sensors) to your LAN. It announces the network name and extended PAN ID itself, which is how a Thread network seen on the radio can be matched to it.',
+  'Matter commissioning': 'A new Matter smart-home device waiting to be set up announces itself over Bluetooth. The vendor and product IDs are the manufacturer\'s own numbers in the Matter registry; the discriminator tells devices apart while being set up.',
   'Advertising interval': 'How often the device sends its advertisement, estimated from how often it was heard.',
   'Preferred connection interval': 'The connection timing the device asks for when someone connects to it.',
   'Services': 'The Bluetooth services the device announces. Hover a number for what it is.',

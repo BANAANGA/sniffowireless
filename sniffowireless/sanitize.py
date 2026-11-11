@@ -176,7 +176,17 @@ def _zigbee_observation(o, t, ts):
                    "native": bool(it.get("native")), "rssi": clean_num(it.get("rssi"), -127, 20, True),
                    "lqi": clean_num(it.get("lqi"), 0, 255, True)}
             networks.append({k: v for k, v in net.items() if v is not None})
+        detail = []   # roles seen in the radios' frames and 64-bit addresses learned from Zigbee network headers
+        for it in (o.get("detail") or [])[:5000] if isinstance(o.get("detail"), list) else []:
+            if not isinstance(it, (list, tuple)) or len(it) != 4:
+                continue
+            pan, addr, roles = clean_num(it[0], -1, 0xFFFF, True), _zb_address(it[1]), clean_num(it[2], 0, 31, True)
+            eui = it[3] if isinstance(it[3], str) and ZB_EUI64.fullmatch(it[3]) else None
+            if None not in (pan, addr, roles):
+                detail.append([pan, addr, roles, eui])
         r.update(channels=channels, radios=radios)
+        if detail:
+            r["detail"] = detail
         if networks:
             r["networks"] = networks
     return {k: v for k, v in r.items() if v is not None}

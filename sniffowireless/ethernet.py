@@ -72,6 +72,30 @@ def _txt(rdata):
     return out
 
 
+def _txt_raw(rdata):
+    """mDNS TXT rdata -> {key: raw bytes}, for values that are binary (the Thread extended PAN ID)."""
+    out = {}
+    for it in rdata if isinstance(rdata, (list, tuple)) else [rdata]:
+        b = it if isinstance(it, bytes) else str(it).encode("utf-8", "replace")
+        k, sep, v = b.partition(b"=")
+        if sep and k:
+            out[k.decode("ascii", "replace").lower()] = v
+    return out
+
+
+def meshcop(raw):
+    """What a Thread border router announces about its network in `_meshcop._udp` TXT records (Thread spec, MeshCoP service):
+    nn network name, xp extended PAN ID (8 bytes), vn vendor name, mn model name, tv Thread version. Empty if there is no valid extended PAN ID."""
+    xp = raw.get("xp")
+    if not xp or len(xp) != 8:
+        return {}
+
+    def text(k, n):
+        return "".join(ch for ch in raw.get(k, b"").decode("utf-8", "replace") if ch.isprintable()).strip()[:n] or None
+    out = {"xp": ":".join(f"{b:02x}" for b in xp), "nn": text("nn", 16), "vn": text("vn", 32), "mn": text("mn", 32), "tv": text("tv", 12)}
+    return {k: v for k, v in out.items() if v}
+
+
 def _name(v):
     s = v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
     return s.rstrip(".")
@@ -228,7 +252,7 @@ class FrameParser:
     def _mdns(self, d, src, ip, ts, out):
         if not d.qr:
             return
-        services, names, txt, friendly = set(), set(), {}, None
+        services, names, txt, friendly, raw = set(), set(), {}, None, {}
         rrs = []
         for sect, cnt in (("an", d.ancount), ("ar", d.arcount)):
             lst = getattr(d, sect)
@@ -252,11 +276,17 @@ class FrameParser:
                 names.add(rname.replace(".local", ""))
             elif rr.type == 16:
                 txt.update(_txt(rr.rdata))
+                if rname.endswith("_meshcop._udp.local"):
+                    raw.update(_txt_raw(rr.rdata))
         if not (services or names or txt):
             return
         fp = {"mdns": {"services": sorted(services)[:20], "txt": {k: v for k, v in txt.items()
                                                                  if k in ("model", "md", "ty", "am", "fn", "usb_mfg",
                                                                           "usb_mdl", "manufacturer", "product")}}}
+        if raw:
+            mc = meshcop(raw)
+            if mc:
+                fp["mdns"]["meshcop"] = mc
         host = next((n for n in sorted(names) if n and not n[0].isdigit()), None)
         out.append({"t": "lan", "ts": ts, "mac": src, "ip": ip, "src": "mdns",
                     "name": txt.get("fn") or host or friendly, "fp": {"lan": fp}})

@@ -298,6 +298,9 @@ DESTS = {  # name -> (ip, dns name, port, proto, KB in per active minute, KB out
     "psn": ("23.32.165.1", "np.playstation.net", 443, 6, 3000, 200), "dns": ("9.9.9.9", "dns.quad9.net", 53, 17, 3, 2),
 }
 WIRED = [  # mac, ip, hostname, schedule, lan fingerprint, destinations
+    ("f4:f5:d8:00:00:07", "192.168.1.7", "nest-hub", "always", {"mdns": {"services": ["_meshcop._udp"], "txt": {},
+                                                                         "meshcop": {"xp": "dd:a1:7c:33:90:5e:12:08", "nn": "OpenThread-4e20", "vn": "Google",
+                                                                                     "mn": "Nest Hub Max", "tv": "1.3.0"}}}, ["dns"]),
     (GW, "192.168.1.1", "fritz.box", "always", {"ssdp": {"server": "FRITZ!Box 7590 UPnP/1.0 AVM FRITZ!Box 7590 154.07.57",
                                                           "nt": ["urn:schemas-upnp-org:device:InternetGatewayDevice:2"]}}, ["dns", "ntp"]),
     ("24:a4:3c:00:00:99", "192.168.1.2", None, "always", {"lldp": {"sysname": "US-8-60W", "sysdesc": "UniFi Switch US-8-60W, 6.6.55",
@@ -587,6 +590,10 @@ class DemoGenerator:
                            rssi + self.rng.randint(-3, 3), max(20, min(255, (rssi + 100) * 4))])
         if radios or int(t // 60) % 10 == 0:
             o = {"t": "zb_frames", "ts": t, "mac": "-", "undecoded": 0, "channels": channels, "radios": radios}
+            heard = {r[1] for r in radios}
+            # roles seen in the frames and 64-bit addresses from the Zigbee network headers (Philips Hue, IKEA, a TI-based sensor)
+            o["detail"] = [d for d in ([0x1a62, "0x0000", 8 | 16, "00:17:88:01:0b:a2:3c:de"], [0x1a62, "0x3f21", 4, "d0:cf:5e:ff:fe:12:34:56"],
+                                       [0x1a62, "0x8a10", 1, "00:12:4b:00:2a:5c:81:07"], [0xc3d4, "0x0001", 4, None]) if d[1] in heard]
             if int(t // 60) % 10 == 0:   # a Thread router answers someone's beacon request: its network name and extended PAN ID are in the clear
                 o["networks"] = [{"ext_pan": "dd:a1:7c:33:90:5e:12:08", "pan": 0x4e20, "channel": 25, "name": "OpenThread-4e20", "version": 2,
                                   "joining": False, "native": False, "rssi": -82, "lqi": 96}]
