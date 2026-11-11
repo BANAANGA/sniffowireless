@@ -509,6 +509,15 @@ def test_overview_counts_zigbee_radios_and_lora_nodes_over_time(ctx):
     # a 6 h graph has buckets shorter than a slot: each takes the value of the slot it lies in
     d = c.get("/api/timeline?hours=6").json()
     assert d["bucket"] < 300 and max(d["series"]["zigbee"]) == 3 and sum(1 for n in d["series"]["zigbee"] if n == 3) >= 3
+    # the overview's own graphs: Zigbee / Thread / other 802.15.4 and LoRa by protocol
+    r = c.get("/api/timeline/radios?hours=24&bucket=300").json()
+    n = len(r["t"])
+    assert all(len(v) == n for g in ("zigbee", "bluetooth") for v in r[g].values())
+    assert sum(r["zigbee"]["zigbee"]) + sum(r["zigbee"]["thread"]) + sum(r["zigbee"]["other"]) > 0
+    assert max(r["lora"]["meshtastic"]) == 2 and len(r["lora"]["meshtastic"]) == n
+    short = c.get("/api/timeline/radios?hours=6").json()
+    assert short["bucket"] < 300 and max(short["lora"]["meshtastic"]) == 2
+    assert c.get("/api/timeline/radios?hours=24&bucket=1").status_code == 400
     # pruning removes old activity
     ctx.store.prune(now + 40 * 86400)
     assert ctx.one("SELECT COUNT(*) n FROM radio_seen")["n"] == 0
@@ -691,3 +700,20 @@ def test_lora_and_zigbee_exports(ctx):
     assert read("/api/export/lora-packets.csv?hours=0.01") == []
     assert [r["addr"] for r in read("/api/export/zigbee-radios.csv")] == ["0x0001"] and [r["pan"] for r in read("/api/export/zigbee-networks.csv")] == [str(0x1A62)]
     assert c.get("/api/export/lora-nodes.csv").headers["content-disposition"] == 'attachment; filename="lora-nodes.csv"'
+
+
+def test_bluetooth_graph_separates_random_from_static_addresses(ctx):
+    from fastapi.testclient import TestClient
+    from sniffowireless.auth import hash_password
+    from sniffowireless.web import create_app
+    with ctx.wdb() as c:
+        c.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('admin', ?, 'admin', 0)", (hash_password("correct-horse-battery", iterations=1000),))
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test")
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "correct-horse-battery"}).status_code == 200
+    now = time.time() - 600
+    for mac, rnd in (("c0:00:00:00:00:01", True), ("c0:00:00:00:00:02", True), ("a4:00:00:00:00:03", False)):
+        ctx.store.process({"t": "bt", "ts": now, "mac": mac, "kind": "ble", "randomized": rnd, "addr_random": rnd, "rssi": -60})
+    ctx.store.process({"t": "bt", "ts": now, "mac": "a4:00:00:00:00:04", "kind": "bt_classic", "randomized": False, "rssi": -60})
+    ctx.store.flush()
+    b = c.get("/api/timeline/radios?hours=1&bucket=300").json()["bluetooth"]
+    assert max(b["ble_random"]) == 2 and max(b["ble_static"]) == 1 and max(b["classic"]) == 1

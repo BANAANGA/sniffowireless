@@ -132,8 +132,8 @@ def create_app(ctx):
                 extra[name] = {"total": 0, "active": 0, "new_24h": 0}
         return {"kinds": kinds, "events": events, "now": now, "window": window, **extra}
 
-    @app.get("/api/timeline", dependencies=[Depends(current_user)])
-    def timeline(hours: float = 24, bucket: int = 0):
+    def timeline_grid(hours, bucket):
+        """(now, bucket seconds, first bucket start) of a timeline."""
         now = time.time()
         auto = max(60, int(hours * 3600 / 288) // 60 * 60)
         custom = bucket
@@ -142,7 +142,63 @@ def create_app(ctx):
         # counts can come from the hourly roll-up (~60x fewer rows than the per-minute samples) with identical results.
         if bucket >= 3600 or (hours >= 72 and not custom):
             bucket = -(-max(bucket, 3600) // 3600) * 3600
-        since = int((now - hours * 3600) // bucket * bucket)
+        return now, bucket, int((now - hours * 3600) // bucket * bucket)
+
+    @app.get("/api/timeline/radios", dependencies=[Depends(current_user)])
+    def timeline_radios(hours: float = 24, bucket: int = 0):
+        """Series for the overview's own graphs of Bluetooth (random against static addresses), Zigbee / Thread / other 802.15.4 and LoRa."""
+        now, bucket, since = timeline_grid(hours, bucket)
+        ts = list(range(since, int(now) + 1, bucket))
+        idx = {t: i for i, t in enumerate(ts)}
+
+        def spots(t):
+            """Indexes of the buckets that a radio heard in the 5-minute slot/bucket starting at t counts for (a slot spans several short buckets)."""
+            if bucket >= RADIO_SLOT:
+                return [idx[t]] if t in idx else []
+            return [idx[u] for u in range(int(t // bucket * bucket), int(t) + RADIO_SLOT, bucket) if u in idx]
+
+        def blank(*names):
+            return {n: [0] * len(ts) for n in names}
+        out = {"t": ts, "bucket": bucket, "bluetooth": blank("ble_random", "ble_static", "classic"),
+               "zigbee": blank("zigbee", "thread", "other"), "lora": {}}
+        source, tcol, mcol = ("presence_hours h", "h.hour", "h.mac") if bucket >= 3600 else ("samples s", "s.minute", "s.mac")
+        for r in rows(f"SELECT ({tcol} / ?) * ? AS t, d.kind, d.randomized rnd, COUNT(DISTINCT {mcol}) n FROM {source} "
+                      f"JOIN devices d ON d.mac = {mcol} WHERE {tcol} >= ? AND d.kind IN ('ble', 'bt_classic') GROUP BY t, d.kind, rnd",
+                      (bucket, bucket, since)):
+            i = idx.get(r["t"])
+            if i is not None:
+                out["bluetooth"]["classic" if r["kind"] == "bt_classic" else "ble_random" if r["rnd"] else "ble_static"][i] += r["n"]
+        try:
+            slot = RADIO_SLOT
+            # which protocol a radio belongs to: what its own frames showed, else what its network announced
+            net = {r["pan"]: r["protocol"] for r in rows("SELECT pan, protocol FROM zigbee_networks")}
+            hints = {f"{r['pan']}:{r['addr']}": r["hint"] for r in rows("SELECT pan, addr, hint FROM zigbee_radios")}
+            seen = {}
+            for r in rows("SELECT (slot / ?) * ? t, addr FROM radio_seen WHERE kind='zigbee' AND slot >= ? GROUP BY t, addr",
+                          (max(bucket, slot), max(bucket, slot), since - slot)):
+                pan = int(r["addr"].split(":", 1)[0]) if r["addr"].split(":", 1)[0].isdigit() else None
+                h = hints.get(r["addr"])
+                proto = "thread" if h == 2 or (h in (None, 0, 1) and net.get(pan) == "thread") else \
+                    "zigbee" if h == 3 or (h in (None, 0, 1) and net.get(pan) == "zigbee") else "other"
+                for i in spots(r["t"]):
+                    seen.setdefault((proto, i), set()).add(r["addr"])
+            for (proto, i), addrs in seen.items():
+                out["zigbee"][proto][i] = len(addrs)
+            protos = {}
+            for r in rows("SELECT (slot / ?) * ? t, addr FROM radio_seen WHERE kind='lora' AND slot >= ? GROUP BY t, addr",
+                          (max(bucket, slot), max(bucket, slot), since - slot)):
+                proto = r["addr"].split(":", 1)[0] or "other"
+                for i in spots(r["t"]):
+                    protos.setdefault((proto, i), set()).add(r["addr"])
+            for (proto, i), addrs in protos.items():
+                out["lora"].setdefault(proto, [0] * len(ts))[i] = len(addrs)
+        except Exception:  # radio tables not created yet
+            log.exception("radio timeline")
+        return out
+
+    @app.get("/api/timeline", dependencies=[Depends(current_user)])
+    def timeline(hours: float = 24, bucket: int = 0):
+        now, bucket, since = timeline_grid(hours, bucket)
         source = "presence_hours h" if bucket >= 3600 else "samples s"
         tcol = "h.hour" if bucket >= 3600 else "s.minute"
         mcol = "h.mac" if bucket >= 3600 else "s.mac"
