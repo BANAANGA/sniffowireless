@@ -700,19 +700,15 @@ async function viewOverview(params) {
       return;
     }
     // By band: one small chart per Wi-Fi band, each auto-scaled to its own data (a quiet 6 GHz band stays readable),
-    // plus Bluetooth & LAN (no band).
+    // (Bluetooth, Zigbee / Thread and LoRa have graphs of their own further down.)
     document.getElementById('tl-legend').innerHTML = sw(KINDS.ap.color, 'Access points') + sw(KINDS.wifi_client.color, 'Wi-Fi clients')
       + sw(TEXT, 'Connected clients', true);
-    const bands = t.bands || {}, others = ['ble', 'bt_classic', 'lan', 'zigbee', 'lora'].filter(kindOn), info = k => KINDS[k] || EXTRA_KINDS[k];
-    const names = [['bluetooth', 'Bluetooth'], ['lan', 'LAN'], ['zigbee', 'Zigbee'], ['lora', 'LoRa']].filter(([m]) => modOn(m)).map(([, n]) => n);
-    const otherTitle = names.length > 1 ? names.slice(0, -1).join(', ') + ' &amp; ' + names[names.length - 1] : names[0] || '';
+    const bands = t.bands || {};
     const now = (b, k) => { const a = (bands[b] || {})[k] || []; return a.length ? a[a.length - 1] : 0; };
     box.innerHTML = `<div class="band-grid">${BAND_PANELS.map(([b, label]) => `<div class="band-cell"><div class="band-head"><b>${label}</b>
         <span class="faint small-text">${num(now(b, 'ap'))} AP${now(b, 'ap') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).ap))})</span> · ${num(now(b, 'wifi_client'))} client${now(b, 'wifi_client') === 1 ? '' : 's'} <span class="faint">(avg ${num(avg((bands[b] || {}).wifi_client))})</span> · ${num(now(b, 'connected'))} connected <span class="faint">(avg ${num(avg((bands[b] || {}).connected))})</span></span></div>
         <div class="chart-box short"><canvas id="tl-${b.replace('.', '')}"></canvas></div></div>`).join('')}
-      ${others.length ? `<div class="band-cell"><div class="band-head"><b>${otherTitle}</b>
-        <span class="legend small-text">${others.map(k => sw(info(k).color, `${info(k).label} · avg ${num(avg(t.series[k]))}`)).join('')}</span></div>
-        <div class="chart-box short"><canvas id="tl-other"></canvas></div></div>` : ''}</div>
+</div>
       <p class="faint small-text band-note">Wi-Fi clients count on the band they were last heard on; connected clients on the band of the access point they were connected to. Averages are over the selected time range.</p>`;
     BAND_PANELS.forEach(([b]) => {
       const v = bands[b] || {};
@@ -720,8 +716,6 @@ async function viewOverview(params) {
         line('Access points', xy(v.ap), KINDS.ap.color), line('Wi-Fi clients', xy(v.wifi_client), KINDS.wifi_client.color),
         line('Connected clients', xy(v.connected), TEXT, dashed)] }, options: opts(null, true) });
     });
-    if (others.length) chart(document.getElementById('tl-other'), { type: 'line', data: { datasets: others.map(k =>
-      line(info(k).label, xy(t.series[k]), info(k).color)) }, options: opts(null, true) });
   }
 
   await Promise.all([loadSummary(), loadSensors(), loadTimeline(), loadConnected(), loadWatched(), loadDiscovered(), loadZigbeeDisc(), loadLoraDisc(), pollStatus()]);
