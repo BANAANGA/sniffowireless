@@ -438,6 +438,20 @@ const ACT_WINDOWS = [[120, '2 min'], [300, '5 min'], [600, '10 min'], [3600, '60
 const actLabel = () => (ACT_WINDOWS.find(([v]) => v === actWin) || [0, '5 min'])[1];
 const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
 
+// Stat cards in even rows: as many per row as fit (at least ~150 px each), then spread so no row is left with one or two
+// (7 cards: one row of 7 when it fits, else 4 + 3). Phones keep their two columns from the stylesheet.
+function balanceCards(el) {
+  if (!el) return;
+  const fit = () => {
+    const n = el.children.length, w = el.clientWidth;
+    if (!n || w < 560) { el.style.gridTemplateColumns = ''; return; }
+    const per = Math.max(1, Math.min(n, Math.floor((w + 16) / (150 + 16))));
+    el.style.gridTemplateColumns = `repeat(${Math.ceil(n / Math.ceil(n / per))}, minmax(0, 1fr))`;
+  };
+  fit();
+  if (!el._balanced && window.ResizeObserver) { el._balanced = new ResizeObserver(fit); el._balanced.observe(el); }
+}
+
 async function viewOverview(params) {
   // A shared link may carry the window (?window=<seconds>); it wins over the remembered choice.
   const w = +(params && params.get('window'));
@@ -450,31 +464,33 @@ async function viewOverview(params) {
         <button class="btn small ghost" id="ov-link" type="button" title="Copy a link to this view">Copy link</button>
         <span class="muted">Active = seen in last</span><select id="actwin">${ACT_WINDOWS.map(([v, l]) => `<option value="${v}" ${v === actWin ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
     <div class="grid cards-auto" id="cards"></div>
-    <div class="grid cols-3" style="margin-top:16px">
-      <section class="panel span-2">
+    <div class="grid cols-3 ov-grid" style="margin-top:16px">
+      <section class="panel span-3 ov-time">
         <header><h2>Active devices over time</h2><div class="row">${modOn('wifi') ? seg('tlview', [['band', 'By band'], ['type', 'By type']], tlView) : ''}${seg('range', [[6, '6h'], [24, '24h'], [168, '7d'], [720, '30d']], 24)}</div></header>
         <div class="body"><div class="legend" id="tl-legend" style="margin-bottom:10px"></div><div id="tl-box"></div></div>
       </section>
-      <div class="stack">
-        <section class="panel"><header><h2>System</h2><span class="faint small-text" id="sys-note"></span></header><div class="body" id="system"></div></section>
+      <div class="ov-radios" id="ov-radios">
+        <section class="panel ov-graph" id="ov-bt" ${modOn('bluetooth') ? '' : 'hidden'}><header><h2>Bluetooth</h2><span class="faint small-text">by address type</span></header>
+          <div class="body"><div class="legend" id="bt-legend"></div><div class="chart-box short"><canvas id="bt-chart"></canvas></div></div></section>
+        <section class="panel ov-graph" id="ov-zbg" ${modOn('zigbee') ? '' : 'hidden'}><header><h2 title="Zigbee, Thread and other IEEE 802.15.4">Zigbee &amp; Thread</h2><span class="faint small-text">radios by protocol</span></header>
+          <div class="body"><div class="legend" id="zb-legend"></div><div class="chart-box short"><canvas id="zb-chart"></canvas></div></div></section>
+        <section class="panel ov-graph" id="ov-lorag" ${modOn('lora') ? '' : 'hidden'}><header><h2>LoRa</h2><span class="faint small-text">nodes by protocol</span></header>
+          <div class="body"><div class="legend" id="lora-legend"></div><div class="chart-box short"><canvas id="lora-chart"></canvas></div></div></section>
+      </div>
+      <section class="panel ov-fill"><header><h2>System</h2><span class="faint small-text" id="sys-note"></span></header><div class="body" id="system"></div></section>
+      <div class="stack ov-fill-stack">
         <section class="panel"><header><h2>Sensors</h2><span id="sensors-health"></span></header><div class="body flush" id="sensors"></div></section>
         <section class="panel" id="sensor-sys-panel" hidden><header><h2>Sensor load</h2><span class="faint small-text">remote sensors</span></header><div class="body" id="sensor-systems"></div></section>
       </div>
-      <section class="panel" id="ov-bt" ${modOn('bluetooth') ? '' : 'hidden'}><header><h2>Bluetooth</h2><span class="faint small-text">devices per period, by address type</span></header>
-        <div class="body"><div class="legend" id="bt-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="bt-chart"></canvas></div></div></section>
-      <section class="panel" id="ov-zbg" ${modOn('zigbee') ? '' : 'hidden'}><header><h2>Zigbee, Thread &amp; 802.15.4</h2><span class="faint small-text">radios per period, by protocol</span></header>
-        <div class="body"><div class="legend" id="zb-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="zb-chart"></canvas></div></div></section>
-      <section class="panel" id="ov-lorag" ${modOn('lora') ? '' : 'hidden'}><header><h2>LoRa</h2><span class="faint small-text">nodes per period, by protocol</span></header>
-        <div class="body"><div class="legend" id="lora-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="lora-chart"></canvas></div></div></section>
-      <section class="panel span-3">
-        <header><h2>Interface activity</h2><span class="faint small-text">Packets/sec per capturing interface, live over the last ${Math.round(IFACE_HIST_MAX * 10 / 60)} minutes</span></header>
-        <div class="body"><div class="legend" id="iface-legend" style="margin-bottom:10px"></div><div class="chart-box short"><canvas id="iface-chart"></canvas></div></div>
+      <section class="panel ov-graph">
+        <header><h2>Interface activity</h2><span class="faint small-text" title="Packets per second per capturing interface, live over the last ${Math.round(IFACE_HIST_MAX * 10 / 60)} minutes">packets/s, last ${Math.round(IFACE_HIST_MAX * 10 / 60)} min</span></header>
+        <div class="body"><div class="legend" id="iface-legend"></div><div class="chart-box short grow"><canvas id="iface-chart"></canvas></div></div>
       </section>
       <section class="panel span-2">
         <header><h2>Connected right now</h2><a class="muted" href="#/devices?connected=1">View all →</a></header>
         <div class="body flush table-wrap" id="connected"></div>
       </section>
-      <section class="panel"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
+      <section class="panel ov-events"><header><h2>Recent events</h2><a class="muted" href="#/events">All →</a></header><div class="body flush" id="events"></div></section>
       <section class="panel span-3"><header><h2>Watched devices</h2><a class="muted" href="#/devices?watch=1">View all →</a></header>
         <div class="body flush table-wrap" id="watched"></div></section>
       <section class="panel span-3"><header><h2>Latest discovered devices</h2><a class="muted" href="#/devices?sort=first_seen&order=desc">View all →</a></header>
@@ -484,6 +500,10 @@ async function viewOverview(params) {
       <section class="panel span-3" id="ov-lora" ${modOn('lora') ? '' : 'hidden'}><header><h2>LoRa discovered</h2><a class="muted" href="#/lora">View all →</a></header>
         <div class="body flush table-wrap" id="lora-disc"></div></section>
     </div>`;
+  const radios = document.getElementById('ov-radios');
+  const shownRadios = radios.querySelectorAll('.ov-graph:not([hidden])').length;
+  radios.style.setProperty('--n', shownRadios || 1);
+  radios.hidden = !shownRadios;
   let hours = 24, lastCounts = null;
   const ifaceHist = {}, ifaceColors = {};  // name -> [{t, pps}], reset each time this page is entered
   const ifaceColor = name => ifaceColors[name] || (ifaceColors[name] = IFACE_COLORS[Object.keys(ifaceColors).length % IFACE_COLORS.length]);
@@ -529,6 +549,7 @@ async function viewOverview(params) {
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span></div></div>`);
     });
+    balanceCards(document.getElementById('cards'));
     document.querySelectorAll('#cards .card').forEach(c => c.onclick = e => { if (!e.target.closest('a')) location.hash = c.dataset.href; });
     const ev = s.events;
     document.getElementById('events').innerHTML = ev.length ? `<ul class="events">${ev.slice(0, 14).map(e => eventRow(e)).join('')}</ul>` : '<div class="empty">No events yet</div>';
@@ -540,7 +561,7 @@ async function viewOverview(params) {
       ${d.items.map(x => `<tr class="link" data-href="#/device/${enc(x.mac)}">
         <td>${kindBadge(x.kind)} <span class="mono" style="margin-left:8px">${esc(x.name || x.mac)}</span></td>
         <td class="trunc muted">${esc(x.vendor || (x.randomized ? 'Randomized MAC' : '—'))}</td>
-        <td>${x.bssid ? `${esc(x.bssid_ssid || '')} <span class="mono faint">${esc(x.bssid)}</span>` : '<span class="faint">sensor adapter</span>'}</td>
+        <td class="trunc">${x.bssid ? `${esc(x.bssid_ssid || '')}<div class="mono faint small-text">${esc(x.bssid)}</div>` : '<span class="faint">sensor adapter</span>'}</td>
         <td>${rssiBars(x.last_rssi)}</td><td class="num muted">${ago(x.last_seen)}</td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No connected clients</div>';
     linkRows(document.getElementById('connected'));

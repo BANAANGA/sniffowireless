@@ -8,7 +8,7 @@
   - DNS lookups, events, alerts, security findings and sensors
 
   Results appear as you type; use the arrow keys and Enter to open one, or press Enter for the full results page with a filter per record type.
-- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band, plus Bluetooth & LAN), *By type* shows all device types in one chart, currently connected clients with the network they're on, a **System** panel (host CPU use and load average, memory use, database size and free space on the data disk, plus sniffowireless's own CPU and memory), sensor health (packets/s, current channel, errors), and recent events. Bluetooth, Zigbee / Thread / 802.15.4 and LoRa each have a graph of their own over the same time range: Bluetooth separates devices with **random** addresses (phones and wearables that change address) from **static** ones and classic Bluetooth; the 802.15.4 graph separates **Zigbee**, **Thread** and **other** radios (by what their own frames and their network showed; a radio whose protocol cannot be told counts as other); LoRa is split by protocol (Meshtastic, MeshCore, LoRaWAN…). Every card and row links deeper.
+- **Overview:** active vs. total devices per type, active devices and connected clients over time (6 h to 30 d) — *By band* shows 2.4, 5 and 6 GHz side by side on the same scale (access points, active and connected clients per band), *By type* shows all device types in one chart, currently connected clients with the network they're on, a **System** panel (host CPU use and load average, memory use, database size and free space on the data disk, plus sniffowireless's own CPU and memory), sensor health (packets/s, current channel, errors), and recent events. Bluetooth, Zigbee / Thread / 802.15.4 and LoRa each have a graph of their own over the same time range: Bluetooth separates devices with **random** addresses (phones and wearables that change address) from **static** ones and classic Bluetooth; the 802.15.4 graph separates **Zigbee**, **Thread** and **other** radios (by what their own frames and their network showed; a radio whose protocol cannot be told counts as other); LoRa is split by protocol (Meshtastic, MeshCore, LoRaWAN…). Every card and row links deeper. The layout keeps things level: the stat cards fill even rows (all in one row when they fit, otherwise split evenly, e.g. 4 + 3), the three band graphs sit exactly above the Bluetooth, 802.15.4 and LoRa graphs, graphs in one row share their baseline, System, Sensors and Interface activity form one row, and recent events take the height of the connected-clients table next to them and scroll.
 - **Devices:** a searchable, sortable list showing what each device was identified as. Filter by radio type, device type, recency or band (2.4 / 5 / 6 GHz), and hide randomized MACs. Drill-downs add filters for brand, OS, Wi-Fi generation, age and probe fingerprint. Filter chips from drill-downs (SSID, channel, probed SSID, BSSID, vendor) can be removed individually. CSV export.
 - **Device detail** (click any device):
   - key facts, total time present, visits, average and longest visit, time connected
@@ -44,9 +44,15 @@
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
-- **Settings:**
-  - account (password), users, my networks, ignore list, sensors
-  - notification channels, weekly report, detection thresholds, API tokens
+- **Settings:** grouped in the left-hand list, each page with an icon and a one-line description at the top. *Find a setting…* filters the list by name, description and related words (e.g. *email*, *2fa*, *home assistant*); Enter opens the first match. On a phone the list becomes a drop-down.
+  - **You:** account (password, two-factor login, display on this browser)
+  - **Monitoring:** my networks, investigations, ignore list, detection thresholds
+  - **Radios & sensors:** sensors, modules, Wi-Fi channels, LoRa bands, Zigbee, LoRa flasher
+  - **Alerts & integrations:** notification channels, weekly report, MQTT, API tokens
+  - **Data & privacy:** privacy, clear data, backup
+  - **System:** users, appearance, performance, about
+
+  Viewers see account, my networks, investigations, ignore list and about; pages of hidden modules are left out.
 
 ## Tables and phones
 
