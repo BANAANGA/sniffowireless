@@ -323,6 +323,7 @@ class ZigbeeMonitor:
     def __init__(self, ctx):
         self.ctx = ctx
         ctx.store.conn.executescript(SCHEMA)
+        ctx.store.conn.execute("UPDATE zigbee_networks SET vendor=NULL WHERE vendor IS NOT NULL")  # older versions guessed one from the extended PAN ID
         self.networks = {}
         self.radios = {}
         self.channels = {}
@@ -339,7 +340,9 @@ class ZigbeeMonitor:
         self.pending = False
 
     def _vendor(self, store, address):
-        """Only a hint: many coordinators pick a random extended PAN ID, and short addresses have no vendor."""
+        """A radio's 64-bit address is an IEEE address, so its first bytes name the maker (still shown with a question mark: the label is a hint).
+        Short addresses have none, and a network's extended PAN ID is not used at all: the coordinator chooses it, many pick random bytes
+        (Zigbee2MQTT, ZHA), and no frame we hear confirms that one is derived from the maker's own address."""
         if not address or address.startswith("0x") or int(address[:2], 16) & 2:
             return None
         return store.vendors.lookup(address)
@@ -385,7 +388,7 @@ class ZigbeeMonitor:
         n["rssi"] = max((v for v in (n["rssi"], o.get("rssi")) if v is not None), default=None)
         n["routers"].update(o.get("routers") or [])
         n["stack_profile"], n["update_id"], n["last"] = o.get("stack_profile"), o.get("update_id"), o["ts"]
-        n["vendor"] = self._vendor(store, o["ext_pan"])
+        n["vendor"] = None  # no maker is guessed from the extended PAN ID: the coordinator picks it, often at random (see _vendor)
         n["sightings"] += 1
         self.pending = True
 

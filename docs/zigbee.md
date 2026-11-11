@@ -25,7 +25,7 @@ ZIGBEE_DEVICES=/dev/serial/by-id/usb-...
 - Encrypted contents stay hidden, and frames with radio errors are dropped.
 - A network scan only reaches routers and coordinators. Battery devices appear only if they transmit while the stick is on their channel, so a hopping sensor easily misses them: set `ZIGBEE_CHANNELS` to one channel to watch them.
 - A short address only means something within its PAN, and it can change if a device rejoins.
-- A vendor shown with a question mark comes from a long address or extended PAN ID, and many coordinators pick those at random.
+- A vendor shown with a question mark comes from a radio's 64-bit (IEEE) address, whose first bytes name the maker. It is a hint. A network's extended PAN ID is **not** used for this: the coordinator chooses it and many (Zigbee2MQTT, ZHA) pick random bytes, so a maker name taken from it would usually be a coincidence. (Versions before 30.5 showed one; it is cleared at the next start.)
 - This has only been run against simulated sticks so far. Real USB behaviour, and whether a given firmware includes `mfglib`, are unproven.
 
 **Connecting the stick:**
