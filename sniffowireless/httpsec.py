@@ -41,7 +41,8 @@ def body_limit(path):
 def headers_for(path, scheme_https):
     h = [(b"x-content-type-options", b"nosniff"), (b"referrer-policy", b"no-referrer"),
          (b"x-frame-options", b"DENY"), (b"cross-origin-opener-policy", b"same-origin"),
-         (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), usb=(), interest-cohort=()")]
+         (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), usb=(), interest-cohort=()"),
+         (b"cross-origin-resource-policy", b"same-origin"), (b"x-permitted-cross-domain-policies", b"none")]
     if path.startswith(("/api/floorplan/image", "/api/appearance/icon")):
         h.append((b"content-security-policy", UPLOAD_CSP.encode()))
     elif not path.startswith(DOCS_PATHS):

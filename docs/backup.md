@@ -7,7 +7,7 @@
 - **Configuration backup (JSON):** includes:
   - settings, my networks and the ignore list
   - labels, groups and alert rules
-  - notification channels (secrets only if you tick the box)
+  - notification channels (secrets only if you tick the box; the same goes for the MQTT password and the key for pseudonymised MAC addresses, and restoring a backup without them keeps this server's)
   - sensors, without their tokens: re-create those
   - users, as password hashes
 

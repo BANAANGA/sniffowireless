@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import secrets
+import threading
 import time
 from collections import defaultdict, deque
 from contextlib import closing
@@ -38,6 +39,9 @@ CREATE TABLE IF NOT EXISTS api_tokens(
 ROLES = ("admin", "viewer")
 SCOPES = ("metrics", "sensor", "read", "admin")
 SESSION_DAYS = 14
+SESSION_MAX_DAYS = 90   # a session is never extended past this, however often it is used (a stolen cookie dies)
+HASH_SLOTS = 4          # password checks at once: each costs ~0.3 s of CPU, so a flood must not starve capture
+HASH_WAIT = 5           # seconds a sign-in waits for a free slot before it is told to try again
 COOKIE = "sniffowireless_session"
 PBKDF2_ITERATIONS = 600_000
 PUBLIC_PATHS = ("/login", "/api/auth/", "/api/appearance", "/api/health", "/static/", "/vendor/", "/favicon")
@@ -84,6 +88,7 @@ class Auth:
         self.disabled = cfg.auth_disabled
         self.setup_code = None
         self.failures = defaultdict(deque)  # "ip:..." / "user:..." -> timestamps of failed logins
+        self.hashing = threading.BoundedSemaphore(HASH_SLOTS)
         with closing(self.connect()) as c:
             c.executescript(SCHEMA)
             have = {r[1] for r in c.execute("PRAGMA table_info(users)")}
@@ -158,7 +163,12 @@ class Auth:
         self.throttle(*keys)
         with closing(self.connect()) as c:
             row = c.execute("SELECT id, username, pw_hash, role, totp_secret, totp_last, recovery FROM users WHERE username=?", (username,)).fetchone()
-            ok = verify_password(password, row[2] if row else _DUMMY_HASH)
+            if not self.hashing.acquire(timeout=HASH_WAIT):
+                raise HTTPException(429, "Too many sign-ins at once; try again in a moment")
+            try:
+                ok = verify_password(password, row[2] if row else _DUMMY_HASH)
+            finally:
+                self.hashing.release()
             if not row or not ok:
                 self.failed(*keys)
                 log.warning("Failed login for %r from %s", username[:64], ip)
@@ -183,13 +193,18 @@ class Auth:
 
     def from_session(self, token):
         with closing(self.connect()) as c:
-            row = c.execute("SELECT u.id, u.username, u.role, s.expires FROM auth_sessions s JOIN users u ON "
+            row = c.execute("SELECT u.id, u.username, u.role, s.expires, s.created FROM auth_sessions s JOIN users u ON "
                             "u.id = s.user_id WHERE s.token_hash=?", (_sha(token),)).fetchone()
-            if not row or row[3] < time.time():
+            now = time.time()
+            if not row or row[3] < now:
                 return None
-            if row[3] - time.time() < (SESSION_DAYS - 1) * 86400:  # sliding expiry
+            hard_end = (row[4] or now) + SESSION_MAX_DAYS * 86400
+            if now >= hard_end:
+                c.execute("DELETE FROM auth_sessions WHERE token_hash=?", (_sha(token),))
+                return None
+            if row[3] - now < (SESSION_DAYS - 1) * 86400:  # sliding expiry, up to the hard end
                 c.execute("UPDATE auth_sessions SET expires=? WHERE token_hash=?",
-                          (time.time() + SESSION_DAYS * 86400, _sha(token)))
+                          (min(now + SESSION_DAYS * 86400, hard_end), _sha(token)))
             return User(row[0], row[1], row[2])
 
     def from_token(self, token):

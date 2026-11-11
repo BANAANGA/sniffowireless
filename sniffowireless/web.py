@@ -489,7 +489,7 @@ def create_app(ctx):
         d["now"] = time.time()
         return d
 
-    @app.post("/api/devices/{mac}/sound", dependencies=[Depends(current_user)])
+    @app.post("/api/devices/{mac}/sound", dependencies=[Depends(require_admin)])  # transmits: admins only, like bt-version
     def play_sound(mac: str):
         """Try to make a BLE tracker tag play its "find me" sound. Only works on devices that implement
         the standard Immediate Alert Service — notably not genuine Apple AirTags (see tracker_sound.py)."""

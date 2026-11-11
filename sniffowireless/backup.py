@@ -39,6 +39,9 @@ from .settings import DEFAULTS
 log = logging.getLogger("sniffowireless.backup")
 
 FORMAT = "sniffowireless-config"
+# Secrets inside settings: left out of a configuration backup made without secrets, and kept as they are on this server
+# when a backup without them is restored (the MQTT password, and the key that turns MAC addresses into pseudonyms).
+SETTING_SECRETS = {"mqtt": ("password",), "privacy": ("secret",)}
 CONFIG_TABLES = ["device_meta", "radio_watch", "groups", "alert_rules", "notifiers", "sensors"]  # settings (incl. investigate) too
 STAGED = "restore-pending.tar.gz"
 STAGED_SECTIONS = "restore-pending.json"  # which sections of the staged backup to restore; absent = everything
@@ -164,6 +167,10 @@ def export_config(ctx, include_secrets=False, include_users=True):
             out["tables"]["users"] = [dict(r) for r in c.execute(
                 "SELECT id, username, pw_hash, role, created, from_env FROM users")]
     out["settings"].get("report", {}).pop("last_sent", None)
+    if not include_secrets:
+        for key, fields in SETTING_SECRETS.items():
+            for f in fields:
+                out["settings"].get(key, {}).pop(f, None)
     out["includes_secrets"] = include_secrets
     return out
 
@@ -190,6 +197,11 @@ def import_config(ctx, data, only=None):
         try:
             for k, v in (data.get("settings") or {}).items() if only is None or "settings" in only else ():
                 if k in DEFAULTS and isinstance(v, dict):  # only known settings, bounded values
+                    keep = [f for f in SETTING_SECRETS.get(k, ()) if not v.get(f)]
+                    if keep:  # a backup made without secrets: keep this server's
+                        old = c.execute("SELECT value FROM settings WHERE key=?", (k,)).fetchone()
+                        old = json.loads(old[0]) if old else {}
+                        v = {**v, **{f: old[f] for f in keep if old.get(f)}}
                     c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)", (k, json.dumps(clean_json(v))))
             for t in CONFIG_TABLES + ["users"]:
                 if t not in tables or (only is not None and CONFIG_TABLE_SECTION.get(t) not in only):
