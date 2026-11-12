@@ -648,6 +648,10 @@ def create_app(ctx):
                       f"(p.hour - ?) / 86400 day FROM {heard[0]} p JOIN devices d ON d.mac=p.mac) GROUP BY h, kind",
                       [off, off] + heard[1])
         ndays = one(f"SELECT COUNT(DISTINCT (p.hour - ?) / 86400) n FROM {heard[0]} p", [off] + heard[1])["n"] or 1
+        # Zigbee radios and LoRa nodes are not devices: the same count from radio_seen (which radio was heard in each 5 minutes).
+        hourly += rows("SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT kind, addr, ((slot - ?) % 86400) / 3600 h, (slot - ?) / 86400 day "
+                       "FROM radio_seen WHERE slot >= ?) GROUP BY h, kind", (off, off, since))
+        ndays = max(ndays, one("SELECT COUNT(DISTINCT (slot - ?) / 86400) n FROM radio_seen WHERE slot >= ?", (off, since))["n"] or 1)
         out["hourly"] = {"days": ndays, "rows": hourly}
         # Weekly activity pattern: distinct devices per (weekday, hour), same convention as a device's own
         # "weekly pattern" heatmap (/api/devices/{mac}/heatmap) — epoch day 0 (1970-01-01) was a Thursday,

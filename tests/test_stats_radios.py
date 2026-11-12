@@ -82,3 +82,24 @@ def test_empty_database_gives_empty_breakdowns(tmp_path):
     c.post("/api/auth/login", json={"username": "view", "password": PW})
     s = c.get("/api/stats?days=1").json()
     assert s["zigbee"]["total"] == 0 and s["lora"]["total"] == 0
+
+
+def test_activity_by_hour_counts_zigbee_radios_and_lora_nodes(tmp_path):
+    status.SENSORS.clear()
+    ctx = build(Config(db_path=str(tmp_path / "h.db"), data_dir=str(tmp_path)))
+    hour = int(time.time() - 7200) // 3600 * 3600  # a whole hour, inside the last day
+    with ctx.wdb() as w:
+        w.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('view', ?, 'viewer', 0)", (hash_password(PW, iterations=1000),))
+        # one radio heard in three 5-minute slots of the same hour counts once; a second radio makes two
+        w.executemany("INSERT INTO radio_seen VALUES(?, ?, ?)", [
+            (hour, "zigbee", "1:0x0000"), (hour + 300, "zigbee", "1:0x0000"), (hour + 600, "zigbee", "1:0x0000"),
+            (hour + 300, "zigbee", "1:0x1a2b"), (hour, "lora", "meshtastic:!a1"),
+            (hour - 3 * 86400, "lora", "meshtastic:!old")])  # outside the period
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test", headers={"x-sniffowireless": "1"})
+    c.post("/api/auth/login", json={"username": "view", "password": PW})
+    h = c.get("/api/stats?days=1").json()["hourly"]
+    got = {(r["kind"], r["h"]): r["n"] for r in h["rows"]}
+    assert got == {("zigbee", hour % 86400 // 3600): 2, ("lora", hour % 86400 // 3600): 1}
+    # the local hour follows the timezone, like the devices do
+    shifted = {(r["kind"], r["h"]) for r in c.get("/api/stats?days=1&tz=-60").json()["hourly"]["rows"]}
+    assert shifted == {("zigbee", (hour + 3600) % 86400 // 3600), ("lora", (hour + 3600) % 86400 // 3600)}
