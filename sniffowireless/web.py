@@ -2,8 +2,10 @@
 import hashlib
 import json
 import logging
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -59,6 +61,8 @@ class ImmutableStatic(StaticFiles):
         return resp
 
 
+# The Statistics page reads its independent parts side by side (SQLite runs each query outside the interpreter lock).
+STATS_POOL = ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4), thread_name_prefix="stats")
 RADIO_SLOT = 300  # granularity of the Zigbee / LoRa activity kept in radio_seen
 PASSERBY_STAY = 600     # heard for this long in one go: not passing by, it's here
 PASSERBY_MIN_READINGS = 3
@@ -144,6 +148,16 @@ def create_app(ctx):
             bucket = -(-max(bucket, 3600) // 3600) * 3600
         return now, bucket, int((now - hours * 3600) // bucket * bucket)
 
+    def heard_sql(source, tcol, mcol, column, group, where=""):
+        """Distinct devices per (bucket, kind, `column`). From the per-minute samples a device has many rows in one bucket: those
+        are reduced to one row per (bucket, device) first, so the device is looked up once per bucket instead of once per sample
+        (about twice as fast). The hourly roll-up has one row per device-hour already, so there the plain form is quicker."""
+        if source.startswith("samples"):
+            return (f"SELECT x.t, d.kind, {column}, COUNT(*) n FROM (SELECT DISTINCT ({tcol} / ?) * ? AS t, {mcol} mac FROM {source} "
+                    f"WHERE {tcol} >= ?) x JOIN devices d ON d.mac = x.mac {where} GROUP BY x.t, d.kind, {group}")
+        return (f"SELECT ({tcol} / ?) * ? AS t, d.kind, {column}, COUNT(DISTINCT {mcol}) n FROM {source} JOIN devices d ON d.mac = {mcol} "
+                f"WHERE {tcol} >= ? {where.replace('WHERE', 'AND')} GROUP BY t, d.kind, {group}")
+
     @app.get("/api/timeline/radios", dependencies=[Depends(current_user)])
     def timeline_radios(hours: float = 24, bucket: int = 0):
         """Series for the overview's own graphs of Bluetooth (random against static addresses), Zigbee / Thread / other 802.15.4 and LoRa."""
@@ -162,9 +176,7 @@ def create_app(ctx):
         out = {"t": ts, "bucket": bucket, "bluetooth": blank("ble_random", "ble_static", "classic"),
                "zigbee": blank("zigbee", "thread", "other"), "lora": {}}
         source, tcol, mcol = ("presence_hours h", "h.hour", "h.mac") if bucket >= 3600 else ("samples s", "s.minute", "s.mac")
-        for r in rows(f"SELECT ({tcol} / ?) * ? AS t, d.kind, d.randomized rnd, COUNT(DISTINCT {mcol}) n FROM {source} "
-                      f"JOIN devices d ON d.mac = {mcol} WHERE {tcol} >= ? AND d.kind IN ('ble', 'bt_classic') GROUP BY t, d.kind, rnd",
-                      (bucket, bucket, since)):
+        for r in rows(heard_sql(source, tcol, mcol, "d.randomized rnd", "rnd", "WHERE d.kind IN ('ble', 'bt_classic')"), (bucket, bucket, since)):
             i = idx.get(r["t"])
             if i is not None:
                 out["bluetooth"]["classic" if r["kind"] == "bt_classic" else "ble_random" if r["rnd"] else "ble_static"][i] += r["n"]
@@ -208,9 +220,7 @@ def create_app(ctx):
         # times it scans `samples` is worth more than the SQL staying simple.
         series = {k: {} for k in KINDS}
         bands = {b: {"ap": {}, "wifi_client": {}} for b in ("2.4", "5", "6")}
-        for r in rows(f"SELECT ({tcol} / ?) * ? AS t, d.kind, d.band, COUNT(DISTINCT {mcol}) n FROM {source} "
-                      f"JOIN devices d ON d.mac = {mcol} WHERE {tcol} >= ? GROUP BY t, d.kind, d.band",
-                      (bucket, bucket, since)):
+        for r in rows(heard_sql(source, tcol, mcol, "d.band", "d.band"), (bucket, bucket, since)):
             k, t, n = r["kind"], r["t"], r["n"]
             s = series.setdefault(k, {})
             s[t] = s.get(t, 0) + n
@@ -602,113 +612,153 @@ def create_app(ctx):
     # ------------------------------------------------------------------- stats
     @app.get("/api/stats", dependencies=[Depends(current_user)])
     def stats(days: float = 7, tz: int = 0, limit: int = 20):
+        """Everything on the Statistics page. The parts don't depend on each other, so they are read side by side (each query
+        has a database connection of its own), and what can be counted from one pass over a table is: the devices of the
+        period are read once for all the per-kind counts, and the presence rows once for the hourly and weekly charts."""
         limit = max(1, min(limit, 1000))  # rows in the top-N lists; the page asks for more when a list is opened in full
         now = time.time()
         since = now - days * 86400
         off = tz * 60
+
+        def networks():
+            total = one("SELECT COUNT(DISTINCT ssid) n FROM devices WHERE kind='ap' AND ssid IS NOT NULL "
+                        "AND ssid != '' AND last_seen>=?", (since,))["n"]
+            # The 100 most recently seen networks (the page shows 20 and expands to 100).
+            ssids = rows("SELECT ssid, COUNT(*) aps, GROUP_CONCAT(DISTINCT CASE band WHEN '6' THEN '6G:' || channel "
+                         "ELSE channel END) channels, GROUP_CONCAT(DISTINCT band) bands, "
+                         "GROUP_CONCAT(DISTINCT enc) enc, MAX(last_rssi) rssi, MAX(last_seen) last_seen FROM devices "
+                         "WHERE kind='ap' AND ssid IS NOT NULL AND ssid != '' AND last_seen>=? GROUP BY ssid "
+                         "ORDER BY last_seen DESC LIMIT 100", (since,))
+            clients = {r["ssid"]: r for r in rows(
+                "SELECT a.ssid, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions FROM sessions s "
+                "JOIN devices a ON a.mac=s.peer WHERE s.type='assoc' AND s.end_ts>=? GROUP BY a.ssid", (since,))}
+            ignored, mine = ({e["ssid"] for e in ctx.settings.get("ignore")["ssids"]}, set(ctx.settings.get("networks")["ssids"]))
+            for x in ssids:
+                c = clients.get(x["ssid"], {})
+                x["clients"], x["sessions"] = c.get("clients", 0), c.get("sessions", 0)
+                x["ignored"], x["mine"] = x["ssid"] in ignored, x["ssid"] in mine
+            return {"ssid_total": total, "ssids": ssids,
+                    "channels": rows("SELECT channel, COALESCE(band, CASE WHEN channel <= 14 THEN '2.4' ELSE '5' END) AS b, "
+                                     "COUNT(*) aps FROM devices WHERE kind='ap' AND channel IS NOT NULL AND last_seen>=? "
+                                     "GROUP BY b, channel ORDER BY b = '6', b = '5', channel", (since,))}
+
+        def probes():
+            return {"probes": rows("SELECT ssid, COUNT(DISTINCT mac) clients, SUM(count) frames, "
+                                   "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "
+                                   "FROM probes p WHERE last_seen>=? GROUP BY ssid ORDER BY clients DESC LIMIT ?", (since, limit))}
+
+        def presence():
+            # Which device was heard in which local hour, one row each: from the hourly roll-up where the timezone is a
+            # whole number of hours (then every stored hour is exactly one local hour, so the result is the same as from
+            # `samples`); the partial hour at the start of the period, and odd offsets such as +5:30, come from `samples`.
+            if off % 3600 == 0:
+                first = -(-int(since) // 3600) * 3600
+                heard = ("SELECT mac, (hour - ?) / 3600 lh FROM presence_hours WHERE hour >= ? UNION ALL "  # the two never overlap
+                         "SELECT DISTINCT mac, (minute - ?) / 3600 FROM samples WHERE minute >= ? AND minute < ?", (off, first, off, since, first))
+            else:
+                heard = ("SELECT DISTINCT mac, (minute - ?) / 3600 lh FROM samples WHERE minute >= ?", (off, since))
+            # Counted per (local hour, kind) in one pass; the hourly chart, the weekly pattern and the number of days are all sums of that.
+            return {"cells": rows(f"SELECT p.lh, d.kind, COUNT(*) n FROM ({heard[0]}) p LEFT JOIN devices d ON d.mac = p.mac "
+                                  f"GROUP BY p.lh, d.kind", heard[1])}
+
+        def radio_presence():
+            # Zigbee radios and LoRa nodes are not devices: the same count from radio_seen (which radio was heard in each 5 minutes).
+            return {"radio_cells": rows("SELECT (slot - ?) / 3600 lh, kind, COUNT(DISTINCT addr) n FROM radio_seen WHERE slot >= ? "
+                                        "GROUP BY lh, kind", (off, since))}
+
+        def activity(cells, radio):
+            """The hourly chart and the weekly pattern from the per-local-hour counts (lh = hours since the epoch, local time)."""
+            hourly, weekly = {}, {}
+            for r in cells:
+                day, h = divmod(r["lh"], 24)
+                if r["kind"] is not None:  # a device that was deleted since is in no kind
+                    hourly[(h, r["kind"])] = hourly.get((h, r["kind"]), 0) + r["n"]
+                # Weekly activity pattern: distinct devices per (weekday, hour), same convention as a device's own
+                # "weekly pattern" heatmap (/api/devices/{mac}/heatmap): epoch day 0 (1970-01-01) was a Thursday,
+                # so +3 aligns it to a Monday=0 week. Not normalised per how many of each weekday fall in the
+                # period (same simplification the per-device heatmap already makes), so it reads as relative
+                # busyness, not a literal daily average.
+                wd = (day + 3) % 7
+                weekly[(wd, h)] = weekly.get((wd, h), 0) + r["n"]
+            for r in radio:
+                key = (r["lh"] % 24, r["kind"])
+                hourly[key] = hourly.get(key, 0) + r["n"]
+            ndays = max(len({r["lh"] // 24 for r in cells}), len({r["lh"] // 24 for r in radio}), 1)
+            return {"hourly": {"days": ndays, "rows": [{"h": h, "kind": k, "n": n} for (h, k), n in hourly.items()]},
+                    "weekly_heat": [{"wd": wd, "h": h, "n": n} for (wd, h), n in weekly.items()]}
+
+        def new():
+            return {"new_per_day": rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
+                                        "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day", (off, off, since)),
+                    # New vendors: the first time ever (not just in this period) a vendor was seen, if that fell in
+                    # this period: distinct from "new devices per day", which is usually dominated by randomized-MAC
+                    # churn; this filters down to genuinely new kinds of hardware showing up nearby.
+                    "new_vendors": rows(
+                        "SELECT vendor, MIN(first_seen) first_seen, COUNT(*) devices FROM devices WHERE vendor IS NOT NULL "
+                        "AND vendor != '' GROUP BY vendor HAVING MIN(first_seen) >= ? ORDER BY first_seen DESC LIMIT 100", (since,))}
+
+        def sessions_part():
+            return {"durations": rows(
+                        "SELECT type, CASE WHEN d<60 THEN 0 WHEN d<300 THEN 1 WHEN d<1800 THEN 2 WHEN d<7200 THEN 3 "
+                        "WHEN d<28800 THEN 4 ELSE 5 END b, COUNT(*) n FROM (SELECT type, end_ts-start_ts d FROM sessions "
+                        "WHERE end_ts>=?) GROUP BY type, b", (since,)),
+                    "top_clients": rows(
+                        "SELECT s.mac, d.kind, d.vendor, d.name, d.randomized, COUNT(*) sessions, COUNT(DISTINCT s.peer) peers, "
+                        "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s LEFT JOIN devices d ON d.mac=s.mac "
+                        "WHERE s.type='assoc' AND s.end_ts>=? GROUP BY s.mac ORDER BY secs DESC LIMIT ?", (now, since, since, limit)),
+                    "top_aps": rows(
+                        "SELECT s.peer mac, a.ssid, a.channel, a.band, a.vendor, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions, "
+                        "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s JOIN devices a ON a.mac=s.peer "
+                        "WHERE s.type='assoc' AND s.end_ts>=? AND a.kind='ap' GROUP BY s.peer ORDER BY clients DESC LIMIT ?",
+                        (now, since, since, limit))}
+
+        def events():
+            return {"events": rows("SELECT type, COUNT(*) n FROM events WHERE ts>=? GROUP BY type ORDER BY n DESC", (since,))}
+
+        # The per-kind counts of the devices heard in the period: one GROUP BY each, so the counting stays inside SQLite
+        # (which runs side by side) instead of in Python.
+        def by_column(col):
+            return lambda: {col: rows(f"SELECT {col} v, kind, COUNT(*) n FROM devices WHERE last_seen>=? GROUP BY {col}, kind "
+                                      f"ORDER BY n DESC", (since,))}
+
+        def by_json(name, path, kinds):  # a field of the stored JSON, read only for the kinds that have it
+            where = f"kind IN ({', '.join(repr(k) for k in kinds)}) AND " if kinds else ""
+            return lambda: {name: rows(f"SELECT json_extract(extra, '{path}') v, kind, COUNT(*) n FROM devices WHERE {where}last_seen>=? "
+                                       f"GROUP BY v, kind ORDER BY n DESC", (since,))}
+
+        def vendors():
+            return {"vendors": rows("SELECT COALESCE(vendor,'Unknown') vendor, kind, COUNT(*) n FROM devices "
+                                    "WHERE last_seen>=? GROUP BY vendor, kind ORDER BY n DESC", (since,)),
+                    "bands": rows("SELECT band, kind, COUNT(*) n FROM devices WHERE band IS NOT NULL AND last_seen>=? "
+                                  "GROUP BY band, kind", (since,)),
+                    "randomized": rows("SELECT kind, randomized, COUNT(*) n FROM devices WHERE last_seen>=? "
+                                       "GROUP BY kind, randomized", (since,))}
+
+        def sensors_part():
+            # Which kinds of device each sensor heard in the period (a device heard by two sensors counts for both).
+            return {"sensor_kinds": rows(
+                "SELECT w.sensor id, COALESCE(s.name, w.sensor) name, d.kind, COUNT(*) n FROM sightings w "
+                "JOIN devices d ON d.mac = w.mac LEFT JOIN sensors s ON s.id = w.sensor WHERE w.last_seen>=? "
+                "GROUP BY w.sensor, d.kind", (since,))}
+
+        def fingerprints():
+            return {"fingerprints": rows(
+                "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
+                "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
+                "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT ?", (since, limit))}
+
+        def radios():
+            # Zigbee / Thread radios and LoRa nodes live in tables of their own: their breakdowns come ready-made.
+            return {"zigbee": zigbee.breakdown(ctx, since), "lora": lora.breakdown(ctx, since)}
+
         out = {"days": days}
-        out["vendors"] = rows("SELECT COALESCE(vendor,'Unknown') vendor, kind, COUNT(*) n FROM devices "
-                              "WHERE last_seen>=? GROUP BY vendor, kind ORDER BY n DESC", (since,))
-        out["ssid_total"] = one("SELECT COUNT(DISTINCT ssid) n FROM devices WHERE kind='ap' AND ssid IS NOT NULL "
-                                "AND ssid != '' AND last_seen>=?", (since,))["n"]
-        # The 100 most recently seen networks (the page shows 20 and expands to 100).
-        ssids = rows("SELECT ssid, COUNT(*) aps, GROUP_CONCAT(DISTINCT CASE band WHEN '6' THEN '6G:' || channel "
-                     "ELSE channel END) channels, GROUP_CONCAT(DISTINCT band) bands, "
-                     "GROUP_CONCAT(DISTINCT enc) enc, MAX(last_rssi) rssi, MAX(last_seen) last_seen FROM devices "
-                     "WHERE kind='ap' AND ssid IS NOT NULL AND ssid != '' AND last_seen>=? GROUP BY ssid "
-                     "ORDER BY last_seen DESC LIMIT 100", (since,))
-        clients = {r["ssid"]: r for r in rows(
-            "SELECT a.ssid, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions FROM sessions s "
-            "JOIN devices a ON a.mac=s.peer WHERE s.type='assoc' AND s.end_ts>=? GROUP BY a.ssid", (since,))}
-        for s in ssids:
-            c = clients.get(s["ssid"], {})
-            s["clients"], s["sessions"] = c.get("clients", 0), c.get("sessions", 0)
-        ignored, mine = ({e["ssid"] for e in ctx.settings.get("ignore")["ssids"]}, set(ctx.settings.get("networks")["ssids"]))
-        for s in ssids:
-            s["ignored"], s["mine"] = s["ssid"] in ignored, s["ssid"] in mine
-        out["ssids"] = ssids
-        out["probes"] = rows("SELECT ssid, COUNT(DISTINCT mac) clients, SUM(count) frames, "
-                             "(SELECT COUNT(*) FROM devices a WHERE a.kind='ap' AND a.ssid=p.ssid) aps "
-                             "FROM probes p WHERE last_seen>=? GROUP BY ssid ORDER BY clients DESC LIMIT ?", (since, limit))
-        out["channels"] = rows("SELECT channel, COALESCE(band, CASE WHEN channel <= 14 THEN '2.4' ELSE '5' END) AS b, "
-                               "COUNT(*) aps FROM devices WHERE kind='ap' AND channel IS NOT NULL AND last_seen>=? "
-                               "GROUP BY b, channel ORDER BY b = '6', b = '5', channel", (since,))
-        out["bands"] = rows("SELECT band, kind, COUNT(*) n FROM devices WHERE band IS NOT NULL AND last_seen>=? "
-                            "GROUP BY band, kind", (since,))
-        # Distinct devices per (local hour, day) from the hourly roll-up where the timezone is a whole number of
-        # hours (then every hour belongs to exactly one local hour, so the result is the same as from `samples`);
-        # the partial hour at the start of the period, and odd offsets such as +5:30, are read from `samples`.
-        if off % 3600 == 0:
-            first = -(-int(since) // 3600) * 3600
-            heard = ("(SELECT mac, hour FROM presence_hours WHERE hour >= ? UNION "
-                     "SELECT mac, minute / 3600 * 3600 FROM samples WHERE minute >= ? AND minute < ?)", [first, since, first])
-        else:
-            heard = ("(SELECT mac, minute AS hour FROM samples WHERE minute >= ?)", [since])
-        hourly = rows(f"SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT p.mac, d.kind, ((p.hour - ?) % 86400) / 3600 h, "
-                      f"(p.hour - ?) / 86400 day FROM {heard[0]} p JOIN devices d ON d.mac=p.mac) GROUP BY h, kind",
-                      [off, off] + heard[1])
-        ndays = one(f"SELECT COUNT(DISTINCT (p.hour - ?) / 86400) n FROM {heard[0]} p", [off] + heard[1])["n"] or 1
-        # Zigbee radios and LoRa nodes are not devices: the same count from radio_seen (which radio was heard in each 5 minutes).
-        hourly += rows("SELECT h, kind, COUNT(*) n FROM (SELECT DISTINCT kind, addr, ((slot - ?) % 86400) / 3600 h, (slot - ?) / 86400 day "
-                       "FROM radio_seen WHERE slot >= ?) GROUP BY h, kind", (off, off, since))
-        ndays = max(ndays, one("SELECT COUNT(DISTINCT (slot - ?) / 86400) n FROM radio_seen WHERE slot >= ?", (off, since))["n"] or 1)
-        out["hourly"] = {"days": ndays, "rows": hourly}
-        # Weekly activity pattern: distinct devices per (weekday, hour), same convention as a device's own
-        # "weekly pattern" heatmap (/api/devices/{mac}/heatmap) — epoch day 0 (1970-01-01) was a Thursday,
-        # so +3 aligns it to a Monday=0 week. Not normalised per how many of each weekday fall in the
-        # period (same simplification the per-device heatmap already makes), so it reads as relative
-        # busyness, not a literal daily average.
-        out["weekly_heat"] = rows(
-            f"SELECT wd, h, COUNT(*) n FROM (SELECT DISTINCT p.mac, ((p.hour - ?) % 86400) / 3600 h, "
-            f"((p.hour - ?) / 86400 + 3) % 7 wd, (p.hour - ?) / 86400 day FROM {heard[0]} p) GROUP BY wd, h",
-            [off, off, off] + heard[1])
-        out["new_per_day"] = rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
-                                  "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day",
-                                  (off, off, since))
-        # New vendors: the first time ever (not just in this period) a vendor was seen, if that fell in
-        # this period — distinct from "new devices per day", which is usually dominated by randomized-MAC
-        # churn; this filters down to genuinely new kinds of hardware showing up nearby.
-        out["new_vendors"] = rows(
-            "SELECT vendor, MIN(first_seen) first_seen, COUNT(*) devices FROM devices WHERE vendor IS NOT NULL "
-            "AND vendor != '' GROUP BY vendor HAVING MIN(first_seen) >= ? ORDER BY first_seen DESC LIMIT 100",
-            (since,))
-        out["durations"] = rows(
-            "SELECT type, CASE WHEN d<60 THEN 0 WHEN d<300 THEN 1 WHEN d<1800 THEN 2 WHEN d<7200 THEN 3 "
-            "WHEN d<28800 THEN 4 ELSE 5 END b, COUNT(*) n FROM (SELECT type, end_ts-start_ts d FROM sessions "
-            "WHERE end_ts>=?) GROUP BY type, b", (since,))
-        out["top_clients"] = rows(
-            "SELECT s.mac, d.kind, d.vendor, d.name, d.randomized, COUNT(*) sessions, COUNT(DISTINCT s.peer) peers, "
-            "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s LEFT JOIN devices d ON d.mac=s.mac "
-            "WHERE s.type='assoc' AND s.end_ts>=? GROUP BY s.mac ORDER BY secs DESC LIMIT ?", (now, since, since, limit))
-        out["top_aps"] = rows(
-            "SELECT s.peer mac, a.ssid, a.channel, a.band, a.vendor, COUNT(DISTINCT s.mac) clients, COUNT(*) sessions, "
-            "SUM(MIN(s.end_ts, ?) - MAX(s.start_ts, ?)) secs FROM sessions s JOIN devices a ON a.mac=s.peer "
-            "WHERE s.type='assoc' AND s.end_ts>=? AND a.kind='ap' GROUP BY s.peer ORDER BY clients DESC LIMIT ?",
-            (now, since, since, limit))
-        out["randomized"] = rows("SELECT kind, randomized, COUNT(*) n FROM devices WHERE last_seen>=? "
-                                 "GROUP BY kind, randomized", (since,))
-        out["events"] = rows("SELECT type, COUNT(*) n FROM events WHERE ts>=? GROUP BY type ORDER BY n DESC", (since,))
-        for col in ("dev_type", "brand", "os", "wifi_gen", "era"):
-            out[col] = rows(f"SELECT {col} v, kind, COUNT(*) n FROM devices WHERE last_seen>=? GROUP BY {col}, kind "
-                            f"ORDER BY n DESC", (since,))
-        for col, path in (("addr_type", "$.addr_type"), ("company", "$.company")):  # Bluetooth LE only
-            out[col] = rows(f"SELECT json_extract(extra, '{path}') v, kind, COUNT(*) n FROM devices WHERE kind='ble' "
-                            f"AND last_seen>=? GROUP BY v ORDER BY n DESC", (since,))
-        out["bt_ver"] = rows("SELECT json_extract(extra, '$.bt_ver') v, kind, COUNT(*) n FROM devices WHERE kind IN ('ble', 'bt_classic') "
-                             "AND last_seen>=? GROUP BY v, kind ORDER BY n DESC", (since,))
-        out["mobility"] = rows("SELECT json_extract(extra, '$.mobility.c') v, kind, COUNT(*) n FROM devices WHERE last_seen>=? "
-                               "GROUP BY v, kind ORDER BY n DESC", (since,))
-        # Which kinds of device each sensor heard in the period (a device heard by two sensors counts for both).
-        out["sensor_kinds"] = rows(
-            "SELECT w.sensor id, COALESCE(s.name, w.sensor) name, d.kind, COUNT(*) n FROM sightings w "
-            "JOIN devices d ON d.mac = w.mac LEFT JOIN sensors s ON s.id = w.sensor WHERE w.last_seen>=? "
-            "GROUP BY w.sensor, d.kind", (since,))
-        out["fingerprints"] = rows(
-            "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
-            "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
-            "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT ?", (since, limit))
-        # Zigbee / Thread radios and LoRa nodes live in tables of their own: their breakdowns come ready-made.
-        out["zigbee"], out["lora"] = zigbee.breakdown(ctx, since), lora.breakdown(ctx, since)
+        parts = (presence, radio_presence, vendors, networks, probes, new, sessions_part, events, sensors_part, fingerprints, radios,
+                 *(by_column(c) for c in ("dev_type", "brand", "os", "wifi_gen", "era")),
+                 by_json("addr_type", "$.addr_type", ("ble",)), by_json("company", "$.company", ("ble",)),
+                 by_json("bt_ver", "$.bt_ver", ("ble", "bt_classic")), by_json("mobility", "$.mobility.c", ()))
+        for part in STATS_POOL.map(lambda f: f(), parts):
+            out.update(part)
+        out.update(activity(out.pop("cells"), out.pop("radio_cells")))
         return out
 
     # Session-duration buckets of the Statistics chart (index -> seconds [lo, hi)); keep in sync with the CASE in stats().

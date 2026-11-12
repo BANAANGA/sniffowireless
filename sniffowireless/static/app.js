@@ -1229,6 +1229,7 @@ function breakdown(el, s, kind) {
 
 // Statistics lists show the top 20; the panel title opens the list in full (#/stats?list=<id>), or the page that owns it.
 const STAT_CAP = 20, STAT_FULL = 1000;
+let statsMemo = {};
 async function viewStats(params) {
   const days = params.get('days') || '1';
   const listId = params.get('list') || '';
@@ -1239,7 +1240,10 @@ async function viewStats(params) {
       ${seg('days', [[1, '24h'], [7, '7 days'], [30, '30 days']], days)}</div>
     <div class="grid cols-3" id="stats"><div class="empty span-all">Loading…</div></div>`;
   onSeg(app, 'days', v => { location.hash = hrefWith('/stats', { days: v, list: listId }); });
-  const s = await api(`/api/stats?days=${days}&tz=${TZ}&limit=${CAP}`);
+  // Coming back from a drill-down within half a minute shows the same figures again without asking the server to count them once more.
+  const statsUrl = `/api/stats?days=${days}&tz=${TZ}&limit=${CAP}`;
+  if (statsMemo.url !== statsUrl || Date.now() - statsMemo.at > 30000) statsMemo = { url: statsUrl, at: Date.now(), data: await api(statsUrl) };
+  const s = statsMemo.data;
   const root = document.getElementById('stats');
   root.innerHTML = `
     <section class="panel span-3" id="breakdown"></section>

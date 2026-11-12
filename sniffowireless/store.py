@@ -77,7 +77,9 @@ CREATE TABLE IF NOT EXISTS presence_hours(
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, mac TEXT, type TEXT NOT NULL,
   peer TEXT, detail TEXT);
-CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+-- (ts, type): the per-type counts of a period are read from the index alone; replaces the older index on ts only
+CREATE INDEX IF NOT EXISTS idx_events_ts_type ON events(ts, type);
+DROP INDEX IF EXISTS idx_events_ts;
 CREATE INDEX IF NOT EXISTS idx_events_mac ON events(mac, ts);
 CREATE TABLE IF NOT EXISTS probes(
   mac TEXT NOT NULL, ssid TEXT NOT NULL, first_seen REAL, last_seen REAL, count INTEGER DEFAULT 0,
@@ -294,6 +296,8 @@ class Store:
                               "WHERE kind IN ('ap', 'wifi_client')")
         for idx in ("dev_type", "brand", "fp_hash"):
             self.conn.execute(f"CREATE INDEX IF NOT EXISTS idx_devices_{idx} ON devices({idx})")
+        # What the charts need of a device when they join presence rows to it, so they don't open the (large) device row for each.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_devices_join ON devices(mac, kind, band, randomized)")
         if not self.conn.execute("SELECT 1 FROM meta WHERE key='presence_hours'").fetchone():
             n = self.conn.execute("INSERT OR IGNORE INTO presence_hours(hour, mac) "
                                   "SELECT DISTINCT minute / 3600 * 3600, mac FROM samples").rowcount
