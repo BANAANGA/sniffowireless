@@ -46,3 +46,17 @@ covers the first two.
 They stay quiet until there is enough history: 7 days for the place, and for a device 14 days in which it was heard in at least
 20 different hours. Hours in which nothing at all was stored (the sensor was off) do not count as quiet hours. The limits are
 rules of thumb and cannot be changed yet.
+
+## Scheduled report
+
+**Settings → Scheduled report** sends a summary through one of the notification channels, every week (over the last 7 days) or
+every day (over the last 24 hours), at the hour you choose. Email channels get an HTML report, other channels plain text.
+
+Besides the occupancy figures (people, new devices, alerts, open security findings, LoRa and Zigbee) it lists what needs a look,
+and leaves out a heading when there is nothing under it:
+
+- **New devices:** up to ten devices first seen in the period, with name, maker and type. Random addresses are left out.
+- **Possible trackers:** the latest `tracker_following` events.
+- **Security and warnings:** how often each high or medium severity event happened.
+- **Sensors offline now:** remote sensors that have not reported for 10 minutes, with how long ago they last did. This is the state
+  when the report is made; outages that ended before that are not listed.
