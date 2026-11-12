@@ -624,3 +624,7 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 .set-body .panel .body.flush { overflow-x: auto; }
 
 .hint { cursor: help; text-decoration: underline dotted; text-decoration-color: var(--faint); text-underline-offset: 3px; }
+
+/* Statistics breakdown: seven kinds don't fit one line on a narrow screen */
+#breakdown > header { flex-wrap: wrap; row-gap: 8px; }
+#breakdown > header .seg { flex-wrap: wrap; }

@@ -599,6 +599,26 @@ class LoraMonitor:
 FIRMWARE_DIR = Path(__file__).parent / "firmware"
 
 
+def breakdown(ctx, since):
+    """The Statistics page's breakdown of the LoRa nodes heard since `since`: by protocol, node type, the radio settings they were
+    heard on, and whether they send their position."""
+    nodes = ctx.rows("SELECT protocol, kind, profile, lat FROM lora_nodes WHERE last_seen >= ?", (since,))
+
+    def counted(values):
+        n = {}
+        for v in values:
+            n[v] = n.get(v, 0) + 1
+        return [{"v": v, "n": c} for v, c in sorted(n.items(), key=lambda x: -x[1])]
+
+    def profile(name):
+        return PROFILES[name].label if name in PROFILES else name
+    return {"total": len(nodes), "charts": [{"title": t, "rows": counted(v)} for t, v in (
+        ("Protocol", [PROTOCOLS.get(n["protocol"], n["protocol"]) for n in nodes]),
+        ("Node type", [n["kind"] or None for n in nodes]),
+        ("Radio settings", [profile(n["profile"]) if n["profile"] else None for n in nodes]),
+        ("Position", ["Sends its position" if n["lat"] is not None else "No position heard" for n in nodes]))]}
+
+
 def firmware_manifest():
     """The firmware image the web flasher offers (built by scripts/build_firmware.py), or None."""
     try:

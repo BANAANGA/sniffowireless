@@ -68,6 +68,36 @@ def device_guess(addr, roles, caps, hint):
     return None
 
 
+PROTOCOL_NAMES = {"zigbee": "Zigbee", "thread": "Thread", "encrypted": "Encrypted, protocol unknown"}
+ROLE_NAMES = {"router": "Router", "end device": "End device", "green power": "Green Power device"}
+
+
+def _counted(values):
+    """[{v, n}] of a list of values, most common first; None (not known) stays None."""
+    n = {}
+    for v in values:
+        n[v] = n.get(v, 0) + 1
+    return [{"v": v, "n": c} for v, c in sorted(n.items(), key=lambda x: -x[1])]
+
+
+def breakdown(ctx, since):
+    """The Statistics page's breakdown of the 802.15.4 radios heard since `since`: by protocol, role, what the device probably is,
+    power and maker. All from the unencrypted headers, so "unknown" is common."""
+    radios = ctx.rows("SELECT addr, hint, roles, caps, vendor FROM zigbee_radios WHERE last_seen >= ?", (since,))
+    protocol, role, device, power = [], [], [], []
+    for d in radios:
+        hint = HINTS[d["hint"]] if 0 <= (d["hint"] or 0) < len(HINTS) else "unknown"
+        roles, caps = d["roles"] or 0, d["caps"]
+        guess = device_guess(d["addr"], roles, caps, hint)
+        protocol.append(PROTOCOL_NAMES.get(hint))
+        role.append("Coordinator" if hint == "zigbee" and d["addr"] == "0x0000" else ROLE_NAMES.get(role_of(roles)))
+        device.append(guess.split(" (")[0].split(":")[0] if guess else None)
+        power.append("No battery (Green Power)" if roles & ROLE_GREEN_POWER else None if caps is None
+                     else "Mains powered" if caps & CAP_MAINS else "Battery powered")
+    return {"total": len(radios), "charts": [{"title": t, "rows": _counted(v)} for t, v in (
+        ("Protocol", protocol), ("Role", role), ("Probable device", device), ("Power", power), ("Vendor", [d["vendor"] for d in radios]))]}
+
+
 BAUD_RATE = 115200
 REPORT_INTERVAL = 10
 RETRY_INTERVAL = 30

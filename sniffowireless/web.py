@@ -703,6 +703,8 @@ def create_app(ctx):
             "SELECT fp_hash, COUNT(*) n, SUM(randomized) randomized, MAX(brand) brand, MAX(dev_type) dev_type, "
             "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
             "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT ?", (since, limit))
+        # Zigbee / Thread radios and LoRa nodes live in tables of their own: their breakdowns come ready-made.
+        out["zigbee"], out["lora"] = zigbee.breakdown(ctx, since), lora.breakdown(ctx, since)
         return out
 
     # Session-duration buckets of the Statistics chart (index -> seconds [lo, hi)); keep in sync with the CASE in stats().
