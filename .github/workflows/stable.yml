@@ -23,7 +23,12 @@ jobs:
           case "$TAG" in (*[!0-9]*|"") echo "Release $TAG is not a whole-number version; leaving stable alone"; exit 0;; esac
           git init -q .
           git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          git fetch -q --depth=1 origin "refs/tags/$TAG"
-          sha="$(git rev-parse FETCH_HEAD^{commit})"
+          # Full history of the tag and of stable: with only the tagged commit git cannot see that stable is an ancestor,
+          # and refuses the (fast-forward) push as "fetch first".
+          git fetch -q origin "refs/tags/$TAG:refs/tags/$TAG" "+refs/heads/stable:refs/remotes/origin/stable" || git fetch -q origin "refs/tags/$TAG:refs/tags/$TAG"
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          if git rev-parse -q --verify refs/remotes/origin/stable >/dev/null && [ "$(git rev-parse refs/remotes/origin/stable)" = "$sha" ]; then
+            echo "stable already points at release $TAG" >> "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
           git push origin "$sha:refs/heads/stable"
           echo "stable now points at release $TAG ($sha)" >> "$GITHUB_STEP_SUMMARY"
