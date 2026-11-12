@@ -124,8 +124,10 @@ def build(cfg):
     ctx.lora = LoraMonitor(ctx)
     from .radiowatch import RadioWatch
     ctx.radiowatch = RadioWatch(ctx)
+    from .baseline import BaselineMonitor
+    ctx.baseline = BaselineMonitor(ctx)
     store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
-                    ctx.zigbee, ctx.lora, ctx.radiowatch]
+                    ctx.zigbee, ctx.lora, ctx.radiowatch, ctx.baseline]
     store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
     store.set_retention(ctx.settings.get("retention"))
     ctx.settings.on_change(lambda k: store.set_retention(ctx.settings.get("retention")) if k == "retention" else None)
