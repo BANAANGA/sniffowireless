@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import threading
 import time
 
@@ -135,12 +136,17 @@ def build(cfg):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "replay":  # python -m sniffowireless replay FILE: play a recording through the parsers
+        from .capture import replay_cli
+        raise SystemExit(replay_cli(sys.argv[2:]))
     cfg = Config.from_env()
     logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     from .logs import install as install_log_buffer
     install_log_buffer(cfg.log_level)  # keeps recent log lines for the live Logs page
     from .macprivacy import install_log_filter
     install_log_filter()  # MAC addresses in log lines are replaced while privacy mode is on
+    from . import capture
+    capture.start_from_env(cfg)  # CAPTURE_AT_START=<seconds>: record the raw frames from the start (see capture.py)
     if cfg.mode == "sensor":
         return run_sensor(cfg)
 

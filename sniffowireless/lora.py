@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import adapters, status
+from . import adapters, capture, status
 from .auth import current_user, require_admin
 from . import meshtastic
 from .lora_protocols import AIR_PREAMBLE, LORAWAN_PLANS, PROFILES, PROTOCOLS, airtime_ms, classify, parse_profiles
@@ -342,6 +342,8 @@ class LoraSensor:
     def handle_line(self, line):
         rx = parse_rx(line)
         if rx:
+            if capture.RECORDER.active:
+                capture.RECORDER.record("lora", self.name, line.encode("ascii", "replace"))
             self.packets += 1
             self.sink.put({"t": "lora_frame", "ts": time.time(), "mac": "-", "profile": self.match(rx), **rx})
             return

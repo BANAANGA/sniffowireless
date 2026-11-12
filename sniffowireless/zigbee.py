@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import adapters, status
+from . import adapters, capture, status
 from .auth import current_user, require_admin
 from .zigbee_radio import (ALL_CHANNELS, CAP_MAINS, CAP_RX_IDLE, HINTS, ROLE_GP_SWITCH, ROLE_GREEN_POWER, ROLE_LABELS, ROUTER_MASK, TYPE_NAMES, FrameBatch,
                            NoCaptureMode, ZigbeeError, capability_labels, detect, role_of)
@@ -337,6 +337,8 @@ class ZigbeeSensor:
         last_report = [time.monotonic()]
 
         def on_frame(captured):
+            if capture.RECORDER.active:
+                capture.RECORDER.record("zigbee", self.name, captured["data"], channel=captured.get("channel"), rssi=captured.get("rssi"), lqi=captured.get("lqi"))
             batch.add(captured)
             self.packets += 1
             now = time.monotonic()

@@ -15,7 +15,7 @@ import struct
 import threading
 import time
 
-from . import status
+from . import capture, status
 from .identify import ble_fingerprint
 from .oui import bt_company, bt_company_known
 
@@ -529,6 +529,8 @@ class BluetoothSensor:
             now = time.time()
             if r:
                 pkt = self.sock.recv(4096)
+                if capture.RECORDER.active:
+                    capture.RECORDER.record("bt", self.name, pkt)
                 for ev in parse_event(pkt):
                     self._handle(ev, now)
             if self.cfg.bt_inquiry and not self.inquiring and now >= next_inq:
