@@ -9,6 +9,8 @@ addRoute('/lora', async (_, params) => {
   const hours = +(params.get('hours') || 24);
   const d = await api(`/api/lora?hours=${hours}`);
   const span = hours * 3600;
+  const rf = radioFilter('/lora', params, [['protocol', 'Protocol'], ['type', 'Node type'], ['settings', 'Radio settings'], ['position', 'Position']], d.nodes, { hours });
+  const nodes = rf.shown;
   const color = p => LORA_COLORS[p] || LORA_COLORS.unknown;
   const total = d.protocols.reduce((a, p) => a + p.packets, 0);
   const max = Math.max(1, ...d.protocols.map(p => p.packets));
@@ -44,14 +46,15 @@ addRoute('/lora', async (_, params) => {
         '<th>Time</th><th>From</th><th>Message</th><th class="num">Signal</th>',
         d.messages.map(m => `<tr><td class="num">${dt(m.ts)}</td><td>${m.from ? `<b>${esc(m.from)}</b> ` : ''}<span class="mono faint">${esc(m.src || '')}</span></td><td>${esc(m.text || '')}</td><td class="num">${esc(sig(m))}</td></tr>`).join(''),
         d.decode_public ? 'No messages on the public channel yet' : 'Switch it on in Settings → LoRa bands')}</div></section>` : ''}
-      <section class="panel span-3"><header><h2>Nodes</h2><span class="faint">${d.nodes.length}</span></header><div class="body flush">${tableHtml(
+      <section class="panel span-3"><header><h2>Nodes</h2><span class="faint">${rf.count ? `${nodes.length} of ${d.nodes.length}` : d.nodes.length}</span>${d.nodes.length ? rf.html : ''}</header><div class="body flush">${tableHtml(
         '<th>Protocol</th><th>Address</th><th>Name</th><th>Type</th><th>Position</th><th class="num">Packets</th><th class="num">Signal</th><th class="num">Last seen</th><th></th>',
-        d.nodes.map(n => `<tr><td><span class="swatch" style="background:${color(n.protocol)}"></span>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${n.given_name ? `<b>${esc(n.given_name)}</b> ${n.name ? `<span class="faint">${esc(n.name)}</span>` : ''}` : esc(n.name || '—')}${watchTag(n)}</td><td class="muted">${esc(n.kind || '—')}</td><td>${pos(n.lat, n.lon) || '<span class="faint">—</span>'}</td><td class="num">${num(n.packets)}</td><td class="num">${esc(sig(n))}</td><td class="num">${ago(n.last_seen)}</td><td class="num">${isAdmin() ? `<button class="btn small ghost" data-watch="${esc(n.protocol)}|${esc(n.addr)}" title="Name or watch this node">${n.watch ? '★' : '☆'}</button>` : ''}</td></tr>`).join(''), 'No nodes heard yet')}</div></section>
+        nodes.map(n => `<tr><td><span class="swatch" style="background:${color(n.protocol)}"></span>${esc(n.label)}</td><td class="mono">${esc(n.addr)}</td><td>${n.given_name ? `<b>${esc(n.given_name)}</b> ${n.name ? `<span class="faint">${esc(n.name)}</span>` : ''}` : esc(n.name || '—')}${watchTag(n)}</td><td class="muted">${esc(n.kind || '—')}</td><td>${pos(n.lat, n.lon) || '<span class="faint">—</span>'}</td><td class="num">${num(n.packets)}</td><td class="num">${esc(sig(n))}</td><td class="num">${ago(n.last_seen)}</td><td class="num">${isAdmin() ? `<button class="btn small ghost" data-watch="${esc(n.protocol)}|${esc(n.addr)}" title="Name or watch this node">${n.watch ? '★' : '☆'}</button>` : ''}</td></tr>`).join(''), rf.count ? 'No node matches these filters' : 'No nodes heard yet')}</div></section>
       <section class="panel span-3"><header><h2>Latest packets</h2><span class="faint">newest first</span></header><div class="body flush">${tableHtml(
         '<th>Time</th><th>Protocol</th><th>Type</th><th>Detail</th><th>From</th><th>To</th><th class="num">Hops</th><th class="num">Bytes</th><th class="num">Signal</th>',
         d.recent.map(p => `<tr><td class="num">${dt(p.ts)}</td><td><span class="swatch" style="background:${color(p.protocol)}"></span>${esc(p.label)}${level(p)}</td><td class="muted">${esc(p.kind || '—')}</td><td>${detail(p)}</td><td class="mono">${esc(p.src || '—')}</td><td class="mono">${esc(p.dst || '—')}</td><td class="num">${p.hops == null ? '—' : p.hops}</td><td class="num">${num(p.bytes)}</td><td class="num">${esc(sig(p))}</td></tr>`).join(''), 'No packets yet')}</div></section>
     </div>`;
-  onSeg(app, 'hours', v => { location.hash = hrefWith('/lora', { hours: v }); });
+  onSeg(app, 'hours', v => { location.hash = hrefWith('/lora', { ...rf.active, hours: v }); });
+  rf.bind(app);
   app.querySelectorAll('button[data-watch]').forEach(b => b.onclick = () => { const [proto, addr] = b.dataset.watch.split('|'); const n = d.nodes.find(x => x.protocol === proto && x.addr === addr);
     editRadio('lora', proto, addr, { label: n.given_name, watch: n.watch, silent: n.silent_min }, () => route()); });
   if (d.t.length > 1) {

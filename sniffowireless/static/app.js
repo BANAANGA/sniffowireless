@@ -227,6 +227,23 @@ function onSeg(root, name, fn) {
     fn(b.dataset.v);
   });
 }
+// Filters of the Zigbee and LoRa pages: one dropdown per category the server files a radio under (item.cat), kept in the URL so the
+// Statistics breakdown can link to a filtered list. "Unknown" stands for a category that is not known (null).
+function radioFilter(path, params, defs, items, keep) {
+  const val = (x, k) => (x.cat || {})[k] == null ? 'Unknown' : String(x.cat[k]);
+  const active = Object.fromEntries(defs.map(([k]) => [k, params.get(k) || '']).filter(([, v]) => v));
+  const shown = items.filter(x => Object.entries(active).every(([k, v]) => val(x, k) === v));
+  const go = change => hrefWith(path, { ...keep, ...active, ...change });
+  const html = `<span class="row radio-filter">${defs.map(([k, label]) => {
+    const n = {};
+    items.forEach(x => { n[val(x, k)] = (n[val(x, k)] || 0) + 1; });
+    if (active[k] && !n[active[k]]) n[active[k]] = 0;
+    return `<select data-rf="${k}" aria-label="${esc(label)}"${active[k] ? ' class="on"' : ''}><option value="">${esc(label)}: all</option>${Object.entries(n).sort((a, b) => b[1] - a[1])
+      .map(([v, c]) => `<option value="${esc(v)}"${active[k] === v ? ' selected' : ''}>${esc(v)} (${c})</option>`).join('')}</select>`;
+  }).join('')}${Object.keys(active).length ? `<a class="btn small ghost" href="${hrefWith(path, keep)}">Clear</a>` : ''}</span>`;
+  const bind = root => root.querySelectorAll('select[data-rf]').forEach(el => { el.onchange = () => { location.hash = go({ [el.dataset.rf]: el.value }); }; });
+  return { shown, html, bind, active, count: Object.keys(active).length };
+}
 function hrefWith(path, params) {
   const p = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '' && v !== false) p.set(k, v); });
@@ -1176,7 +1193,7 @@ function breakdown(el, s, kind) {
   if (window.Chart) el.querySelectorAll('canvas').forEach(c => { const p = Chart.getChart(c); if (p) p.destroy(); });
   const of = (rows, key = 'v') => rows.filter(r => r.kind === kind).map(r => ({ v: r[key], n: r.n }));
   const radio = RADIO_BREAKDOWNS[kind], noun = radio ? radio[0] : 'devices';
-  const charts = radio ? ((s[kind] || {}).charts || []).map(c => [c.title, c.rows, null, v => v]) : [
+  const charts = radio ? ((s[kind] || {}).charts || []).map(c => [c.title, c.rows, c.key, v => v]) : [
     ['Device type', of(s.dev_type), 'dev_type', v => typeLabel(v)],
     ['Vendor', of(s.vendors, 'vendor').map(r => ({ v: r.v === 'Unknown' ? null : r.v, n: r.n })), 'vendor', v => v],
     ['Brand', of(s.brand), 'brand', v => v],
@@ -1188,7 +1205,7 @@ function breakdown(el, s, kind) {
   if (!radio) charts.push(['Movement', of(s.mobility), 'mobility', v => MOBILITY[v] || v]);
   const total = radio ? (s[kind] || {}).total || 0 : charts[0][1].reduce((a, r) => a + r.n, 0);
   const days = s.days || 1;
-  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${radio ? `${num(total)} ${kind === 'zigbee' ? '<span title="Zigbee, Thread and other IEEE 802.15.4">radios</span>' : 'nodes'} · <a href="${hrefWith(radio[1], { hours: days * 24 })}">open the ${kind === 'zigbee' ? 'Zigbee' : 'LoRa'} page</a>`
+  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${radio ? `${num(total)} ${kind === 'zigbee' ? '<span title="Zigbee, Thread and other IEEE 802.15.4">radios</span>' : 'nodes'} · click a slice or row for the ${noun}`
       : `${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices`}</span>
       ${seg('bkind', BREAKDOWN_KINDS.filter(([k]) => kindOn(k)), kind)}</header>
     <div class="body">${total ? `<div class="pie-grid">${charts.map((c, i) => `<div class="pie-card"><h3 class="subhead">${c[0]}</h3>
@@ -1208,7 +1225,8 @@ function breakdown(el, s, kind) {
     if (rest) slices.push({ k: known.length > PIE_TOP ? null : '', n: rest, name: known.length > PIE_TOP ? (unknown ? 'Other / unknown' : 'Other') : 'Unknown', color: FAINT });
     const sum = slices.reduce((a, x) => a + x.n, 0);
     const pct = n => `${Math.round(n / sum * 100)}%`;
-    const href = x => radio || x.k === null ? null : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
+    const href = x => x.k === null ? null : radio ? hrefWith(radio[1], { hours: days * 24, [key]: x.k === '' ? 'Unknown' : x.k })
+      : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
     document.getElementById(`pie-leg-${i}`).innerHTML = slices.map(x => {
       const h = href(x);
       return `<li${h ? ` data-href="${h}"` : ''}><span class="swatch" style="background:${x.color}"></span><span class="pl-name" title="${esc(x.name)}">${x.k === '' ? `<span class="faint">${esc(x.name)}</span>` : esc(x.name)}</span>
@@ -1252,7 +1270,7 @@ async function viewStats(params) {
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>Weekly activity pattern</h2><span class="faint">relative busyness by day and hour</span></header><div class="body" id="weekheat"></div></section>
     <section class="panel" data-list="new-vendors"><header><h2>${ttl('new-vendors', 'New vendors')}</h2><span class="faint">first seen, ever, in this period</span></header><div class="body flush table-wrap" id="new-vendors"></div></section>
-    <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
+    <section class="panel span-2"><header><h2>New devices per day</h2><span class="faint">devices, radios and nodes first heard</span></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
     <section class="panel"><header><h2>${ttl('', 'Session durations', hrefWith('/sessions', { type: 'assoc', days }))}</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
     <section class="panel" data-list="st-type"><header><h2>${ttl('st-type', 'Device types')}</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
     <section class="panel" data-list="st-brand"><header><h2>${ttl('st-brand', 'Brands')}</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${kindEntries().map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
@@ -1301,7 +1319,7 @@ async function viewStats(params) {
   chart(document.getElementById('newday'), {
     type: 'bar',
     data: { labels: daysList.map(d => new Date(d * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' })),
-      datasets: kindEntries().map(([k, m]) => ({ label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
+      datasets: hourKinds.map(([k, m]) => ({ label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
         data: daysList.map(d => (s.new_per_day.find(r => r.day === d && r.kind === k) || { n: 0 }).n) })) },
     options: { maintainAspectRatio: false, scales: { x: { stacked: true, grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ stacked: true }) } },
   });

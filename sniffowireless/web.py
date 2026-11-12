@@ -681,15 +681,21 @@ def create_app(ctx):
                 wd = (day + 3) % 7
                 weekly[(wd, h)] = weekly.get((wd, h), 0) + r["n"]
             for r in radio:
-                key = (r["lh"] % 24, r["kind"])
-                hourly[key] = hourly.get(key, 0) + r["n"]
+                day, h = divmod(r["lh"], 24)
+                hourly[(h, r["kind"])] = hourly.get((h, r["kind"]), 0) + r["n"]
+                wd = (day + 3) % 7
+                weekly[(wd, h)] = weekly.get((wd, h), 0) + r["n"]
             ndays = max(len({r["lh"] // 24 for r in cells}), len({r["lh"] // 24 for r in radio}), 1)
             return {"hourly": {"days": ndays, "rows": [{"h": h, "kind": k, "n": n} for (h, k), n in hourly.items()]},
                     "weekly_heat": [{"wd": wd, "h": h, "n": n} for (wd, h), n in weekly.items()]}
 
         def new():
-            return {"new_per_day": rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
-                                        "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day", (off, off, since)),
+            per_day = rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
+                           "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day", (off, off, since))
+            # Zigbee radios and LoRa nodes first heard, from their own tables
+            for kind, mod in (("zigbee", zigbee), ("lora", lora)):
+                per_day += [{"day": r["day"], "kind": kind, "n": r["n"]} for r in mod.new_per_day(ctx, since, off)]
+            return {"new_per_day": sorted(per_day, key=lambda r: r["day"]),
                     # New vendors: the first time ever (not just in this period) a vendor was seen, if that fell in
                     # this period: distinct from "new devices per day", which is usually dominated by randomized-MAC
                     # churn; this filters down to genuinely new kinds of hardware showing up nearby.

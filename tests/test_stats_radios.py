@@ -103,3 +103,44 @@ def test_activity_by_hour_counts_zigbee_radios_and_lora_nodes(tmp_path):
     # the local hour follows the timezone, like the devices do
     shifted = {(r["kind"], r["h"]) for r in c.get("/api/stats?days=1&tz=-60").json()["hourly"]["rows"]}
     assert shifted == {("zigbee", (hour + 3600) % 86400 // 3600), ("lora", (hour + 3600) % 86400 // 3600)}
+
+
+def test_breakdown_charts_name_the_filter_they_link_to(client):
+    s = client.get("/api/stats?days=1").json()
+    assert [c["key"] for c in s["zigbee"]["charts"]] == ["protocol", "role", "device", "power", "vendor"]
+    assert [c["key"] for c in s["lora"]["charts"]] == ["protocol", "type", "settings", "position"]
+
+
+def test_the_lists_file_each_radio_the_way_the_breakdown_counts_it(client):
+    """The Zigbee and LoRa pages filter on `cat`: it has to agree with the Statistics breakdown, or a slice opens the wrong list."""
+    s = client.get("/api/stats?days=1").json()
+    for page, items, block in (("/api/zigbee?hours=24", "radios", "zigbee"), ("/api/lora?hours=24", "nodes", "lora")):
+        listed = client.get(page).json()[items]
+        assert len(listed) == s[block]["total"]
+        for c in s[block]["charts"]:
+            counted = {}
+            for x in listed:
+                counted[x["cat"][c["key"]]] = counted.get(x["cat"][c["key"]], 0) + 1
+            assert counted == {r["v"]: r["n"] for r in c["rows"]}, c["key"]
+
+
+def test_new_per_day_and_weekly_pattern_count_radios_and_nodes(client, tmp_path):
+    s = client.get("/api/stats?days=1").json()
+    new = {}
+    for r in s["new_per_day"]:
+        new[r["kind"]] = new.get(r["kind"], 0) + r["n"]
+    assert new.get("zigbee") == 5 and new.get("lora") == 3
+    assert [r["day"] for r in s["new_per_day"]] == sorted(r["day"] for r in s["new_per_day"])
+
+
+def test_weekly_pattern_counts_radios(tmp_path):
+    status.SENSORS.clear()
+    ctx = build(Config(db_path=str(tmp_path / "w.db"), data_dir=str(tmp_path)))
+    hour = int(time.time() - 7200) // 3600 * 3600
+    with ctx.wdb() as w:
+        w.execute("INSERT INTO users(username, pw_hash, role, created) VALUES('view', ?, 'viewer', 0)", (hash_password(PW, iterations=1000),))
+        w.executemany("INSERT INTO radio_seen VALUES(?, ?, ?)", [(hour, "zigbee", "1:0x0000"), (hour, "lora", "meshtastic:!a1")])
+    c = TestClient(create_app(ctx), base_url="http://sniffowireless.test", headers={"x-sniffowireless": "1"})
+    c.post("/api/auth/login", json={"username": "view", "password": PW})
+    heat = c.get("/api/stats?days=1").json()["weekly_heat"]
+    assert heat == [{"wd": (hour // 86400 + 3) % 7, "h": hour % 86400 // 3600, "n": 2}]
