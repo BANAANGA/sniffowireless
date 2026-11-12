@@ -243,6 +243,30 @@ def present(sched, mac, t):
 
 
 # ---------------------------------------------------------------- multi-sensor / rooms / security demo
+# Interfaces of the simulated sensors, with the hardware details a real one reports (hwinfo.py); remote names are as the sensor sends them.
+DEMO_INTERFACES = {
+    "local": [
+        {"name": "wifi:wlan1", "type": "wifi", "iface": "wlan1", "mon": "wlan1mon", "channel": "36", "bands": ["2.4", "5", "6"], "pps": 210.0,
+         "hw_driver": "mt7921u", "hw_bus": "usb", "hw_usb": "0e8d:7961", "hw_maker": "MediaTek Inc.", "hw_product": "Wireless_Device", "hw_speed": "5000 Mbps", "hw_phy": "phy1"},
+        {"name": "bt:hci0", "type": "bluetooth", "iface": "hci0", "state": "scanning", "scan": "extended", "pps": 35.0, "bt_version": "5.4", "chip": "Realtek",
+         "caps": ["2M PHY", "Coded PHY", "Extended advertising", "Periodic advertising"], "hw_driver": "btusb", "hw_bus": "usb", "hw_usb": "2357:0604",
+         "hw_maker": "TP-Link", "hw_product": "UB500 Plus", "hw_speed": "12 Mbps"},
+        {"name": "zigbee:ttyUSB0", "type": "zigbee", "iface": "/dev/ttyUSB0", "zb_channels": [15, 20, 25], "firmware": "EmberZNet 7.4.4", "pps": 3.0,
+         "hw_driver": "cp210x", "hw_bus": "usb", "hw_usb": "10c4:ea60", "hw_maker": "ITead", "hw_product": "Sonoff Zigbee 3.0 USB Dongle Plus V2", "hw_speed": "12 Mbps"},
+        {"name": "lora:ttyACM0", "type": "lora", "iface": "/dev/ttyACM0", "state": "listening", "profile": "meshtastic-eu868", "fw_version": 4, "pps": 0.2,
+         "hw_driver": "cdc_acm", "hw_bus": "usb", "hw_usb": "303a:1001", "hw_maker": "Espressif", "hw_product": "USB JTAG/serial debug unit", "hw_speed": "12 Mbps"},
+    ],
+    "living-room": [
+        {"name": "wifi:wlan0", "type": "wifi", "iface": "wlan0", "channel": "6", "bands": ["2.4", "5"], "pps": 95.0,
+         "hw_driver": "mt76x2u", "hw_bus": "usb", "hw_usb": "0e8d:7612", "hw_maker": "MediaTek Inc.", "hw_product": "802.11 n/ac WLAN", "hw_speed": "480 Mbps", "hw_phy": "phy0"},
+        {"name": "bt:hci0", "type": "bluetooth", "iface": "hci0", "state": "scanning", "pps": 22.0, "bt_version": "5.0", "chip": "Broadcom",
+         "caps": ["2M PHY", "Extended advertising"], "hw_driver": "hci_uart_bcm", "hw_bus": "serial"},
+    ],
+    "office": [
+        {"name": "bt:hci0", "type": "bluetooth", "iface": "hci0", "state": "scanning", "scan": "extended", "pps": 18.0, "bt_version": "5.3", "chip": "Intel",
+         "caps": ["2M PHY", "Coded PHY", "Extended advertising", "LE Audio"], "hw_driver": "btusb", "hw_bus": "usb", "hw_usb": "8087:0032", "hw_maker": "Intel Corp.", "hw_speed": "12 Mbps"},
+    ],
+}
 SENSORS = [("local", "This server", "Hallway", 0.50, 0.78), ("living-room", "Living room sensor", "Living room", 0.24, 0.32),
            ("office", "Office sensor", "Office", 0.78, 0.30)]
 ROOMS = ["Hallway", "Living room", "Office"]
@@ -672,9 +696,26 @@ class DemoGenerator:
     def _sensors_alive(self):
         if self.ctx:  # the demo's remote sensors are simulated: keep them "online"
             self.ctx.execute("UPDATE sensors SET last_seen=?", (time.time(),))
+        self._interfaces()
+
+    def _interfaces(self):
+        """Simulated interfaces with their hardware, so the Sensors page and the overview have something to show. Marked demo, so
+        the UI offers no reset for them."""
+        from . import status
+        rnd = random.Random(int(time.time() // 30))
+        now = time.time()
+        for sid, entries in DEMO_INTERFACES.items():
+            live = [{**e, "pps": round(e["pps"] * rnd.uniform(0.7, 1.3), 1), "packets": int(now - 1.79e9) * int(e["pps"]) % 10 ** 9,
+                     "state": e.get("state", "capturing"), "demo": True} for e in entries]
+            if sid == "local":
+                for e in live:
+                    status.SENSORS[e["name"]] = {**status.SENSORS.get(e["name"], {}), **e, "since": now - 3600}
+            else:
+                status.replace_remote(sid, live, now)
 
     def run(self, stop):
         state = getattr(self, "_conn_state", {})
+        self._interfaces()
         while not stop.wait(30):
             t = time.time()
             for o in self.observations(t - 55):

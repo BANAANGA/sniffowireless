@@ -4,12 +4,14 @@ Capture threads push observation dicts onto a queue. A single writer thread
 turns them into device records, presence and connection sessions, per-minute
 signal samples and events, and flushes everything in batched transactions.
 """
+import collections
 import json
 import logging
 import os
 import queue
 import re
 import sqlite3
+import threading
 import time
 
 from . import apclock, btversion, identify, macprivacy, ossig, scanbehavior, wifiattrs
@@ -105,6 +107,10 @@ ADDED_COLS = {"band": "TEXT", "brand": "TEXT", "model": "TEXT", "dev_type": "TEX
               "pos_x": "REAL", "pos_y": "REAL", "ip": "TEXT"}
 
 WIFI_KINDS = ("ap", "wifi_client")
+FOLLOW_TTL = 60          # a device stays followed this long after the Sensors page last asked for it
+FOLLOW_KEEP = 15 * 60    # readings of followed devices are kept this long
+FOLLOW_MAX = 32          # devices followed at once, over all open pages
+FOLLOW_POINTS = 20_000   # readings kept per device (a busy device can be heard many times a second)
 BT_KINDS = ("ble", "bt_classic")
 LAN_KIND = "lan"  # seen only on the wired / LAN side
 # Within a radio family a device can be "upgraded" (a client that starts beaconing is an AP,
@@ -234,6 +240,10 @@ class Store:
         self.group_names = {}
         self.group_present = {}  # group id -> set of present member macs
         self.sightings = {}     # (mac, sensor) -> [last_seen, rssi ewma]
+        # Devices someone is watching live on the Sensors page: every signal reading of theirs, per sensor, for a few minutes.
+        self.follow = {}        # mac -> until when it is followed (the page renews this each time it asks)
+        self.follow_buf = {}    # mac -> deque of (ts, sensor, rssi)
+        self.follow_lock = threading.Lock()
         self.sightings_dirty = set()
         self.hooks = []         # plugins with optional observe(store, o, dev) / sweep(store, now) / flush(store, c)
         self.listeners = []     # called with newly committed events (list of dicts)
@@ -587,6 +597,11 @@ class Store:
             else:
                 sg[0], sg[1] = max(sg[0], ts), sg[1] * 0.7 + rssi * 0.3
             self.sightings_dirty.add(k)
+            if self.follow and mac in self.follow:
+                with self.follow_lock:
+                    buf = self.follow_buf.get(mac)
+                    if buf is not None:
+                        buf.append((ts, k[1], rssi))
 
         if t == "wifi_ap":
             dev = self._device(mac, "ap", ts, rssi, o, ("ssid", "channel", "freq", "band", "enc", "vendor"))
@@ -957,6 +972,25 @@ class Store:
                 h.prune(self, c, cutoff)
         c.execute("COMMIT")
         c.execute("PRAGMA optimize")
+
+    def follow_signal(self, macs, after, now):
+        """Follow these devices for FOLLOW_TTL more seconds and return their readings newer than `after`, per device:
+        [(ts, sensor, rssi)]. Readings older than FOLLOW_KEEP are dropped, and so are devices nobody followed for that long."""
+        out = {}
+        with self.follow_lock:
+            for m in [m for m, until in self.follow.items() if until < now]:
+                del self.follow[m]
+            for m in [m for m, b in self.follow_buf.items() if m not in self.follow and (not b or b[-1][0] < now - FOLLOW_KEEP)]:
+                del self.follow_buf[m]
+            for m in macs:
+                if m not in self.follow and len(self.follow) >= FOLLOW_MAX:
+                    continue  # bounded, whatever the number of open pages
+                self.follow[m] = now + FOLLOW_TTL
+                buf = self.follow_buf.setdefault(m, collections.deque(maxlen=FOLLOW_POINTS))
+                while buf and buf[0][0] < now - FOLLOW_KEEP:
+                    buf.popleft()
+                out[m] = [p for p in buf if p[0] > after]
+        return out
 
     def stats(self):
         try:

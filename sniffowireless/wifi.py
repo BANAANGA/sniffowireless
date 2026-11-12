@@ -11,7 +11,7 @@ from scapy.layers.dot11 import (Dot11, Dot11AssoResp, Dot11Beacon, Dot11Deauth, 
                                 Dot11Elt, Dot11ProbeResp, Dot11ReassoResp, RadioTap)
 from scapy.layers.eap import EAPOL
 
-from . import capture, status
+from . import capture, hwinfo, status
 from .config import band_of, chan_label, freq_to_channel
 from .handshake import eapol_message
 from .identify import wifi_fingerprint
@@ -412,7 +412,7 @@ class WifiSensor:
         self.stop = None
         self.hop_interval = cfg.wifi_hop_interval
         self._changed = threading.Event()  # set when the channel list / hop interval changes, to wake the hopper
-        status.register(self.name, type="wifi", iface=iface, channel=None, band=None,
+        status.register(self.name, type="wifi", iface=iface, channel=None, band=None, **hwinfo.net(iface),
                         channels=[chan_label(f) for f in self.channels],
                         bands=sorted({band_of(f) for f in self.channels}))
 

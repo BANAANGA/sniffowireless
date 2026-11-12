@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import adapters, capture, status
+from . import adapters, capture, hwinfo, status
 from .auth import current_user, require_admin
 from . import meshtastic
 from .lora_protocols import AIR_PREAMBLE, LORAWAN_PLANS, PROFILES, PROTOCOLS, airtime_ms, classify, parse_profiles
@@ -224,7 +224,7 @@ class LoraSensor:
         self.link, self.reset_requested = None, threading.Event()
         self.flashing, self.port_lock = threading.Event(), threading.Lock()  # a firmware update has the port: the loop stays away
         adapters.REGISTRY[self.name] = self
-        status.register(self.name, type="lora", iface=device, profiles=[p.name for p in self.control.effective()[0]], lora_rev=self.control.rev)
+        status.register(self.name, type="lora", iface=device, **hwinfo.serial(device), profiles=[p.name for p in self.control.effective()[0]], lora_rev=self.control.rev)
 
     def start(self, stop):
         self.stop = stop
