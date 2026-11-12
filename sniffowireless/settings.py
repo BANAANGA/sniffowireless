@@ -14,7 +14,7 @@ DEFAULTS = {
     "handshake": {"ssids": []},
     "security": {"deauth_threshold": 25, "deauth_window": 10, "karma_ssids": 4, "karma_window": 600,
                  "hs_cycles": 4, "hs_window": 300, "probe_ssids": 30, "probe_window": 120},
-    "report": {"email": False, "notifier_id": None, "weekday": 0, "hour": 8, "last_sent": 0},
+    "report": {"email": False, "notifier_id": None, "weekday": 0, "hour": 8, "last_sent": 0, "daily": False},
     "floorplan": {"image": None, "width": None, "height": None},
     "lan": {"trusted_dhcp": []},
     "backup": {"enabled": False, "hour": 3, "keep": 7, "last_run": 0},

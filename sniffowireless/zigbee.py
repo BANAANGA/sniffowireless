@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import adapters, status
+from . import adapters, capture, status
 from .auth import current_user, require_admin
 from .zigbee_radio import (ALL_CHANNELS, CAP_MAINS, CAP_RX_IDLE, HINTS, ROLE_GP_SWITCH, ROLE_GREEN_POWER, ROLE_LABELS, ROUTER_MASK, TYPE_NAMES, FrameBatch,
                            NoCaptureMode, ZigbeeError, capability_labels, detect, role_of)
@@ -80,22 +80,34 @@ def _counted(values):
     return [{"v": v, "n": c} for v, c in sorted(n.items(), key=lambda x: -x[1])]
 
 
+BREAKDOWN = (("protocol", "Protocol"), ("role", "Role"), ("device", "Probable device"), ("power", "Power"), ("vendor", "Vendor"))
+
+
+def categories(addr, hint, roles, caps, vendor):
+    """How one radio is filed in the Statistics breakdown and the filters of the Zigbee page (None = not known). `hint` is the name."""
+    roles = roles or 0
+    guess = device_guess(addr, roles, caps, hint)
+    return {"protocol": PROTOCOL_NAMES.get(hint),
+            "role": "Coordinator" if hint == "zigbee" and addr == "0x0000" else ROLE_NAMES.get(role_of(roles)),
+            "device": guess.split(" (")[0].split(":")[0] if guess else None,
+            "power": "No battery (Green Power)" if roles & ROLE_GREEN_POWER else None if caps is None
+            else "Mains powered" if caps & CAP_MAINS else "Battery powered",
+            "vendor": vendor or None}
+
+
 def breakdown(ctx, since):
     """The Statistics page's breakdown of the 802.15.4 radios heard since `since`: by protocol, role, what the device probably is,
     power and maker. All from the unencrypted headers, so "unknown" is common."""
     radios = ctx.rows("SELECT addr, hint, roles, caps, vendor FROM zigbee_radios WHERE last_seen >= ?", (since,))
-    protocol, role, device, power = [], [], [], []
-    for d in radios:
-        hint = HINTS[d["hint"]] if 0 <= (d["hint"] or 0) < len(HINTS) else "unknown"
-        roles, caps = d["roles"] or 0, d["caps"]
-        guess = device_guess(d["addr"], roles, caps, hint)
-        protocol.append(PROTOCOL_NAMES.get(hint))
-        role.append("Coordinator" if hint == "zigbee" and d["addr"] == "0x0000" else ROLE_NAMES.get(role_of(roles)))
-        device.append(guess.split(" (")[0].split(":")[0] if guess else None)
-        power.append("No battery (Green Power)" if roles & ROLE_GREEN_POWER else None if caps is None
-                     else "Mains powered" if caps & CAP_MAINS else "Battery powered")
-    return {"total": len(radios), "charts": [{"title": t, "rows": _counted(v)} for t, v in (
-        ("Protocol", protocol), ("Role", role), ("Probable device", device), ("Power", power), ("Vendor", [d["vendor"] for d in radios]))]}
+    cats = [categories(d["addr"], HINTS[d["hint"]] if 0 <= (d["hint"] or 0) < len(HINTS) else "unknown", d["roles"], d["caps"], d["vendor"])
+            for d in radios]
+    return {"total": len(radios), "charts": [{"key": k, "title": t, "rows": _counted([c[k] for c in cats])} for k, t in BREAKDOWN]}
+
+
+def new_per_day(ctx, since, off):
+    """[{day, n}] radios first heard per local day (day = its start, like the devices' own count)."""
+    return ctx.rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, COUNT(*) n FROM zigbee_radios WHERE first_seen >= ? "
+                    "GROUP BY day", (off, off, since))
 
 
 BAUD_RATE = 115200
@@ -337,6 +349,8 @@ class ZigbeeSensor:
         last_report = [time.monotonic()]
 
         def on_frame(captured):
+            if capture.RECORDER.active:
+                capture.RECORDER.record("zigbee", self.name, captured["data"], channel=captured.get("channel"), rssi=captured.get("rssi"), lqi=captured.get("lqi"))
             batch.add(captured)
             self.packets += 1
             now = time.monotonic()
@@ -669,6 +683,7 @@ def routes(ctx):
             d["behaviour"] = [label for bit, label in ROLE_LABELS if (d["roles"] or 0) & bit]
             d["power"] = capability_labels(d.get("caps"))
             d["device"] = device_guess(d["addr"], d["roles"] or 0, d.get("caps"), d["hint"])
+            d["cat"] = categories(d["addr"], d["hint"], d["roles"], d.get("caps"), d.get("vendor"))
         frames = {x["channel"]: x["frames"] for x in ctx.rows(
             "SELECT channel, SUM(frames) frames FROM zigbee_channels WHERE minute >= ? GROUP BY channel", (since,))}
         energy = {x["channel"]: x for x in ctx.rows(

@@ -486,13 +486,13 @@ addRoute('/reports', async (_, params) => {
   const s = r.summary;
   const rcfg = await api('/api/settings/report');
   app.innerHTML = `<div class="page-head"><div><h1>Occupancy report</h1><div class="sub">${dt(r.since)} – ${dt(r.until)}</div></div>
-    <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} <button class="btn" id="print">Print / PDF</button>${isAdmin() ? ' <button class="btn" id="send-now">Email weekly report now</button>' : ''}</div></div>
+    <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} <button class="btn" id="print">Print / PDF</button>${isAdmin() ? ' <button class="btn" id="send-now">Send report now</button>' : ''}</div></div>
     <div class="grid cols-4">${[['People (estimated)', s.unique, `${s.new} new`], ['Average present', s.avg_present, 'per hour'], ['Peak', s.peak, s.peak_at ? new Date(s.peak_at * 1000).toLocaleString([], clockOpts({ weekday: 'short', hour: '2-digit', minute: '2-digit' })) : ''],
       ['Median visit', dur(s.median_dwell), 'per person per day']].map(([l, v, m]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div><div class="meta">${esc(m)}</div></div>`).join('')}</div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-3"><header><h2>People present per hour</h2></header><div class="body"><div class="chart-box"><canvas id="occ"></canvas></div></div></section>
       <section class="panel span-2"><header><h2>Typical week</h2><span class="faint">average people present</span></header><div class="body" id="occ-heat"></div></section>
-      <section class="panel"><header><h2>Weekly email</h2></header><div class="body small-text">${rcfg.email ? `Sent every ${WEEKDAYS[rcfg.weekday]} at ${String(rcfg.hour).padStart(2, '0')}:00${rcfg.last_sent ? `; last sent ${dt(rcfg.last_sent)}` : ''}.` : 'Not scheduled.'} <a href="#/settings?tab=report" class="no-print">Configure</a></div></section>
+      <section class="panel"><header><h2>Scheduled report</h2></header><div class="body small-text">${rcfg.email ? `Sent every ${rcfg.daily ? 'day' : WEEKDAYS[rcfg.weekday]} at ${String(rcfg.hour).padStart(2, '0')}:00${rcfg.last_sent ? `; last sent ${dt(rcfg.last_sent)}` : ''}.` : 'Not scheduled.'} <a href="#/settings?tab=report" class="no-print">Configure</a></div></section>
       <section class="panel span-3"><header><h2>Per day</h2></header><div class="body flush">${tableHtml('<th>Day</th><th class="num">People</th><th class="num">New</th><th class="num">Returning</th><th class="num">Peak</th><th class="num">Median visit</th>',
         r.days.slice().reverse().map(d => `<tr><td>${new Date(d.day * 1000).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}</td><td class="num">${d.people}</td><td class="num muted">${d.new}</td><td class="num muted">${d.returning}</td><td class="num">${d.peak}</td><td class="num">${dur(d.median_dwell)}</td></tr>`).join(''), 'No data in this range')}</div></section>
     </div><p class="faint small-text" style="margin-top:12px">${esc(r.method)}</p>`;
@@ -527,10 +527,11 @@ const SETTINGS_GROUPS = [
     ['lorabands', 'LoRa bands', 'wave', 'Frequencies the LoRa boards listen on, per sensor', 'meshtastic lorawan region', 'lora'],
     ['zigbee', 'Zigbee', 'hex', 'Channels, hop and scan timing of each Zigbee stick, per sensor', 'thread 802.15.4 channel', 'zigbee'],
     ['loraflasher', 'LoRa flasher', 'chip', 'Write the sniffer firmware to a LoRa board', 'firmware heltec flash'],
+    ['capture', 'Frame recording', 'record', 'Record what the radios hear to a file, to check identification against real devices', 'capture pcap replay sample raw debug'],
   ]],
   ['Alerts & integrations', [
     ['notify', 'Notifications', 'bell', 'Where alerts are sent: email, ntfy, Telegram, webhooks', 'email smtp ntfy telegram webhook'],
-    ['report', 'Weekly report', 'calendar', 'A weekly occupancy and activity summary', 'email summary'],
+    ['report', 'Scheduled report', 'calendar', 'A daily or weekly occupancy and activity summary', 'email summary weekly daily digest'],
     ['mqtt', 'MQTT', 'link', 'Presence for labelled devices, e.g. for Home Assistant', 'home assistant broker'],
     ['tokens', 'API tokens', 'key', 'Tokens for Prometheus and scripts', 'bearer prometheus metrics api'],
   ]],
@@ -549,6 +550,7 @@ const SETTINGS_GROUPS = [
 const SETTINGS_VIEWER = ['account', 'networks', 'investigate', 'ignore', 'about'];
 // Small line icons (24×24, stroke = currentColor).
 const SET_ICONS = {
+  record: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2.4.6 4 2.3 4 5.2"/>',
   home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
@@ -832,17 +834,53 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
     el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (confirm('Delete this channel?')) { await send('DELETE', `/api/notifiers/${b.dataset.del}`); SETTINGS_VIEWS.notify(el); } });
     el.querySelectorAll('[data-test]').forEach(b => b.onclick = async () => { b.disabled = true; try { await send('POST', `/api/notifiers/${b.dataset.test}/test`); toast('Test sent'); } catch (e) { toast(e.message, true); } b.disabled = false; });
   },
+  async capture(el) {
+    const RADIO_NAMES = { wifi: 'Wi-Fi', bt: 'Bluetooth', zigbee: 'Zigbee / Thread', lora: 'LoRa' };
+    const draw = async () => {
+      const c = await api('/api/captures');
+      const a = c.active;
+      el.innerHTML = `<section class="panel"><header><h2>Frame recording</h2></header><div class="body">
+        <p class="muted" style="margin-top:0">Records what this server's own radios hear, exactly as they deliver it, to a file. Play the file back with
+          <code>python -m sniffowireless replay FILE</code> to see what the parsers make of it: useful to check identification against real devices and to keep samples for testing.</p>
+        <div class="callout">A recording holds <b>real addresses and device names</b>, whatever the privacy settings are. Of Wi-Fi data frames only the headers are kept, never their contents. Only share a file with people who may see which devices were near you.</div>
+        ${c.blocked ? `<div class="callout"><span class="err">${esc(c.blocked)}.</span> Switch it off first, or record on a test setup.</div>` : ''}
+        ${a ? `<p><b>Recording</b> ${esc(a.radios.map(r => RADIO_NAMES[r]).join(', '))} · ${num(a.frames)} frames · stops in ${dur(Math.max(0, Math.round(a.until - Date.now() / 1000)))}</p>
+          <button class="btn" id="cap-stop">Stop now</button>`
+        : `<form id="capf" class="form-narrow"><div class="row">${Object.entries(RADIO_NAMES).map(([k, l]) => `<label class="check"><input type="checkbox" name="r-${k}" checked> ${l}</label>`).join('')}</div>
+          <label class="field">For how long<select name="seconds">${[[30, '30 seconds'], [60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour']].map(([v, l]) => `<option value="${v}" ${v === 60 ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <button class="btn primary" ${c.blocked ? 'disabled' : ''}>Start recording</button>
+          <p class="faint small-text">It stops by itself after that time, or at 64 MB. On a remote sensor, start it with <code>CAPTURE_AT_START=&lt;seconds&gt;</code>; the file is then written on that sensor.</p></form>`}
+        </div></section>
+        <section class="panel" style="margin-top:16px"><header><h2>Recordings</h2><span class="faint">${c.files.length} of at most ${c.max_files}</span></header><div class="body flush">${tableHtml(
+          '<th>File</th><th class="num">Size</th><th class="num">Made</th><th></th>',
+          c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
+            <td class="num"><a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
+      const f = el.querySelector('#capf');
+      if (f) f.onsubmit = async e => { e.preventDefault();
+        try { await send('POST', '/api/captures', { seconds: +f.seconds.value, radios: Object.keys(RADIO_NAMES).filter(k => f[`r-${k}`].checked) }); toast('Recording'); } catch (err) { toast(err.message, true); }
+        draw(); };
+      const stop = el.querySelector('#cap-stop');
+      if (stop) stop.onclick = async () => { await send('POST', '/api/captures/stop'); draw(); };
+      el.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => { if (!confirm(`Delete ${b.dataset.del}?`)) return; await send('DELETE', `/api/captures/${enc(b.dataset.del)}`); draw(); });
+      if (a) setTimeout(() => { if (el.isConnected && el.querySelector('#cap-stop')) draw(); }, 2000);
+    };
+    await draw();
+  },
   async report(el) {
     const [cfg, ns] = await Promise.all([api('/api/settings/report'), api('/api/notifiers')]);
-    el.innerHTML = `<section class="panel"><header><h2>Weekly report</h2></header><div class="body"><form id="rf" class="form-narrow">
-      <label class="check"><input type="checkbox" name="email" ${cfg.email ? 'checked' : ''}> Send a weekly occupancy &amp; activity summary</label>
+    el.innerHTML = `<section class="panel"><header><h2>Scheduled report</h2></header><div class="body"><form id="rf" class="form-narrow">
+      <label class="check"><input type="checkbox" name="email" ${cfg.email ? 'checked' : ''}> Send an occupancy &amp; activity summary</label>
+      <label class="field">How often<select name="daily"><option value="0">Every week, over the last 7 days</option><option value="1" ${cfg.daily ? 'selected' : ''}>Every day, over the last 24 hours</option></select></label>
       <label class="field">Send via<select name="notifier_id"><option value="">Choose a channel…</option>${ns.map(n => `<option value="${n.id}" ${n.id === cfg.notifier_id ? 'selected' : ''}>${esc(n.name)} (${esc(n.type)})</option>`).join('')}</select></label>
-      <div class="row"><label class="field">Day<select name="weekday">${WEEKDAYS.map((d, i) => `<option value="${i}" ${i === +cfg.weekday ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+      <div class="row"><label class="field" id="rf-day">Day<select name="weekday">${WEEKDAYS.map((d, i) => `<option value="${i}" ${i === +cfg.weekday ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
       <label class="field">Hour<input type="number" name="hour" min="0" max="23" value="${cfg.hour}"></label></div>
       <button class="btn primary">Save</button> <button type="button" class="btn" id="send">Send now</button>
-      <p class="faint small-text">${cfg.last_sent ? 'Last sent ' + dt(cfg.last_sent) : 'Never sent'}. Email channels get an HTML report; other channels a text summary. See also <a href="#/reports">Reports</a>.</p></form></div></section>`;
+      <p class="faint small-text">${cfg.last_sent ? 'Last sent ' + dt(cfg.last_sent) : 'Never sent'}. Email channels get an HTML report; other channels a text summary. Besides the occupancy figures it lists new devices, possible trackers, security events and warnings, and remote sensors that are offline. See also <a href="#/reports">Reports</a>.</p></form></div></section>`;
     const f = el.querySelector('#rf');
-    f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour') }); toast('Saved'); };
+    const dayField = () => { el.querySelector('#rf-day').hidden = f.daily.value === '1'; };
+    f.daily.onchange = dayField;
+    dayField();
+    f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour'), daily: f.daily.value === '1' }); toast('Saved'); };
     el.querySelector('#send').onclick = async () => { try { await send('POST', '/api/reports/send'); toast('Report sent'); } catch (e) { toast(e.message, true); } };
   },
   async mqtt(el) {

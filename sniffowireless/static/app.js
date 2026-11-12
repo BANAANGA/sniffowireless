@@ -227,6 +227,23 @@ function onSeg(root, name, fn) {
     fn(b.dataset.v);
   });
 }
+// Filters of the Zigbee and LoRa pages: one dropdown per category the server files a radio under (item.cat), kept in the URL so the
+// Statistics breakdown can link to a filtered list. "Unknown" stands for a category that is not known (null).
+function radioFilter(path, params, defs, items, keep) {
+  const val = (x, k) => (x.cat || {})[k] == null ? 'Unknown' : String(x.cat[k]);
+  const active = Object.fromEntries(defs.map(([k]) => [k, params.get(k) || '']).filter(([, v]) => v));
+  const shown = items.filter(x => Object.entries(active).every(([k, v]) => val(x, k) === v));
+  const go = change => hrefWith(path, { ...keep, ...active, ...change });
+  const html = `<span class="row radio-filter">${defs.map(([k, label]) => {
+    const n = {};
+    items.forEach(x => { n[val(x, k)] = (n[val(x, k)] || 0) + 1; });
+    if (active[k] && !n[active[k]]) n[active[k]] = 0;
+    return `<select data-rf="${k}" aria-label="${esc(label)}"${active[k] ? ' class="on"' : ''}><option value="">${esc(label)}: all</option>${Object.entries(n).sort((a, b) => b[1] - a[1])
+      .map(([v, c]) => `<option value="${esc(v)}"${active[k] === v ? ' selected' : ''}>${esc(v)} (${c})</option>`).join('')}</select>`;
+  }).join('')}${Object.keys(active).length ? `<a class="btn small ghost" href="${hrefWith(path, keep)}">Clear</a>` : ''}</span>`;
+  const bind = root => root.querySelectorAll('select[data-rf]').forEach(el => { el.onchange = () => { location.hash = go({ [el.dataset.rf]: el.value }); }; });
+  return { shown, html, bind, active, count: Object.keys(active).length };
+}
 function hrefWith(path, params) {
   const p = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '' && v !== false) p.set(k, v); });
@@ -441,6 +458,7 @@ const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
 
 // Stat cards in even rows: as many per row as fit (at least ~150 px each), then spread so no row is left with one or two
 // (7 cards: one row of 7 when it fits, else 4 + 3). Phones keep their two columns from the stylesheet.
+const peopleRange = p => p.low === p.high ? num(p.low) : `${num(p.low)}–${num(p.high)}`;
 function balanceCards(el) {
   if (!el) return;
   const fit = () => {
@@ -550,6 +568,14 @@ async function viewOverview(params) {
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span></div></div>`);
     });
+    // People nearby: a range, from phones heard in the last 5 minutes (see Statistics for the graph and what it means)
+    if (s.people && (modOn('wifi') || modOn('bluetooth'))) {
+      const p = s.people;
+      document.getElementById('cards').insertAdjacentHTML('beforeend', `<div class="card link" data-href="#/stats" title="An estimate from the phones heard in the last 5 minutes: at least ${p.low}, at most ${p.high}. Not a head count.">
+        <div class="label"><span class="swatch" style="background:#e7e9ee"></span>People nearby</div>
+        <div class="value">${peopleRange(p)}<small>estimate</small></div>
+        <div class="meta"><span>${num(p.wifi)} Wi-Fi · ${num(p.bluetooth)} Bluetooth phones</span></div></div>`);
+    }
     balanceCards(document.getElementById('cards'));
     document.querySelectorAll('#cards .card').forEach(c => c.onclick = e => { if (!e.target.closest('a')) location.hash = c.dataset.href; });
     const ev = s.events;
@@ -751,14 +777,14 @@ async function viewOverview(params) {
 }
 
 function eventRow(e, full = false) {
-  const rf = (e.mac || '').startsWith('rf:');
-  const who = rf ? `${esc(e.mac.slice(3))} GHz radio` : e.label || (e.kind === 'ap' ? (e.ssid || e.mac) : (e.name || e.vendor || e.mac));
+  const rf = (e.mac || '').startsWith('rf:'), site = e.mac === 'site';  // 'site': an event about the place as a whole (baseline)
+  const who = site ? 'This place' : rf ? `${esc(e.mac.slice(3))} GHz radio` : e.label || (e.kind === 'ap' ? (e.ssid || e.mac) : (e.name || e.vendor || e.mac));
   let detail = '';
   if (e.peer && e.peer.startsWith('ssid:')) detail = `<a href="#/investigation/${enc(e.peer.slice(5))}">dossier</a>`;
   else if (e.peer) detail = `→ ${isMac(e.peer) ? `<a href="#/device/${enc(e.peer)}">${esc(e.peer_ssid || e.peer)}</a>` : esc(e.peer)}`;
   if (e.detail && e.type !== 'new_device') detail += ` <span class="faint">${esc(e.detail)}</span>`;
   return `<li><span class="t" title="${esc(dt(e.ts))}">${full ? dt(e.ts) : ago(e.ts)}</span><span class="ev ev-${esc(e.type)}">${esc(e.type.replace(/_/g, ' '))}</span>
-    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.kind ? `<span class="swatch" style="background:${(KINDS[e.kind] || {}).color};margin-right:6px"></span>` : ''}${rf ? `<a href="#/channels">${esc(who)}</a>` : `<a href="#/device/${enc(e.mac)}">${esc(who)}</a>`} ${detail}</span></li>`;
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.kind ? `<span class="swatch" style="background:${(KINDS[e.kind] || {}).color};margin-right:6px"></span>` : ''}${site ? `<a href="#/stats">${who}</a>` : rf ? `<a href="#/channels">${esc(who)}</a>` : `<a href="#/device/${enc(e.mac)}">${esc(who)}</a>`} ${detail}</span></li>`;
 }
 function linkRows(root) {
   root.querySelectorAll('tr[data-href]').forEach(tr => tr.addEventListener('click', e => {
@@ -1176,7 +1202,7 @@ function breakdown(el, s, kind) {
   if (window.Chart) el.querySelectorAll('canvas').forEach(c => { const p = Chart.getChart(c); if (p) p.destroy(); });
   const of = (rows, key = 'v') => rows.filter(r => r.kind === kind).map(r => ({ v: r[key], n: r.n }));
   const radio = RADIO_BREAKDOWNS[kind], noun = radio ? radio[0] : 'devices';
-  const charts = radio ? ((s[kind] || {}).charts || []).map(c => [c.title, c.rows, null, v => v]) : [
+  const charts = radio ? ((s[kind] || {}).charts || []).map(c => [c.title, c.rows, c.key, v => v]) : [
     ['Device type', of(s.dev_type), 'dev_type', v => typeLabel(v)],
     ['Vendor', of(s.vendors, 'vendor').map(r => ({ v: r.v === 'Unknown' ? null : r.v, n: r.n })), 'vendor', v => v],
     ['Brand', of(s.brand), 'brand', v => v],
@@ -1188,7 +1214,7 @@ function breakdown(el, s, kind) {
   if (!radio) charts.push(['Movement', of(s.mobility), 'mobility', v => MOBILITY[v] || v]);
   const total = radio ? (s[kind] || {}).total || 0 : charts[0][1].reduce((a, r) => a + r.n, 0);
   const days = s.days || 1;
-  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${radio ? `${num(total)} ${kind === 'zigbee' ? '<span title="Zigbee, Thread and other IEEE 802.15.4">radios</span>' : 'nodes'} · <a href="${hrefWith(radio[1], { hours: days * 24 })}">open the ${kind === 'zigbee' ? 'Zigbee' : 'LoRa'} page</a>`
+  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${radio ? `${num(total)} ${kind === 'zigbee' ? '<span title="Zigbee, Thread and other IEEE 802.15.4">radios</span>' : 'nodes'} · click a slice or row for the ${noun}`
       : `${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices`}</span>
       ${seg('bkind', BREAKDOWN_KINDS.filter(([k]) => kindOn(k)), kind)}</header>
     <div class="body">${total ? `<div class="pie-grid">${charts.map((c, i) => `<div class="pie-card"><h3 class="subhead">${c[0]}</h3>
@@ -1208,7 +1234,8 @@ function breakdown(el, s, kind) {
     if (rest) slices.push({ k: known.length > PIE_TOP ? null : '', n: rest, name: known.length > PIE_TOP ? (unknown ? 'Other / unknown' : 'Other') : 'Unknown', color: FAINT });
     const sum = slices.reduce((a, x) => a + x.n, 0);
     const pct = n => `${Math.round(n / sum * 100)}%`;
-    const href = x => radio || x.k === null ? null : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
+    const href = x => x.k === null ? null : radio ? hrefWith(radio[1], { hours: days * 24, [key]: x.k === '' ? 'Unknown' : x.k })
+      : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
     document.getElementById(`pie-leg-${i}`).innerHTML = slices.map(x => {
       const h = href(x);
       return `<li${h ? ` data-href="${h}"` : ''}><span class="swatch" style="background:${x.color}"></span><span class="pl-name" title="${esc(x.name)}">${x.k === '' ? `<span class="faint">${esc(x.name)}</span>` : esc(x.name)}</span>
@@ -1248,11 +1275,14 @@ async function viewStats(params) {
   root.innerHTML = `
     <section class="panel span-3" id="breakdown"></section>
     <section class="panel span-3" id="per-sensor" hidden></section>
+    <section class="panel span-3" id="people" ${modOn('wifi') || modOn('bluetooth') ? '' : 'hidden'}><header><h2>People nearby</h2><span class="faint" id="people-sub">an estimate from phones heard, not a head count</span></header>
+      <div class="body"><div class="chart-box short"><canvas id="people-chart"></canvas></div>
+      <p class="faint small-text" style="margin:10px 0 0">Counted per 5 minutes from phones only: Bluetooth devices identified as a phone, and Wi-Fi clients that are a phone or use a random address without being identified. Devices that never move are left out. A phone usually shows on both radios, so the true number lies between the larger of the two counts (<b>at least</b>) and their sum (<b>at most</b>). People without a phone in range are missed.</p></div></section>
     <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices, radios and nodes per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>Weekly activity pattern</h2><span class="faint">relative busyness by day and hour</span></header><div class="body" id="weekheat"></div></section>
     <section class="panel" data-list="new-vendors"><header><h2>${ttl('new-vendors', 'New vendors')}</h2><span class="faint">first seen, ever, in this period</span></header><div class="body flush table-wrap" id="new-vendors"></div></section>
-    <section class="panel span-2"><header><h2>New devices per day</h2></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
+    <section class="panel span-2"><header><h2>New devices per day</h2><span class="faint">devices, radios and nodes first heard</span></header><div class="body"><div class="chart-box short"><canvas id="newday"></canvas></div></div></section>
     <section class="panel"><header><h2>${ttl('', 'Session durations', hrefWith('/sessions', { type: 'assoc', days }))}</h2>${seg('dtype', [['assoc', 'Connections'], ['presence', 'Visits']], 'assoc')}</header><div class="body"><div class="chart-box short"><canvas id="durs"></canvas></div></div></section>
     <section class="panel" data-list="st-type"><header><h2>${ttl('st-type', 'Device types')}</h2><span class="faint">identified</span></header><div class="body"><ul class="bars-list" id="st-type"></ul></div></section>
     <section class="panel" data-list="st-brand"><header><h2>${ttl('st-brand', 'Brands')}</h2><select id="vkind" style="padding:2px 6px"><option value="">All</option>${kindEntries().map(([k, m]) => `<option value="${k}">${m.short}</option>`).join('')}</select></header><div class="body"><ul class="bars-list" id="st-brand"></ul></div></section>
@@ -1282,6 +1312,21 @@ async function viewStats(params) {
     sensorPies(document.getElementById('per-sensor'), s.sensor_kinds || []);
   }
 
+  // people nearby: its own request, so the rest of the page does not wait for it
+  if (!listId && (modOn('wifi') || modOn('bluetooth'))) api(`/api/occupancy?hours=${Math.min(days * 24, 168)}`).then(o => {
+    const el = document.getElementById('people-chart');
+    if (!el) return;
+    document.getElementById('people-sub').textContent = `now ${peopleRange(o.now)} · an estimate from phones heard, not a head count${days * 24 > o.hours ? ' · last 7 days' : ''}`;
+    const xy = arr => o.t.map((x, i) => ({ x: x * 1000, y: arr[i] }));
+    chart(el, { type: 'line', data: { datasets: [
+      { label: 'At most', data: xy(o.high), borderColor: '#8b95a5', backgroundColor: 'rgba(76,194,255,.14)', fill: '+1', borderWidth: 1, pointRadius: 0, tension: .3 },
+      { label: 'At least', data: xy(o.low), borderColor: '#4cc2ff', fill: false, borderWidth: 1.5, pointRadius: 0, tension: .3 }] },
+      options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        scales: { x: { type: 'linear', min: o.t[0] * 1000, max: Date.now(), grid: { display: false }, ticks: { color: FAINT, maxTicksLimit: 8, callback: v => o.hours > 24 ? new Date(v).toLocaleDateString([], { weekday: 'short', hour: '2-digit' }) : new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } }, y: yScale({}) },
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, color: MUTED } },
+          tooltip: { callbacks: { title: c => new Date(c[0].parsed.x).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) } } } } });
+  }).catch(() => {});
+
   // hourly
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const hourKinds = [...kindEntries(), ...extraEntries()];  // Zigbee radios and LoRa nodes count too
@@ -1301,7 +1346,7 @@ async function viewStats(params) {
   chart(document.getElementById('newday'), {
     type: 'bar',
     data: { labels: daysList.map(d => new Date(d * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' })),
-      datasets: kindEntries().map(([k, m]) => ({ label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
+      datasets: hourKinds.map(([k, m]) => ({ label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
         data: daysList.map(d => (s.new_per_day.find(r => r.day === d && r.kind === k) || { n: 0 }).n) })) },
     options: { maintainAspectRatio: false, scales: { x: { stacked: true, grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ stacked: true }) } },
   });

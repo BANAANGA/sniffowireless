@@ -30,3 +30,33 @@ LoRa and Zigbee have their own events, usable in rules with the target *any* (th
 | Email | SMTP host, port, STARTTLS/SSL, login, from and to |
 
 Use **Send test** to check a channel. Secrets are never sent back to the browser.
+
+## Unusual activity (baseline)
+
+Once an hour the hour that just ended is compared with what is normal here, from the history that is already stored. Three events
+can come out of that; they show in the event log, and the rule **Unusual activity** (created once, without a notification channel)
+covers the first two.
+
+| Event | Raised when |
+|---|---|
+| `activity_unusual` | Far more devices were heard than is usual for this hour of the day. Usual is the median of the same hour on the earlier days (up to 28); far more is above it by the largest of 3 robust standard deviations, half the median, and 10 devices. |
+| `unusual_time` | A device you named, marked as known, watch, or put in a group was heard at an hour of the day at which it was never heard before, nor in the hour before or after. |
+| `vendor_new` | The first device ever from a maker (real addresses only). Combine it with a schedule in a rule of your own, for example only at night. |
+
+They stay quiet until there is enough history: 7 days for the place, and for a device 14 days in which it was heard in at least
+20 different hours. Hours in which nothing at all was stored (the sensor was off) do not count as quiet hours. The limits are
+rules of thumb and cannot be changed yet.
+
+## Scheduled report
+
+**Settings → Scheduled report** sends a summary through one of the notification channels, every week (over the last 7 days) or
+every day (over the last 24 hours), at the hour you choose. Email channels get an HTML report, other channels plain text.
+
+Besides the occupancy figures (people, new devices, alerts, open security findings, LoRa and Zigbee) it lists what needs a look,
+and leaves out a heading when there is nothing under it:
+
+- **New devices:** up to ten devices first seen in the period, with name, maker and type. Random addresses are left out.
+- **Possible trackers:** the latest `tracker_following` events.
+- **Security and warnings:** how often each high or medium severity event happened.
+- **Sensors offline now:** remote sensors that have not reported for 10 minutes, with how long ago they last did. This is the state
+  when the report is made; outages that ended before that are not listed.

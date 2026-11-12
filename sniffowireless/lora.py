@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import adapters, status
+from . import adapters, capture, status
 from .auth import current_user, require_admin
 from . import meshtastic
 from .lora_protocols import AIR_PREAMBLE, LORAWAN_PLANS, PROFILES, PROTOCOLS, airtime_ms, classify, parse_profiles
@@ -342,6 +342,8 @@ class LoraSensor:
     def handle_line(self, line):
         rx = parse_rx(line)
         if rx:
+            if capture.RECORDER.active:
+                capture.RECORDER.record("lora", self.name, line.encode("ascii", "replace"))
             self.packets += 1
             self.sink.put({"t": "lora_frame", "ts": time.time(), "mac": "-", "profile": self.match(rx), **rx})
             return
@@ -599,24 +601,34 @@ class LoraMonitor:
 FIRMWARE_DIR = Path(__file__).parent / "firmware"
 
 
+BREAKDOWN = (("protocol", "Protocol"), ("type", "Node type"), ("settings", "Radio settings"), ("position", "Position"))
+
+
+def categories(n):
+    """How one node is filed in the Statistics breakdown and the filters of the LoRa page (None = not known)."""
+    profile = n.get("profile")
+    return {"protocol": PROTOCOLS.get(n["protocol"], n["protocol"]), "type": n.get("kind") or None,
+            "settings": (PROFILES[profile].label if profile in PROFILES else profile) if profile else None,
+            "position": "Sends its position" if n.get("lat") is not None else "No position heard"}
+
+
 def breakdown(ctx, since):
     """The Statistics page's breakdown of the LoRa nodes heard since `since`: by protocol, node type, the radio settings they were
     heard on, and whether they send their position."""
-    nodes = ctx.rows("SELECT protocol, kind, profile, lat FROM lora_nodes WHERE last_seen >= ?", (since,))
+    cats = [categories(n) for n in ctx.rows("SELECT protocol, kind, profile, lat FROM lora_nodes WHERE last_seen >= ?", (since,))]
 
     def counted(values):
         n = {}
         for v in values:
             n[v] = n.get(v, 0) + 1
         return [{"v": v, "n": c} for v, c in sorted(n.items(), key=lambda x: -x[1])]
+    return {"total": len(cats), "charts": [{"key": k, "title": t, "rows": counted([c[k] for c in cats])} for k, t in BREAKDOWN]}
 
-    def profile(name):
-        return PROFILES[name].label if name in PROFILES else name
-    return {"total": len(nodes), "charts": [{"title": t, "rows": counted(v)} for t, v in (
-        ("Protocol", [PROTOCOLS.get(n["protocol"], n["protocol"]) for n in nodes]),
-        ("Node type", [n["kind"] or None for n in nodes]),
-        ("Radio settings", [profile(n["profile"]) if n["profile"] else None for n in nodes]),
-        ("Position", ["Sends its position" if n["lat"] is not None else "No position heard" for n in nodes]))]}
+
+def new_per_day(ctx, since, off):
+    """[{day, n}] nodes first heard per local day (day = its start, like the devices' own count)."""
+    return ctx.rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, COUNT(*) n FROM lora_nodes WHERE first_seen >= ? "
+                    "GROUP BY day", (off, off, since))
 
 
 def firmware_manifest():
@@ -809,6 +821,7 @@ def routes(ctx):
         watched = watch_map(ctx, "lora")
         for n in nodes:
             n["label"] = PROTOCOLS.get(n["protocol"], n["protocol"])
+            n["cat"] = categories(n)
             w = watched.get((n["protocol"], n["addr"]))
             n["given_name"], n["watch"], n["silent_min"], n["watch_state"] = (w["label"], bool(w["watch"]), w["silent_min"], w["state"]) if w else (None, False, 60, None)
         recent = ctx.rows("SELECT * FROM lora_packets WHERE ts >= ? ORDER BY id DESC LIMIT 100", (since,))

@@ -13,8 +13,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (adapters, alerts, appearance, dataprivacy, macprivacy, auth, backup, bluetooth, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
-               matching, metrics, modules, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+from . import (adapters, alerts, appearance, dataprivacy, macprivacy, auth, backup, bluetooth, capture, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
+               matching, metrics, modules, occupancy, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user, require_admin
 from .httpsec import SecurityMiddleware
@@ -134,7 +134,7 @@ def create_app(ctx):
                 extra[name] = {k: r[k] or 0 for k in ("total", "active", "new_24h")}
             except Exception:
                 extra[name] = {"total": 0, "active": 0, "new_24h": 0}
-        return {"kinds": kinds, "events": events, "now": now, "window": window, **extra}
+        return {"kinds": kinds, "events": events, "now": now, "window": window, "people": occupancy.now(ctx, now), **extra}
 
     def timeline_grid(hours, bucket):
         """(now, bucket seconds, first bucket start) of a timeline."""
@@ -681,15 +681,21 @@ def create_app(ctx):
                 wd = (day + 3) % 7
                 weekly[(wd, h)] = weekly.get((wd, h), 0) + r["n"]
             for r in radio:
-                key = (r["lh"] % 24, r["kind"])
-                hourly[key] = hourly.get(key, 0) + r["n"]
+                day, h = divmod(r["lh"], 24)
+                hourly[(h, r["kind"])] = hourly.get((h, r["kind"]), 0) + r["n"]
+                wd = (day + 3) % 7
+                weekly[(wd, h)] = weekly.get((wd, h), 0) + r["n"]
             ndays = max(len({r["lh"] // 24 for r in cells}), len({r["lh"] // 24 for r in radio}), 1)
             return {"hourly": {"days": ndays, "rows": [{"h": h, "kind": k, "n": n} for (h, k), n in hourly.items()]},
                     "weekly_heat": [{"wd": wd, "h": h, "n": n} for (wd, h), n in weekly.items()]}
 
         def new():
-            return {"new_per_day": rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
-                                        "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day", (off, off, since)),
+            per_day = rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, kind, "
+                           "COUNT(*) n FROM devices WHERE first_seen>=? GROUP BY day, kind ORDER BY day", (off, off, since))
+            # Zigbee radios and LoRa nodes first heard, from their own tables
+            for kind, mod in (("zigbee", zigbee), ("lora", lora)):
+                per_day += [{"day": r["day"], "kind": kind, "n": r["n"]} for r in mod.new_per_day(ctx, since, off)]
+            return {"new_per_day": sorted(per_day, key=lambda r: r["day"]),
                     # New vendors: the first time ever (not just in this period) a vendor was seen, if that fell in
                     # this period: distinct from "new devices per day", which is usually dominated by randomized-MAC
                     # churn; this filters down to genuinely new kinds of hardware showing up nearby.
@@ -849,7 +855,7 @@ def create_app(ctx):
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
     for mod in (auth, appearance, modules, dataprivacy, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
-                trackers, backup, search, logs, matching, handshake, channels):
+                trackers, backup, search, logs, matching, handshake, channels, occupancy, capture):
         app.include_router(mod.routes(ctx))
 
     # Cache-busting: reference static files as /static/x.js?v=<content hash>, so browsers pick up new

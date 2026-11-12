@@ -19,7 +19,9 @@
   - for APs: **connected clients over time**, the client list, and other BSSIDs with the same SSID
   - for clients: the APs/networks it connected to, with session counts and total time, and the SSIDs it probes for
   - a session table (connections or visits) with duration, frames, signal and why each session ended, plus device events
-- **Statistics:** a **Breakdown** of doughnut charts per radio type (BLE by default; also Wi-Fi clients, Bluetooth classic, access points, LAN, Zigbee & Thread, and LoRa). Each shows device type, vendor, brand and OS, and for BLE also the address type (public, random static, private) and the Bluetooth company. The top five values get a slice each, the rest is folded into a gray *Other*. Every slice and legend row has its count and share, and clicking one opens the matching devices. Below that: device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (the 20 most recently seen networks, expandable to 100; BSSIDs, clients, security, last seen), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
+- **Frame recording** (Settings, admins): record what the radios hear to a file and replay it through the parsers. See [capture.md](capture.md).
+- **People nearby:** a card on the overview and a graph on Statistics with an estimated range of people in range, counted from phones per 5 minutes. See [occupancy.md](occupancy.md).
+- **Statistics:** a **Breakdown** of doughnut charts per radio type (BLE by default; also Wi-Fi clients, Bluetooth classic, access points, LAN, Zigbee & Thread, and LoRa). Each shows device type, vendor, brand and OS, and for BLE also the address type (public, random static, private) and the Bluetooth company. The top five values get a slice each, the rest is folded into a gray *Other*. Every slice and legend row has its count and share, and clicking one opens the matching devices. For Zigbee & Thread and LoRa that is the Zigbee or LoRa page, filtered the same way; both pages have the filters (protocol, role, probable device, power, vendor; protocol, node type, radio settings, position) as dropdowns above their list. Activity by hour, the weekly pattern and new devices per day count Zigbee radios and LoRa nodes too. Below that: device types, brands, Wi-Fi generations, estimated age, operating systems, shared probe fingerprints, activity by hour of day, new devices per day, session duration distribution, top vendors, AP channel usage per band, APs and clients per band, SSID table (the 20 most recently seen networks, expandable to 100; BSSIDs, clients, security, last seen), most-connected clients, busiest APs, probed SSIDs, MAC-randomization ratio and event counts. Click any bar or row to jump to the matching devices or events.
 - **Events:** the full, filterable event log.
 - **Logs** (admins only): the application log, live, with a tab for every remote sensor's own log (see [Logs of remote sensors](sensors.md#logs-of-remote-sensors)). New lines stream in as they happen. You can:
   - filter by level, source module or text, pause, follow or wrap lines
@@ -48,7 +50,7 @@
   - **You:** account (password, two-factor login, display on this browser)
   - **Monitoring:** my networks, investigations, ignore list, detection thresholds
   - **Radios & sensors:** sensors, modules, Wi-Fi channels, LoRa bands, Zigbee, LoRa flasher
-  - **Alerts & integrations:** notification channels, weekly report, MQTT, API tokens
+  - **Alerts & integrations:** notification channels, scheduled report (daily or weekly), MQTT, API tokens
   - **Data & privacy:** privacy, clear data, backup
   - **System:** users, appearance, performance, about
 

@@ -27,7 +27,7 @@ function searchItem(sec, x, q) {
     case 'networks': return [`#/investigation/${enc(x.ssid)}`, hl(x.ssid, q), `${x.aps} access point${x.aps === 1 ? '' : 's'} · ${esc(x.enc || '')} · ${ago(x.last_seen)}`];
     case 'probes': return [`#/investigation/${enc(x.ssid)}`, hl(x.ssid, q), `probed by ${x.devices} device${x.devices === 1 ? '' : 's'} · ${ago(x.last_seen)}`];
     case 'dns': return ['#/lan', hl(x.name, q), `looked up by ${x.devices} device${x.devices === 1 ? '' : 's'} · ${ago(x.last_seen)}`];
-    case 'events': return [(x.mac || '').startsWith('rf:') ? '#/channels' : `#/device/${enc(x.mac)}`,
+    case 'events': return [x.mac === 'site' ? '#/stats' : (x.mac || '').startsWith('rf:') ? '#/channels' : `#/device/${enc(x.mac)}`,
       `<span class="ev ev-${esc(x.type)}">${esc(x.type.replace(/_/g, ' '))}</span> ${hl(x.label || x.name || x.ssid || x.mac, q)}`,
       [dt(x.ts), x.detail ? hl(x.detail, q) : ''].filter(Boolean).join(' · ')];
     case 'alerts': return ['#/alerts', hl(x.title, q), `${sevTag(x.severity)} ${dt(x.ts)}`];

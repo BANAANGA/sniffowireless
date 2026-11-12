@@ -11,7 +11,7 @@ from scapy.layers.dot11 import (Dot11, Dot11AssoResp, Dot11Beacon, Dot11Deauth, 
                                 Dot11Elt, Dot11ProbeResp, Dot11ReassoResp, RadioTap)
 from scapy.layers.eap import EAPOL
 
-from . import status
+from . import capture, status
 from .config import band_of, chan_label, freq_to_channel
 from .handshake import eapol_message
 from .identify import wifi_fingerprint
@@ -469,6 +469,8 @@ class WifiSensor:
 
     def _handle(self, pkt):
         self.packets += 1
+        if capture.RECORDER.active:
+            capture.RECORDER.record("wifi", self.name, getattr(pkt, "original", None) or bytes(pkt), tuned=self.cur_freq)
         try:
             self._measure(pkt)
         except Exception:

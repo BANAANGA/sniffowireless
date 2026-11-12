@@ -628,3 +628,9 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 /* Statistics breakdown: seven kinds don't fit one line on a narrow screen */
 #breakdown > header { flex-wrap: wrap; row-gap: 8px; }
 #breakdown > header .seg { flex-wrap: wrap; }
+
+/* Filters of the Zigbee and LoRa lists */
+.radio-filter { flex-wrap: wrap; gap: 6px; }
+.radio-filter select { padding: 2px 6px; max-width: 190px; }
+.radio-filter select.on { border-color: var(--accent, #4cc2ff); }
+header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
