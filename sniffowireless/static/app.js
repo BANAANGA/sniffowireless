@@ -1142,7 +1142,10 @@ async function viewDevice(mac, params) {
 // slice with its count and share. Anything past the top 5 folds into a neutral gray "Other".
 const PIE_COLORS = ['#3690e3', '#d46a34', '#05a388', '#c34f4b', '#97902a'];
 const PIE_TOP = PIE_COLORS.length;
-const BREAKDOWN_KINDS = [['ble', 'BLE'], ['wifi_client', 'Wi-Fi clients'], ['bt_classic', 'BT classic'], ['ap', 'Access points'], ['lan', 'LAN']];
+const BREAKDOWN_KINDS = [['ble', 'BLE'], ['wifi_client', 'Wi-Fi clients'], ['bt_classic', 'BT classic'], ['ap', 'Access points'], ['lan', 'LAN'],
+  ['zigbee', 'Zigbee & Thread'], ['lora', 'LoRa']];
+// Zigbee / Thread radios and LoRa nodes are not in the device list: the server sends their breakdowns ready-made, and they open their own page.
+const RADIO_BREAKDOWNS = { zigbee: ['radios', '/zigbee'], lora: ['nodes', '/lora'] };
 
 // One doughnut per sensor: what kinds of device it heard in the selected period.
 function sensorPies(el, data) {
@@ -1172,22 +1175,25 @@ function sensorPies(el, data) {
 function breakdown(el, s, kind) {
   if (window.Chart) el.querySelectorAll('canvas').forEach(c => { const p = Chart.getChart(c); if (p) p.destroy(); });
   const of = (rows, key = 'v') => rows.filter(r => r.kind === kind).map(r => ({ v: r[key], n: r.n }));
-  const charts = [
+  const radio = RADIO_BREAKDOWNS[kind], noun = radio ? radio[0] : 'devices';
+  const charts = radio ? ((s[kind] || {}).charts || []).map(c => [c.title, c.rows, null, v => v]) : [
     ['Device type', of(s.dev_type), 'dev_type', v => typeLabel(v)],
     ['Vendor', of(s.vendors, 'vendor').map(r => ({ v: r.v === 'Unknown' ? null : r.v, n: r.n })), 'vendor', v => v],
     ['Brand', of(s.brand), 'brand', v => v],
     ['Operating system', of(s.os), 'os', v => v],
   ];
-  if (kind === 'ble') charts.push(['Address type', of(s.addr_type), 'addr_type', v => ADDR_TYPES[v] || v],
+  if (!radio && kind === 'ble') charts.push(['Address type', of(s.addr_type), 'addr_type', v => ADDR_TYPES[v] || v],
     ['Bluetooth company', of(s.company), 'company', v => v]);
-  if (kind === 'ble' || kind === 'bt_classic') charts.push(['Bluetooth version', of(s.bt_ver), 'bt_ver', v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v]);
-  charts.push(['Movement', of(s.mobility), 'mobility', v => MOBILITY[v] || v]);
-  const total = charts[0][1].reduce((a, r) => a + r.n, 0);
-  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices</span>
+  if (!radio && (kind === 'ble' || kind === 'bt_classic')) charts.push(['Bluetooth version', of(s.bt_ver), 'bt_ver', v => v.endsWith('+') ? 'at least ' + v.slice(0, -1) : v]);
+  if (!radio) charts.push(['Movement', of(s.mobility), 'mobility', v => MOBILITY[v] || v]);
+  const total = radio ? (s[kind] || {}).total || 0 : charts[0][1].reduce((a, r) => a + r.n, 0);
+  const days = s.days || 1;
+  el.innerHTML = `<header><h2>Breakdown</h2><span class="faint">${radio ? `${num(total)} ${kind === 'zigbee' ? '<span title="Zigbee, Thread and other IEEE 802.15.4">radios</span>' : 'nodes'} · <a href="${hrefWith(radio[1], { hours: days * 24 })}">open the ${kind === 'zigbee' ? 'Zigbee' : 'LoRa'} page</a>`
+      : `${num(total)} ${esc((KINDS[kind] || {}).label || kind)} · click a slice or row for the devices`}</span>
       ${seg('bkind', BREAKDOWN_KINDS.filter(([k]) => kindOn(k)), kind)}</header>
     <div class="body">${total ? `<div class="pie-grid">${charts.map((c, i) => `<div class="pie-card"><h3 class="subhead">${c[0]}</h3>
-      <div class="pie-wrap"><div class="pie-box"><canvas id="pie-${i}" role="img" aria-label="${esc(c[0])} breakdown"></canvas><div class="pie-total"><b>${num(total)}</b><span>devices</span></div></div>
-      <ul class="pie-legend" id="pie-leg-${i}"></ul></div></div>`).join('')}</div>` : '<div class="empty">No devices of this kind in this period</div>'}</div>`;
+      <div class="pie-wrap"><div class="pie-box"><canvas id="pie-${i}" role="img" aria-label="${esc(c[0])} breakdown"></canvas><div class="pie-total"><b>${num(total)}</b><span>${noun}</span></div></div>
+      <ul class="pie-legend" id="pie-leg-${i}"></ul></div></div>`).join('')}</div>` : `<div class="empty">No ${radio ? noun : 'devices of this kind'} heard in this period</div>`}</div>`;
   onSeg(el, 'bkind', v => breakdown(el, s, v));
   if (!total) return;
   charts.forEach(([title, rows, key, label], i) => {
@@ -1202,7 +1208,7 @@ function breakdown(el, s, kind) {
     if (rest) slices.push({ k: known.length > PIE_TOP ? null : '', n: rest, name: known.length > PIE_TOP ? (unknown ? 'Other / unknown' : 'Other') : 'Unknown', color: FAINT });
     const sum = slices.reduce((a, x) => a + x.n, 0);
     const pct = n => `${Math.round(n / sum * 100)}%`;
-    const href = x => x.k === null ? null : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
+    const href = x => radio || x.k === null ? null : hrefWith('/devices', { kind, [key]: x.k === '' ? 'Unknown' : x.k });
     document.getElementById(`pie-leg-${i}`).innerHTML = slices.map(x => {
       const h = href(x);
       return `<li${h ? ` data-href="${h}"` : ''}><span class="swatch" style="background:${x.color}"></span><span class="pl-name" title="${esc(x.name)}">${x.k === '' ? `<span class="faint">${esc(x.name)}</span>` : esc(x.name)}</span>
