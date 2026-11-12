@@ -441,6 +441,7 @@ const BAND_PANELS = [['2.4', '2.4 GHz'], ['5', '5 GHz'], ['6', '6 GHz']];
 
 // Stat cards in even rows: as many per row as fit (at least ~150 px each), then spread so no row is left with one or two
 // (7 cards: one row of 7 when it fits, else 4 + 3). Phones keep their two columns from the stylesheet.
+const peopleRange = p => p.low === p.high ? num(p.low) : `${num(p.low)}–${num(p.high)}`;
 function balanceCards(el) {
   if (!el) return;
   const fit = () => {
@@ -550,6 +551,14 @@ async function viewOverview(params) {
         <div class="value">${num(v.active)}<small>of ${num(v.total)}</small></div>
         <div class="meta"><span>+${num(v.new_24h)} new 24h</span></div></div>`);
     });
+    // People nearby: a range, from phones heard in the last 5 minutes (see Statistics for the graph and what it means)
+    if (s.people && (modOn('wifi') || modOn('bluetooth'))) {
+      const p = s.people;
+      document.getElementById('cards').insertAdjacentHTML('beforeend', `<div class="card link" data-href="#/stats" title="An estimate from the phones heard in the last 5 minutes: at least ${p.low}, at most ${p.high}. Not a head count.">
+        <div class="label"><span class="swatch" style="background:#e7e9ee"></span>People nearby</div>
+        <div class="value">${peopleRange(p)}<small>estimate</small></div>
+        <div class="meta"><span>${num(p.wifi)} Wi-Fi · ${num(p.bluetooth)} Bluetooth phones</span></div></div>`);
+    }
     balanceCards(document.getElementById('cards'));
     document.querySelectorAll('#cards .card').forEach(c => c.onclick = e => { if (!e.target.closest('a')) location.hash = c.dataset.href; });
     const ev = s.events;
@@ -1248,6 +1257,9 @@ async function viewStats(params) {
   root.innerHTML = `
     <section class="panel span-3" id="breakdown"></section>
     <section class="panel span-3" id="per-sensor" hidden></section>
+    <section class="panel span-3" id="people" ${modOn('wifi') || modOn('bluetooth') ? '' : 'hidden'}><header><h2>People nearby</h2><span class="faint" id="people-sub">an estimate from phones heard, not a head count</span></header>
+      <div class="body"><div class="chart-box short"><canvas id="people-chart"></canvas></div>
+      <p class="faint small-text" style="margin:10px 0 0">Counted per 5 minutes from phones only: Bluetooth devices identified as a phone, and Wi-Fi clients that are a phone or use a random address without being identified. Devices that never move are left out. A phone usually shows on both radios, so the true number lies between the larger of the two counts (<b>at least</b>) and their sum (<b>at most</b>). People without a phone in range are missed.</p></div></section>
     <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices, radios and nodes per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>Weekly activity pattern</h2><span class="faint">relative busyness by day and hour</span></header><div class="body" id="weekheat"></div></section>
@@ -1281,6 +1293,21 @@ async function viewStats(params) {
     breakdown(document.getElementById('breakdown'), s, (BREAKDOWN_KINDS.find(([k]) => kindOn(k)) || ['ble'])[0]);
     sensorPies(document.getElementById('per-sensor'), s.sensor_kinds || []);
   }
+
+  // people nearby: its own request, so the rest of the page does not wait for it
+  if (!listId && (modOn('wifi') || modOn('bluetooth'))) api(`/api/occupancy?hours=${Math.min(days * 24, 168)}`).then(o => {
+    const el = document.getElementById('people-chart');
+    if (!el) return;
+    document.getElementById('people-sub').textContent = `now ${peopleRange(o.now)} · an estimate from phones heard, not a head count${days * 24 > o.hours ? ' · last 7 days' : ''}`;
+    const xy = arr => o.t.map((x, i) => ({ x: x * 1000, y: arr[i] }));
+    chart(el, { type: 'line', data: { datasets: [
+      { label: 'At most', data: xy(o.high), borderColor: '#8b95a5', backgroundColor: 'rgba(76,194,255,.14)', fill: '+1', borderWidth: 1, pointRadius: 0, tension: .3 },
+      { label: 'At least', data: xy(o.low), borderColor: '#4cc2ff', fill: false, borderWidth: 1.5, pointRadius: 0, tension: .3 }] },
+      options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        scales: { x: { type: 'linear', min: o.t[0] * 1000, max: Date.now(), grid: { display: false }, ticks: { color: FAINT, maxTicksLimit: 8, callback: v => o.hours > 24 ? new Date(v).toLocaleDateString([], { weekday: 'short', hour: '2-digit' }) : new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } }, y: yScale({}) },
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, color: MUTED } },
+          tooltip: { callbacks: { title: c => new Date(c[0].parsed.x).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) } } } } });
+  }).catch(() => {});
 
   // hourly
   const hours = Array.from({ length: 24 }, (_, i) => i);
