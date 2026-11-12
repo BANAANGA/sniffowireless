@@ -54,13 +54,15 @@ EVENT_TYPES = {
     "lora_join_flood": "LoRaWAN device repeating join requests", "lora_fcnt_reset": "LoRaWAN frame counter went back (restart or replay)",
     "zigbee_new_network": "New Zigbee network", "zigbee_permit_join": "Zigbee network is accepting new devices",
     "watched_silent": "Watched LoRa node / Zigbee radio went silent", "watched_back": "Watched LoRa node / Zigbee radio is back",
+    "activity_unusual": "Far more devices than usual for this hour", "unusual_time": "A known device at an hour it is never here",
+    "vendor_new": "First device ever from a maker",
 }
 SEVERITY = {"rogue_ap": "high", "ap_clock_conflict": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
             "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
             "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium", "fingerprint_changed": "medium",
             "handshake_attack": "high", "ap_downgrade": "high", "probe_scan": "medium", "mac_duplicate": "medium",
             "lora_flood": "medium", "lora_join_flood": "medium", "lora_fcnt_reset": "medium", "zigbee_permit_join": "medium",
-            "watched_silent": "medium"}
+            "watched_silent": "medium", "activity_unusual": "medium", "unusual_time": "medium", "vendor_new": "low"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
     "telegram": ["bot_token", "chat_id"],
@@ -85,6 +87,7 @@ LATER_RULES = {
                        ["investigated_seen", "investigated_connect", "investigated_probe"], {"mode": "any"}, {}),
     "dfs": ("Radar (DFS) on my networks", ["dfs_radar"], {"mode": "mine"}, {}),
     "radiowatch": ("Watched LoRa nodes and Zigbee radios go silent or return", ["watched_silent", "watched_back"], {"mode": "any"}, {}),
+    "baseline": ("Unusual activity", ["activity_unusual", "unusual_time"], {"mode": "any"}, {}),
     "radios": ("LoRa and Zigbee security", ["lora_flood", "lora_join_flood", "lora_fcnt_reset", "zigbee_permit_join"], {"mode": "any"}, {}),
 }
 
@@ -216,6 +219,8 @@ def describe(ev, dev, meta, group, time_fmt="%H:%M:%S"):
         "lora_new_node": f"{ev.get('detail')}", "lora_flood": f"LoRa flood: {ev.get('detail')}", "lora_join_flood": f"LoRaWAN: {ev.get('detail')}",
         "lora_fcnt_reset": f"LoRaWAN: {ev.get('detail')}", "zigbee_new_network": f"{ev.get('detail')}", "zigbee_permit_join": f"{ev.get('detail')}",
         "watched_silent": f"{ev.get('detail')}", "watched_back": f"{ev.get('detail')}",
+        "activity_unusual": f"Unusually busy: {ev.get('detail')}", "unusual_time": f"{name} at an unusual hour",
+        "vendor_new": f"New maker: {ev.get('detail')}",
     }
     lines = [time.strftime("%Y-%m-%d " + time_fmt, time.localtime(ev["ts"])), EVENT_TYPES.get(typ, typ)]
     if dev:
