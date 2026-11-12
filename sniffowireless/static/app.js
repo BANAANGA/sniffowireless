@@ -1244,7 +1244,7 @@ async function viewStats(params) {
   root.innerHTML = `
     <section class="panel span-3" id="breakdown"></section>
     <section class="panel span-3" id="per-sensor" hidden></section>
-    <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
+    <section class="panel span-2"><header><h2>Activity by hour of day</h2><span class="faint">average distinct devices, radios and nodes per hour</span></header><div class="body"><div class="chart-box"><canvas id="hourly"></canvas></div></div></section>
     <section class="panel"><header><h2>MAC address privacy</h2></header><div class="body" id="rand"></div></section>
     <section class="panel span-2"><header><h2>Weekly activity pattern</h2><span class="faint">relative busyness by day and hour</span></header><div class="body" id="weekheat"></div></section>
     <section class="panel" data-list="new-vendors"><header><h2>${ttl('new-vendors', 'New vendors')}</h2><span class="faint">first seen, ever, in this period</span></header><div class="body flush table-wrap" id="new-vendors"></div></section>
@@ -1280,15 +1280,16 @@ async function viewStats(params) {
 
   // hourly
   const hours = Array.from({ length: 24 }, (_, i) => i);
+  const hourKinds = [...kindEntries(), ...extraEntries()];  // Zigbee radios and LoRa nodes count too
   chart(document.getElementById('hourly'), {
     type: 'bar',
-    data: { labels: hours.map(h => hourLabel(h)), datasets: kindEntries().map(([k, m]) => ({
+    data: { labels: hours.map(h => hourLabel(h)), datasets: hourKinds.map(([k, m]) => ({
       label: m.label, backgroundColor: m.color + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
       data: hours.map(h => +((s.hourly.rows.find(r => r.h === h && r.kind === k) || { n: 0 }).n / s.hourly.days).toFixed(1)),
     })) },
     options: { maintainAspectRatio: false, scales: { x: { stacked: true, grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ stacked: true }) },
       plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, color: MUTED } } },
-      onClick: (e, els) => { if (els.length) location.hash = hrefWith('/devices', { kind: (kindEntries()[els[0].datasetIndex] || [])[0] }); } },
+      onClick: (e, els) => { if (els.length) { const [k, m] = hourKinds[els[0].datasetIndex] || []; location.hash = m && m.href ? m.href : hrefWith('/devices', { kind: k }); } } },
   });
 
   // new per day
