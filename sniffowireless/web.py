@@ -15,6 +15,9 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from . import (adapters, alerts, appearance, dataprivacy, macprivacy, auth, backup, bluetooth, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
                matching, metrics, modules, occupancy, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+
+from . import (adapters, alerts, appearance, dataprivacy, macprivacy, auth, backup, bluetooth, capture, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
+               matching, metrics, modules, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user, require_admin
 from .httpsec import SecurityMiddleware
@@ -856,6 +859,8 @@ def create_app(ctx):
     # /api/settings/investigate and /api/settings/mqtt
     for mod in (auth, appearance, modules, dataprivacy, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
                 trackers, backup, search, logs, matching, handshake, channels, occupancy):
+
+                trackers, backup, search, logs, matching, handshake, channels, capture):
         app.include_router(mod.routes(ctx))
 
     # Cache-busting: reference static files as /static/x.js?v=<content hash>, so browsers pick up new
