@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import (adapters, alerts, appearance, dataprivacy, macprivacy, auth, backup, bluetooth, capture, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
-               matching, metrics, modules, occupancy, mqtt, purge, radiowatch, reports, search, security, sensors, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
+               matching, metrics, modules, occupancy, mqtt, purge, radiowatch, reports, search, security, sensors, signal_live, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user, require_admin
 from .httpsec import SecurityMiddleware
@@ -855,7 +855,7 @@ def create_app(ctx):
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
     for mod in (auth, appearance, modules, dataprivacy, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
-                trackers, backup, search, logs, matching, handshake, channels, occupancy, capture):
+                trackers, backup, search, logs, matching, handshake, channels, occupancy, capture, signal_live):
         app.include_router(mod.routes(ctx))
 
     # Cache-busting: reference static files as /static/x.js?v=<content hash>, so browsers pick up new

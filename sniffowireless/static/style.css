@@ -634,3 +634,28 @@ html[data-style="vicecity"] .card .value { text-shadow: 0 0 12px color-mix(in sr
 .radio-filter select { padding: 2px 6px; max-width: 190px; }
 .radio-filter select.on { border-color: var(--accent, #4cc2ff); }
 header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
+
+/* Sensors page */
+.sn-title { display: flex; align-items: center; gap: 8px; }
+.sn-sys { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; padding-bottom: 0; }
+.sn-hw { min-width: 200px; white-space: normal; }
+.sn-caps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sn-caps .tag { font-size: 11px; }
+.sn-sensor + .sn-sensor { margin-top: 16px; }
+.sig-controls { flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.sig-controls .grow { flex: 1; }
+.sig-controls select { padding: 3px 6px; max-width: 200px; }
+.sig-search { position: relative; flex: 1 1 260px; max-width: 420px; }
+.sig-search input { width: 100%; }
+.sig-results { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none;
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); max-height: 320px; overflow: auto; }
+.sig-results button { display: flex; gap: 8px; align-items: center; width: 100%; padding: 6px 8px; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
+.sig-results button:hover, .sig-results button:focus { background: var(--panel); }
+.sig-results button span:nth-child(2) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sig-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.sig-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border: 1px solid; border-radius: 999px; font-size: 13px; }
+.sig-x { background: none; border: 0; color: var(--muted, inherit); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; }
+#sig-table { margin-top: 10px; }
+.sn-sensor td { white-space: normal; vertical-align: top; }
+.sn-sensor td:first-child, .sn-sensor td.num { white-space: nowrap; }
+.sn-hw { min-width: 180px; max-width: 340px; }

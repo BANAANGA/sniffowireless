@@ -281,7 +281,9 @@ def remote_observation(o, now):
 
 
 SENSOR_STATUS = {"name": 64, "state": 32, "error": 200, "type": 32, "iface": 32, "mon": 32, "channel": 16,
-                 "band": 8, "scan": 16, "firmware": 64, "warning": 300, "regdomain": 8, "note": 160, "profile": 48, "bt_version": 16, "chip": 40}
+                 "band": 8, "scan": 16, "firmware": 64, "warning": 300, "regdomain": 8, "note": 160, "profile": 48, "bt_version": 16, "chip": 40,
+                 # hardware of the interface (hwinfo.py)
+                 "hw_driver": 32, "hw_bus": 16, "hw_usb": 16, "hw_maker": 64, "hw_product": 64, "hw_speed": 16, "hw_phy": 16, "hw_link": 16}
 
 
 def remote_version(v):

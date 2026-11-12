@@ -22,7 +22,7 @@ from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.layers.dns import DNS
 from scapy.layers.l2 import ARP
 
-from . import status
+from . import hwinfo, status
 
 load_contrib("lldp")
 from scapy.contrib.lldp import (LLDPDUPortDescription, LLDPDUPortID,  # noqa: E402
@@ -331,7 +331,7 @@ class EthernetSensor:
         self.name = f"eth:{iface}"
         self.parser = FrameParser()
         self.stop = None
-        status.register(self.name, type="ethernet", iface=iface, promisc=cfg.eth_promisc)
+        status.register(self.name, type="ethernet", iface=iface, promisc=cfg.eth_promisc, **hwinfo.net(iface))
 
     def start(self, stop):
         self.stop = stop

@@ -15,7 +15,7 @@ import struct
 import threading
 import time
 
-from . import capture, status
+from . import capture, hwinfo, status
 from .identify import ble_fingerprint
 from .oui import bt_company, bt_company_known
 
@@ -330,7 +330,7 @@ class BluetoothSensor:
         self.probe_busy, self.probe_times = False, []
         self.packets = 0
         self.stop = None
-        status.register(self.name, type="bluetooth", iface=dev, adverts=0, inquiries=0)
+        status.register(self.name, type="bluetooth", iface=dev, adverts=0, inquiries=0, **hwinfo.bluetooth(dev))
         SENSORS[self.name] = self
 
     def start(self, stop):

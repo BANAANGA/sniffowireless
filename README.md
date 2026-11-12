@@ -160,7 +160,7 @@ docker compose start sniffowireless
 
 ### Bluetooth adapters
 
-Any adapter the Linux kernel exposes as `hciX` works: an onboard controller, or a USB dongle such as CSR8510 A10, Realtek RTL8761B (BT 5.0) or Intel AX200/AX210 combo cards. For BLE range, a dongle with an external antenna helps a lot. Ubertooth / nRF sniffers are not supported. They capture differently.
+Any adapter the Linux kernel exposes as `hciX` works: an onboard controller, or a USB dongle such as CSR8510 A10, Realtek RTL8761B (BT 5.0) or Intel AX200/AX210 combo cards. For BLE range, a dongle with an external antenna helps a lot. A known good long-range BLE adapter is the **TP-Link UB500 Plus**. Ubertooth / nRF sniffers are not supported. They capture differently.
 
 ### Zigbee sticks
 
