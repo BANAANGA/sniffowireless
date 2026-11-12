@@ -15,6 +15,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/devices/{mac}/clients?hours=` | Connected clients over time for an AP |
 | `GET /api/devices/{mac}/heatmap?days=28&tz=` | Weekday × hour presence matrix |
 | `GET /api/stats?days=7` | All statistics shown on the Statistics page |
+| `GET /api/occupancy?hours=24` | People nearby: an estimated range from phones heard, per 5 minutes (see [occupancy.md](occupancy.md)) |
 | `GET /api/events?type=&mac=&kind=&before=` | Event log |
 | `GET /api/status` | Sensor and store health, host CPU / memory, database and disk size |
 | `GET /api/appearance` · `PUT /api/appearance` · `POST`/`DELETE /api/appearance/icon` | App name, icon and colours (read without login; changes admin only) |
