@@ -11,8 +11,13 @@ sniffowireless works out what each device is purely from what it broadcasts. Not
 | **Vendor-specific elements** | Apple devices, Samsung, chipset vendor (Broadcom, Qualcomm, MediaTek, Realtek…), Wi-Fi Direct, MBO, Passpoint |
 | **Probe-request layout** | A *probe fingerprint* hash: the element order/capabilities are characteristic of chipset + OS build, so randomized MACs from the same kind of phone share a hash |
 | **Apple Continuity (BLE)** | AirPods/Beats model and release year; iPhone/iPad/Mac activity (Handoff, Nearby), AirPlay targets, Find My accessories |
+| **Find My status (BLE)** | What a Find My broadcaster is: an **AirTag**, **AirPods** away from their owner, another maker's Find My accessory, or an Apple device (phone, tablet, Mac) that can be found, which is *not* a tracker tag. AirTags and accessories also show their battery level (full, medium, low, critically low) |
+| **Xiaomi product ID (BLE)** | The model of a Xiaomi sensor from its MiBeacon advertisement (Mi Flora, the temperature and humidity sensors, motion and door sensors, the night light). Only IDs confirmed by open-source decoders are named |
+| **Pairing beacons (BLE)** | *Offers pairing through Microsoft Swift Pair* or *Google Fast Pair* (with the Fast Pair model number), and whether the device is also reachable over Bluetooth classic |
+| **Wi-Fi Direct device info** | The device name and category (printer, TV, phone, computer…) that printers, TVs and phones put in their Wi-Fi Direct element, also when they use a random address |
+| **Access point vendor elements** | The maker of an access point from its own element in beacons (Cisco, Meraki, Ruckus, AVM FRITZ!Box, MikroTik, Aerohive, Fortinet, Mist, Cambium, Netgear, Google, Aruba, Ubiquiti), which says more than the BSSID. An Apple element in beacons from a private address is an iPhone / iPad **Personal Hotspot** |
 | **Microsoft CDP beacons (BLE)** | Windows desktop/laptop/tablet, Xbox, Android/iPhone running Microsoft apps |
-| **BLE services / appearance** | Tile, SmartTag, Fast Pair, Eddystone, heart-rate/fitness, HID keyboards/mice, Xiaomi/BTHome sensors… |
+| **BLE services / appearance** | Tile, SmartTag, Chipolo, Fast Pair, Eddystone, heart-rate/fitness, HID keyboards/mice, Xiaomi/BTHome/Qingping sensors, **health devices** (blood pressure, glucose, thermometer, scale, pulse oximeter, insulin), **hearing aids**, smart locks (August / Yale), Bluetooth Mesh and Tuya smart-home devices, Bose, Garmin, Logitech… |
 | **Bluetooth class of device** | Phone, laptop, headphones, car audio, speaker, watch, … |
 | **Bikes** | Bluetooth "Cycling" appearance or cycling speed/cadence/power services, and names such as VanMoof `ES3-…`/`EX3-…` or Cowboy → *Bike / e-bike* |
 | **Names / SSIDs** | “iPhone”, “Galaxy Watch5”, “DESKTOP-XXXXXXX” (Windows), “[TV] Samsung…”, “DIRECT-xx-HP…” printers, phone hotspots, car hotspots |

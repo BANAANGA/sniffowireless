@@ -132,6 +132,10 @@ def parse_ad(data):
                 out["auracast"] = {"encrypted": bool(v[2] & 1), "quality": "high" if v[2] & 4 else "standard" if v[2] & 2 else None}
             elif u == UUID_MATTER and len(v) >= 9 and v[2] == 0:   # Matter commissionable device: opcode 0, discriminator + version, vendor ID, product ID
                 out["matter"] = {"discriminator": (v[3] | v[4] << 8) & 0x0FFF, "vendor": v[5] | v[6] << 8, "product": v[7] | v[8] << 8}
+            elif u == 0xFE95 and len(v) >= 6:   # Xiaomi MiBeacon: frame control (2), then the product ID
+                out["mi_product"] = v[4] | v[5] << 8
+            elif u == 0xFE2C and len(v) == 5:   # Google Fast Pair, discoverable (pairing mode): just the 24-bit model ID
+                out["fast_pair"] = bytes(v[2:5]).hex()
             elif u == UUID_BAA and len(v) >= 5:  # Broadcast Audio Announcement: the 3-byte Broadcast_ID
                 out["broadcast_id"] = bytes(v[2:5][::-1]).hex()
         elif t == 0x30 and v:  # Broadcast_Name (LE Audio / Auracast)

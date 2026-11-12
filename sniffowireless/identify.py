@@ -10,7 +10,7 @@ import re
 
 from . import apmodels, ossig, wifiattrs
 
-IDENT_VERSION = 11
+IDENT_VERSION = 12
 
 TYPE_LABELS = {
     "phone": "Phone", "tablet": "Tablet", "laptop": "Laptop", "desktop": "Desktop PC",
@@ -21,6 +21,7 @@ TYPE_LABELS = {
     "car": "Car", "router": "Router / access point", "hotspot": "Mobile hotspot", "smart_home": "Smart home",
     "beacon": "Beacon", "sbc": "Single-board computer", "media": "Media device", "network": "Network device",
     "nas": "NAS / storage", "server": "Server", "charger": "EV charger", "bike": "Bike / e-bike",
+    "health": "Health device", "hearing_aid": "Hearing aid", "lock": "Smart lock", "switch": "Switch / remote",
 }
 WIFI_GEN_YEAR = {4: 2009, 5: 2013, 6: 2019, 7: 2024}
 WIFI_6E_YEAR = 2021
@@ -66,6 +67,37 @@ def parse_wps(data):
     return out
 
 
+# Makers whose access points carry their own vendor element in beacons (the OUI is registered to them): more telling than the
+# BSSID's vendor, which is often the radio module's or a random address.
+AP_IE_BRANDS = {
+    "00:40:96": "Cisco", "00:18:0a": "Cisco Meraki", "00:13:92": "Ruckus", "00:04:0e": "AVM (FRITZ!Box)", "00:0c:42": "MikroTik",
+    "00:19:77": "Aerohive / Extreme", "00:09:0f": "Fortinet", "5c:5b:35": "Juniper Mist", "00:04:56": "Cambium", "00:14:6c": "Netgear",
+    "00:1a:11": "Google",
+}
+
+
+def parse_p2p(data):
+    """The Device Info attribute of a Wi-Fi Direct (P2P) element: {"name", "category", "subcategory"} (the same categories as
+    WPS). Attributes are id (1), length (2, little endian), body; Device Info (13) is the device address (6), config methods (2),
+    primary device type (category 2, OUI 4, sub-category 2, big endian), the secondary types, then the name as a WPS TLV (0x1011)."""
+    i = 0
+    while i + 3 <= len(data):
+        aid, ln = data[i], data[i + 1] | data[i + 2] << 8
+        body = data[i + 3:i + 3 + ln]
+        i += 3 + ln
+        if aid != 13 or len(body) < 17:
+            continue
+        out = {"category": int.from_bytes(body[8:10], "big"), "subcategory": int.from_bytes(body[14:16], "big")}
+        at = 17 + 8 * body[16]
+        if at + 4 <= len(body) and int.from_bytes(body[at:at + 2], "big") == 0x1011:
+            n = int.from_bytes(body[at + 2:at + 4], "big")
+            name = bytes(body[at + 4:at + 4 + n]).decode("utf-8", "replace").strip("\x00 ").strip()
+            if name:
+                out["name"] = name[:32]
+        return out
+    return None
+
+
 def wifi_fingerprint(elts):
     """Build a capability fingerprint from a list of (element id, bytes) information elements."""
     fp = {"vendors": [], "wfa": []}
@@ -81,8 +113,13 @@ def wifi_fingerprint(elts):
                 wps = parse_wps(info[4:])
                 if wps:
                     fp["wps"] = wps
-            elif oui == "50:6f:9a" and vtype in WFA_TYPES and WFA_TYPES[vtype] not in fp["wfa"]:
-                fp["wfa"].append(WFA_TYPES[vtype])
+            elif oui == "50:6f:9a" and vtype in WFA_TYPES:
+                if WFA_TYPES[vtype] not in fp["wfa"]:
+                    fp["wfa"].append(WFA_TYPES[vtype])
+                if vtype == 0x09:
+                    p2p = parse_p2p(info[4:])
+                    if p2p:
+                        fp["p2p"] = p2p
             continue
         if eid == 255 and info:
             ext = info[0]
@@ -137,7 +174,7 @@ def merge_wifi(old, new):
             m[k] = sorted(set(m.get(k, [])) | set(v))
         elif k in ("gen", "ss", "width", "extcap_len"):
             m[k] = max(m.get(k) or 0, v)
-        elif k == "wps":
+        elif k in ("wps", "p2p"):
             m[k] = {**m.get(k, {}), **v}
         elif k == "capinfo":  # probe and association requests each show part of it
             old = m.get(k) or {}
@@ -179,7 +216,34 @@ MS_CDP_TYPES = {1: ("Xbox One", "console", "Microsoft", "Windows"), 6: ("iPhone"
                 12: ("Linux device", "computer", None, "Linux"), 13: ("Windows IoT", "iot", None, "Windows"),
                 14: ("Surface Hub", "tv", "Microsoft", "Windows"), 15: ("Windows laptop", "laptop", None, "Windows"),
                 16: ("Windows tablet", "tablet", None, "Windows")}
+FINDMY_KINDS = {  # Find My status bits 4-5 -> (what it is, type, model, confidence)
+    1: ("AirTag", "tag", "AirTag", 85), 2: ("Find My accessory of another maker", "tag", None, 65),
+    3: ("AirPods away from their owner", "headphones", None, 75),
+}
+FINDMY_BATTERY = ("full", "medium", "low", "critically low")
+MI_PRODUCTS = {  # Xiaomi MiBeacon product ID -> (model, what it is, type). Only IDs confirmed by the open-source decoders.
+    0x0098: ("HHCCJCY01", "Mi Flora plant sensor", "sensor"), 0x01AA: ("LYWSDCGQ", "Mi temperature & humidity sensor", "sensor"),
+    0x045B: ("LYWSD02", "Mi temperature & humidity clock", "sensor"), 0x055B: ("LYWSD03MMC", "Mi temperature & humidity sensor 2", "sensor"),
+    0x07F6: ("MJYD02YL", "Mi motion night light", "light"), 0x0A8D: ("RTCGQ02LM", "Mi motion sensor 2", "sensor"),
+    0x098B: ("MCCGQ02HL", "Mi door & window sensor 2", "sensor"),
+}
 BLE_UUIDS = {  # 16-bit service UUID -> (label, type, brand, confidence)
+    # Bluetooth SIG health, fitness and audio services: what a device offers says what it is
+    "1810": ("Blood pressure", "health", None, 75), "1808": ("Glucose", "health", None, 75), "1809": ("Health thermometer", "health", None, 70),
+    "181d": ("Weight scale", "health", None, 75), "181b": ("Body composition", "health", None, 75), "1822": ("Pulse oximeter", "health", None, 75),
+    "181f": ("Continuous glucose monitoring", "health", None, 80), "183a": ("Insulin delivery", "health", None, 80),
+    "1814": ("Running speed & cadence", "wearable", None, 60), "1819": ("Location & navigation", "wearable", None, 40),
+    "1854": ("Hearing access (hearing aid)", "hearing_aid", None, 80), "fdf0": ("Hearing aid (ASHA)", "hearing_aid", None, 75),
+    "1827": ("Bluetooth Mesh provisioning (not set up yet)", "smart_home", None, 55), "1828": ("Bluetooth Mesh proxy", "smart_home", None, 55),
+    "1802": ("Immediate alert (find-me)", "tag", None, 35), "1803": ("Link loss", "tag", None, 30),
+    "1844": ("Volume control (LE Audio)", "headphones", None, 35), "184f": ("Broadcast audio scan (LE Audio)", "headphones", None, 35),
+    "1846": ("Coordinated set (earbud pair or speaker set)", "headphones", None, 35),
+    # services registered to one company
+    "febe": ("Bose", "headphones", "Bose", 60), "fe61": ("Logitech", "input", "Logitech", 45), "fee0": ("Huami (Mi Band / Amazfit)", "wearable", None, 65),
+    "fe1f": ("Garmin", "wearable", "Garmin", 50), "fd50": ("Tuya", "smart_home", "Tuya", 60), "fdcd": ("Qingping sensor", "sensor", "Qingping", 70),
+    "fe33": ("Chipolo tracker", "tag", "Chipolo", 80), "fe24": ("August / Yale lock", "lock", "August", 75),
+    "fea0": ("Google", None, "Google", 45), "fe50": ("Google", None, "Google", 45), "fef3": ("Google", None, "Google", 45),
+    "fe26": ("Google", None, "Google", 45), "feb8": ("Meta", None, "Meta", 45),
     "fd6f": ("Exposure Notification", "phone", None, 55), "fe2c": ("Google Fast Pair", "headphones", None, 35),
     "feaa": ("Eddystone beacon", "beacon", None, 70), "fd5a": ("Samsung SmartTag", "tag", "Samsung", 85),
     "feed": ("Tile tracker", "tag", "Tile", 85), "feec": ("Tile tracker", "tag", "Tile", 85),
@@ -229,6 +293,10 @@ def ble_fingerprint(ad, ext=False):
             t, ln = mfg[i], mfg[i + 1]
             payload = mfg[i + 2:i + 2 + ln]
             types.append(t)
+            if t == 0x12 and payload:
+                # Find My status byte: bits 4-5 say what it is (0 an Apple device such as a phone, 1 AirTag, 2 another maker's
+                # Find My accessory, 3 AirPods), bits 6-7 the battery (0 full ... 3 critical). As decoded by AirGuard / OpenHaystack.
+                fp["findmy"] = {"kind": (payload[0] >> 4) & 3, "battery": payload[0] >> 6}
             if t == 0x07 and len(payload) >= 3:
                 be, le = int.from_bytes(payload[1:3], "big"), int.from_bytes(payload[1:3], "little")
                 model = be if be in APPLE_MODELS else le if le in APPLE_MODELS else None
@@ -238,6 +306,14 @@ def ble_fingerprint(ad, ext=False):
         fp["apple"] = sorted(set(types))
     elif mfg and cid == 0x0006 and len(mfg) >= 2 and mfg[0] == 0x01:  # Microsoft CDP beacon
         fp["ms_type"] = mfg[1] & 0x1F
+    elif mfg and cid == 0x0006 and len(mfg) >= 3 and mfg[0] == 0x03 and mfg[1] <= 0x02:  # Microsoft Swift Pair beacon: an accessory in pairing mode
+        fp["swift_pair"] = True
+    for k in ("mi_product", "fast_pair"):
+        if ad.get(k) is not None:
+            fp[k] = ad[k]
+    flags = ad.get("flags")
+    if flags is not None and not flags & 0x04 and flags & 0x18:  # also reachable over Bluetooth classic, at the same time
+        fp["dual"] = True
     if ad.get("uuids"):
         fp["uuids"] = list(ad["uuids"])
     if ext:
@@ -762,6 +838,9 @@ def identify(dev):
             vname = VENDOR_IES.get(oui)
             if oui == "00:17:f2":
                 ev.add("brand", "Apple", 80, "Apple vendor element in Wi-Fi frames")
+                if kind == "ap" and dev.get("randomized"):  # an Apple access point on a private address: Personal Hotspot
+                    ev.add("type", "hotspot", 75, "Apple vendor element in beacons from a private address (iPhone / iPad Personal Hotspot)")
+                    ev.add("os", "iOS", 65, "Apple vendor element in beacons from a private address (iPhone / iPad Personal Hotspot)")
                 if kind == "wifi_client":
                     ev.add("os", "iOS / macOS", 55, "Apple vendor element in Wi-Fi frames")
                     if dev.get("randomized"):
@@ -770,12 +849,32 @@ def identify(dev):
                 ev.add("brand", "Samsung", 70, "Samsung vendor element in Wi-Fi frames")
             elif oui in ("00:0b:86", "00:15:6d") and kind == "ap":  # these makers' own elements in a beacon: it is one of their access points
                 ev.add("brand", "HPE Aruba" if oui == "00:0b:86" else "Ubiquiti", 75, f"Vendor element {oui} in beacons")
+            elif oui in AP_IE_BRANDS and kind == "ap":
+                ev.add("brand", AP_IE_BRANDS[oui], 65, f"{AP_IE_BRANDS[oui]} vendor element ({oui}) in beacons")
             elif vname and oui not in ("00:50:f2", "50:6f:9a"):
                 ev.add("chipset", vname, 50, f"Vendor element {oui}")
         for f in wfp.get("wfa", []):
             ev.add("feature", f, 80, "Wi-Fi Alliance vendor element")
             if f.startswith("MBO") and kind == "wifi_client":
                 years.append((2018, "advertises MBO (2018+)"))
+        p2p = wfp.get("p2p") or {}
+        if p2p:
+            src = "Wi-Fi Direct device info"
+            if p2p.get("name"):
+                ev.add("name", p2p["name"], 75, f"{src}: device name")
+                samsung_model_evidence(ev, years, p2p["name"], f"{src}: device name")
+                for rx, brand, typ, os_, as_model, _y in NAME_RULES:
+                    m = rx.search(p2p["name"])
+                    if m:
+                        ev.add("brand", brand, 70, f"{src}: device name “{p2p['name']}”")
+                        ev.add("type", typ, 70, f"{src}: device name “{p2p['name']}”")
+                        ev.add("os", os_, 65, f"{src}: device name “{p2p['name']}”")
+                        if as_model:
+                            ev.add("model", tidy_model(m.group(0)), 60, f"{src}: device name “{p2p['name']}”")
+                        break
+            if p2p.get("category") in WPS_CATEGORY:
+                base, subs = WPS_CATEGORY[p2p["category"]]
+                ev.add("type", subs.get(p2p.get("subcategory"), base), 82, f"{src}: device category {p2p['category']}")
         wps = wfp.get("wps") or {}
         if wps:
             src = "WPS information"
@@ -808,6 +907,28 @@ def identify(dev):
             ev.add("model", model[0], 92, "Apple proximity-pairing model ID")
             ev.add("type", model[1], 92, "Apple proximity-pairing model ID")
             years.append((model[2], f"{model[0]} released {model[2]}"))
+        fm = bfp.get("findmy") if isinstance(bfp.get("findmy"), dict) else None
+        if fm and fm.get("kind") in FINDMY_KINDS:
+            what, typ, fm_model, conf = FINDMY_KINDS[fm["kind"]]
+            ev.add("type", typ, conf, f"Find My status: {what}")
+            ev.add("model", fm_model, conf, f"Find My status: {what}")
+            ev.add("brand", "Apple" if fm["kind"] != 2 else None, conf, f"Find My status: {what}")
+            if fm["kind"] in (1, 2) and isinstance(fm.get("battery"), int) and 0 <= fm["battery"] < 4:
+                ev.add("feature", f"Battery {FINDMY_BATTERY[fm['battery']]}", 70, "Find My status")
+        elif fm and fm.get("kind") == 0:
+            ev.add("feature", "Findable Apple device (offline finding), not a tag", 70, "Find My status: an Apple device such as a phone, tablet or Mac")
+        mi = MI_PRODUCTS.get(bfp.get("mi_product"))
+        if mi:
+            ev.add("brand", "Xiaomi", 85, f"Xiaomi MiBeacon product ID 0x{bfp['mi_product']:04x}")
+            ev.add("model", f"{mi[1]} ({mi[0]})", 85, f"Xiaomi MiBeacon product ID 0x{bfp['mi_product']:04x}")
+            ev.add("type", mi[2], 85, f"Xiaomi MiBeacon product ID 0x{bfp['mi_product']:04x}")
+        if bfp.get("swift_pair"):
+            ev.add("feature", "Offers pairing through Microsoft Swift Pair", 80, "Swift Pair beacon")
+            ev.add("type", "input", 30, "Swift Pair beacon (a keyboard, mouse, pen or headset offering to pair)")
+        if bfp.get("fast_pair"):
+            ev.add("feature", f"Offers pairing through Google Fast Pair (model {bfp['fast_pair']})", 80, "Fast Pair model ID in the advertisement")
+        if bfp.get("dual"):
+            ev.add("feature", "Also reachable over Bluetooth classic", 70, "Advertisement flags")
         apple = set(bfp.get("apple", []))
         if apple:
             ev.add("brand", "Apple", 85, "Apple Continuity advertisement")
@@ -817,7 +938,7 @@ def identify(dev):
                 ev.add("os", "iOS / macOS", 70, f"Continuity messages: {msgs}")
             if 0x09 in apple:
                 ev.add("type", "streaming", 55, "AirPlay target (Apple TV / HomePod / Mac)")
-            if apple == {0x12}:
+            if apple == {0x12} and not fm:
                 ev.add("type", "tag", 60, "Only Find My messages (AirTag or offline Apple device)")
             if 0x02 in apple:
                 ev.add("type", "beacon", 65, "iBeacon")

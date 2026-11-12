@@ -11,6 +11,7 @@ MAC_PREFIX_RX = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){1,4}$")
 SENSOR_ID_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 ZB_SHORT = re.compile(r"0x[0-9a-f]{4}")
 ZB_EUI64 = re.compile(r"(?:[0-9a-f]{2}:){7}[0-9a-f]{2}")
+ZB_GPD = re.compile(r"gpd:[0-9a-f]{8}")
 ZB_CHANNEL_BITS = 0x07FFF800
 BANDS = {"2.4", "5", "6"}
 FRAMES = {"data", "assoc", "assoc_fail", "auth", "probe", "probe_resp", "deauth", "disassoc"}
@@ -103,8 +104,8 @@ def _zb_channel(v):
 
 
 def _zb_address(v):
-    """A short address ('0x1a2b') or an EUI-64."""
-    if isinstance(v, str) and (ZB_SHORT.fullmatch(v) or ZB_EUI64.fullmatch(v)):
+    """A short address ('0x1a2b'), an EUI-64, or a Zigbee Green Power source ID ('gpd:1a2b3c4d')."""
+    if isinstance(v, str) and (ZB_SHORT.fullmatch(v) or ZB_EUI64.fullmatch(v) or ZB_GPD.fullmatch(v)):
         return v
     return None
 
@@ -184,7 +185,16 @@ def _zigbee_observation(o, t, ts):
             eui = it[3] if isinstance(it[3], str) and ZB_EUI64.fullmatch(it[3]) else None
             if None not in (pan, addr, roles):
                 detail.append([pan, addr, roles, eui])
+        more = []     # later roles (bits above the first five) and what a join request said about the device
+        for it in (o.get("more") or [])[:5000] if isinstance(o.get("more"), list) else []:
+            if not isinstance(it, (list, tuple)) or len(it) != 4:
+                continue
+            pan, addr, roles = clean_num(it[0], -1, 0xFFFF, True), _zb_address(it[1]), clean_num(it[2], 0, 0xFFE0, True)
+            if None not in (pan, addr, roles):
+                more.append([pan, addr, roles & ~31, clean_num(it[3], 0, 255, True)])
         r.update(channels=channels, radios=radios)
+        if more:
+            r["more"] = more
         if detail:
             r["detail"] = detail
         if networks:

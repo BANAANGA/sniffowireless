@@ -603,6 +603,8 @@ class MacFrame:
             return HINT_ENCRYPTED
         if self.type == "data" and len(p) >= 8 and p[0] & 3 <= 1 and (p[0] >> 2) & 15 == 2:
             return HINT_ZIGBEE
+        if self.type == "data" and self.dst == "0xffff" and parse_gp(p):  # Zigbee Green Power: battery-less switches and sensors of a Zigbee network
+            return HINT_ZIGBEE
         if self.type == "data" and p and p[0] & 0xE0 == 0x60:  # 6LoWPAN IPHC dispatch
             return HINT_THREAD
         return HINT_UNKNOWN
@@ -726,19 +728,88 @@ def parse_mac(data):
 
 
 ROLE_POLLS, ROLE_PARENT, ROLE_RELAYS, ROLE_BEACONS, ROLE_ROUTER_BROADCAST = 1, 2, 4, 8, 16
-ROUTER_MASK = ROLE_PARENT | ROLE_RELAYS | ROLE_BEACONS | ROLE_ROUTER_BROADCAST
-ROLE_LABELS = ((ROLE_POLLS, "polls a parent"), (ROLE_PARENT, "answers polls"), (ROLE_RELAYS, "relays frames of others"),
-               (ROLE_BEACONS, "sends beacons"), (ROLE_ROUTER_BROADCAST, "broadcasts to all routers"))
+# Seen since release 32; sent apart from the five above (in "more"), so a server that only knows those still takes them.
+ROLE_MLE_ROUTER, ROLE_GREEN_POWER, ROLE_GP_SWITCH = 32, 64, 128
+ROLE_WIRE_MASK = 31
+ROUTER_MASK = ROLE_PARENT | ROLE_RELAYS | ROLE_BEACONS | ROLE_ROUTER_BROADCAST | ROLE_MLE_ROUTER
+ROLE_LABELS = ((ROLE_POLLS, "polls a parent"), (ROLE_PARENT, "serves end devices (answers their polls or join requests)"), (ROLE_RELAYS, "relays frames of others"),
+               (ROLE_BEACONS, "sends beacons"), (ROLE_ROUTER_BROADCAST, "broadcasts to all routers"),
+               (ROLE_MLE_ROUTER, "advertises itself to its neighbours (Thread routers do)"),
+               (ROLE_GREEN_POWER, "sends Zigbee Green Power frames"), (ROLE_GP_SWITCH, "sends switch commands (on, off, scenes, dimming)"))
 
 
 def role_of(roles):
-    """What the observed behaviour says a radio is: "router" (relays, beacons, answers polls or broadcasts to routers),
-    "end device" (only polls a parent: a sleepy device), or None. A router does not poll, so any router behaviour wins."""
+    """What the observed behaviour says a radio is: "green power" (a battery-less Zigbee Green Power device), "router" (relays, beacons,
+    answers polls, broadcasts to routers or advertises as a Thread router), "end device" (only polls a parent: a sleepy device), or
+    None. A router does not poll, so any router behaviour wins."""
     if not roles:
         return None
+    if roles & ROLE_GREEN_POWER:
+        return "green power"
     if roles & ROUTER_MASK:
         return "router"
     return "end device" if roles & ROLE_POLLS else None
+
+
+# The join request (MAC command 1, "association request") is not encrypted in Zigbee and carries one byte about the device.
+CAP_FFD, CAP_MAINS, CAP_RX_IDLE = 0x02, 0x04, 0x08
+
+
+def parse_assoc(mac):
+    """The capability byte of an association request, or None: bit 1 full-function device (can route), bit 2 mains powered,
+    bit 3 receiver on while idle (not sleepy). IEEE 802.15.4-2006, 7.3.1.2."""
+    if mac.type == "command" and not mac.secured and len(mac.payload) == 2 and mac.payload[0] == 1:
+        return mac.payload[1]
+    return None
+
+
+def capability_labels(caps):
+    """What a join request said, in words: ["mains powered", "always listening", "can route"] or ["battery powered", "sleeps between messages"]."""
+    if caps is None:
+        return []
+    return ["mains powered" if caps & CAP_MAINS else "battery powered",
+            "always listening" if caps & CAP_RX_IDLE else "sleeps between messages",
+            "full-function device (can route)" if caps & CAP_FFD else "reduced-function device (cannot route)"]
+
+
+# Thread routers announce themselves with MLE advertisements: UDP port 19788 to the link-local all-nodes address, hop limit 255.
+# The MLE message is secured inside its UDP payload, not at the MAC layer, so the compressed IPv6 and UDP headers are readable:
+# IPHC 7f 3b (traffic class and flow elided, next header compressed, hop limit 255, source from the MAC address, multicast
+# ff02::00xx in one byte), that byte (01 = all nodes), then the UDP header f0 with both ports (4d4c = 19788) inline.
+MLE_ALL_NODES = bytes.fromhex("7f3b01f04d4c4d4c")
+
+
+def is_mle_advertisement(mac):
+    return mac.type == "data" and not mac.secured and mac.payload[:8] == MLE_ALL_NODES
+
+
+GP_SWITCH_COMMANDS = range(0x10, 0x70)   # scenes 0x10-0x1f, off/on/toggle 0x20-0x22, level 0x30-0x38, colour 0x40-0x4b, press/release 0x60-0x6a
+
+
+def parse_gp(p):
+    """A Zigbee Green Power frame (the stub that battery-less switches and sensors send): {"src": 32-bit source ID or None,
+    "to_device": bool, "command": the command byte when it is readable, else None}, or None if `p` is not one.
+    Layout (Zigbee PRO Green Power, A.1.4.1): frame control (type in bits 0-1, protocol version 3 in bits 2-5, bit 7 = an extended
+    frame control follows: application ID in bits 0-2, security level in bits 3-4, bit 7 = direction), the source ID (application
+    ID 0), a 4-byte frame counter from security level 2, then the command (in the clear up to level 2; level 3 encrypts it)."""
+    if len(p) < 2 or (p[0] >> 2) & 15 != 3 or p[0] & 3 > 1:
+        return None
+    at, app, level, to_device = 1, 0, 0, False
+    if p[0] & 0x80:
+        app, level, to_device, at = p[1] & 7, (p[1] >> 3) & 3, bool(p[1] & 0x80), 2
+    if app not in (0, 2):
+        return None
+    src = None
+    if app == 0 and (p[0] & 3 == 0 or p[0] & 0x80):
+        if at + 4 > len(p):
+            return None
+        src, at = int.from_bytes(p[at:at + 4], "little"), at + 4
+    elif app == 2:
+        at += 1   # endpoint; the device is the MAC source address
+    if level >= 2:
+        at += 4
+    command = p[at] if level < 3 and at < len(p) else None
+    return {"src": src, "to_device": to_device, "command": command}
 
 
 def parse_nwk(p):
@@ -788,7 +859,7 @@ class FrameBatch:
         self.channels = {}
         self.radios = {}
         self.threads = {}   # (pan, extended PAN ID, channel) -> a Thread network announced in a beacon
-        self.detail = {}    # (pan, address) -> {"roles": bit mask, "eui": 64-bit address learned from the network header}
+        self.detail = {}    # (pan, address) -> {"roles": bit mask, "eui": 64-bit address learned from the network header, "caps": join request byte}
         self.frames = self.undecoded = 0
 
     def add(self, captured):
@@ -806,6 +877,9 @@ class FrameBatch:
                 self.threads[(pan, tb["ext_pan"], captured["channel"])] = {**tb, "pan": pan, "channel": captured["channel"],
                                                                          "rssi": captured["rssi"], "lqi": captured["lqi"]}
         self._behaviour(mac)
+        gp = parse_gp(mac.payload) if mac.type == "data" and not mac.secured else None
+        if gp and not gp["to_device"]:
+            self._green_power(mac, gp, captured)
         if mac.src:
             self._record(mac.src_pan if mac.src_pan is not None else mac.dst_pan, mac.src, mac, captured, True)
         if mac.dst and not is_broadcast(mac.dst):
@@ -815,8 +889,24 @@ class FrameBatch:
         k = (pan if pan is not None else -1, address)
         d = self.detail.get(k)
         if d is None and len(self.detail) < self.MAX_RADIOS:
-            d = self.detail[k] = {"roles": 0, "eui": None}
+            d = self.detail[k] = {"roles": 0, "eui": None, "caps": None}
         return d
+
+    def _green_power(self, mac, gp, captured):
+        """A Green Power device usually sends without a MAC source address: it is known by its 32-bit source ID, shown as gpd:xxxxxxxx."""
+        pan = mac.dst_pan if mac.dst_pan not in (None, 0xFFFF) else mac.src_pan if mac.src_pan not in (None, 0xFFFF) else None
+        if mac.dst != "0xffff":   # these devices cannot listen first, so they broadcast
+            return
+        if gp["src"] and mac.src is None:
+            address = f"gpd:{gp['src']:08x}"
+            self._record(pan, address, mac, captured, True)
+        elif gp["src"] is None and mac.src and not mac.src.startswith("0x"):   # application ID 2: known by its 64-bit address
+            address = mac.src
+        else:
+            return
+        d = self._detail(pan, address)
+        if d:
+            d["roles"] |= ROLE_GREEN_POWER | (ROLE_GP_SWITCH if gp["command"] in GP_SWITCH_COMMANDS else 0)
 
     def _behaviour(self, mac):
         """What a radio's frames say about its role: who polls (end devices ask their parent for waiting data), who relays others' frames,
@@ -828,6 +918,18 @@ class FrameBatch:
             d = self._detail(pan, mac.src)
             if d:
                 d["roles"] |= ROLE_BEACONS
+        elif parse_assoc(mac) is not None:
+            d = self._detail(pan, mac.src)
+            if d:
+                d["caps"] = parse_assoc(mac)
+            if mac.dst and not is_broadcast(mac.dst):   # the radio a device asks to join through is a router (or the coordinator)
+                d = self._detail(pan, mac.dst)
+                if d:
+                    d["roles"] |= ROLE_PARENT
+        elif is_mle_advertisement(mac):
+            d = self._detail(pan, mac.src)
+            if d:
+                d["roles"] |= ROLE_MLE_ROUTER
         elif mac.type == "command" and mac.payload:
             # the data request is command 4; with Thread's encryption the identifier is hidden, but such a frame is then 5 bytes (1 + 4 byte MIC)
             poll = (not mac.secured and mac.payload[0] == 4) or (mac.secured and mac.sec_level == 5 and len(mac.payload) == 5 and mac.hint == HINT_THREAD)
@@ -886,8 +988,12 @@ class FrameBatch:
                          r["rssi"], r["lqi"]] for (pan, addr), r in self.radios.items()]}
         if self.threads:
             o["networks"] = list(self.threads.values())
-        detail = [[pan, addr, d["roles"], d["eui"]] for (pan, addr), d in self.detail.items() if d["roles"] or d["eui"]]
+        detail = [[pan, addr, d["roles"] & ROLE_WIRE_MASK, d["eui"]] for (pan, addr), d in self.detail.items() if d["roles"] & ROLE_WIRE_MASK or d["eui"]]
         if detail:
             o["detail"] = detail
+        more = [[pan, addr, d["roles"] & ~ROLE_WIRE_MASK, d["caps"]] for (pan, addr), d in self.detail.items()
+                if d["roles"] & ~ROLE_WIRE_MASK or d["caps"] is not None]
+        if more:   # roles and join capabilities known since release 32
+            o["more"] = more
         self.clear()
         return o

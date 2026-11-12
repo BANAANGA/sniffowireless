@@ -16,7 +16,8 @@ from pydantic import BaseModel
 
 from . import adapters, status
 from .auth import current_user, require_admin
-from .zigbee_radio import ALL_CHANNELS, HINTS, ROLE_LABELS, TYPE_NAMES, FrameBatch, NoCaptureMode, ZigbeeError, detect, role_of
+from .zigbee_radio import (ALL_CHANNELS, CAP_MAINS, CAP_RX_IDLE, HINTS, ROLE_GP_SWITCH, ROLE_GREEN_POWER, ROLE_LABELS, ROUTER_MASK, TYPE_NAMES, FrameBatch,
+                           NoCaptureMode, ZigbeeError, capability_labels, detect, role_of)
 
 from .modules import cutoff_for
 from .radiowatch import watch_map
@@ -46,6 +47,27 @@ CREATE TABLE IF NOT EXISTS zigbee_energy(
 OBSERVATIONS = ("zb_network", "zb_energy", "zb_frames")
 HINT_LABELS = {"unknown": "Unknown protocol", "encrypted": "Encrypted at the radio layer, protocol unknown",
                "thread": "Looks like Thread / 6LoWPAN", "zigbee": "Looks like Zigbee"}
+
+
+def device_guess(addr, roles, caps, hint):
+    """What kind of device a radio probably is, in words, from what its unencrypted headers showed: its role, what its join request
+    said about power and sleep, and (Zigbee) the coordinator's fixed address. A guess to help recognise it, never a product name."""
+    if roles & ROLE_GREEN_POWER:
+        return "Battery-less switch (Green Power)" if roles & ROLE_GP_SWITCH else "Battery-less switch or sensor (Green Power)"
+    if hint == "zigbee" and addr == "0x0000":
+        return "Coordinator (the hub or gateway of this network)"
+    router = bool(roles & ROUTER_MASK)
+    if caps is not None:
+        if caps & CAP_MAINS:
+            return "Mains-powered device (plug, bulb, switch or repeater)"
+        return "Battery device that stays awake" if caps & CAP_RX_IDLE else "Battery device that sleeps (sensor, remote or button)"
+    if router:
+        return "Thread router (mains powered, or a border router)" if hint == "thread" else "Router: mains powered (plug, bulb or repeater)"
+    if role_of(roles) == "end device":
+        return "Sleepy end device: battery powered (sensor, remote or button)"
+    return None
+
+
 BAUD_RATE = 115200
 REPORT_INTERVAL = 10
 RETRY_INTERVAL = 30
@@ -328,7 +350,7 @@ class ZigbeeMonitor:
             if col not in have:
                 ctx.store.conn.execute(f"ALTER TABLE zigbee_networks ADD COLUMN {col} {typ}")
         have = {r[1] for r in ctx.store.conn.execute("PRAGMA table_info(zigbee_radios)")}
-        for col, typ in (("roles", "INTEGER DEFAULT 0"), ("eui", "TEXT")):   # behaviour seen in the radio's frames, 64-bit address from the network header
+        for col, typ in (("roles", "INTEGER DEFAULT 0"), ("eui", "TEXT"), ("caps", "INTEGER")):   # behaviour seen in the radio's frames, 64-bit address from the network header
             if col not in have:
                 ctx.store.conn.execute(f"ALTER TABLE zigbee_radios ADD COLUMN {col} {typ}")
         ctx.store.conn.execute("UPDATE zigbee_networks SET vendor=NULL WHERE vendor IS NOT NULL")  # older versions guessed one from the extended PAN ID
@@ -351,7 +373,7 @@ class ZigbeeMonitor:
         """A radio's 64-bit address is an IEEE address, so its first bytes name the maker (still shown with a question mark: the label is a hint).
         Short addresses have none, and a network's extended PAN ID is not used at all: the coordinator chooses it, many pick random bytes
         (Zigbee2MQTT, ZHA), and no frame we hear confirms that one is derived from the maker's own address."""
-        if not address or address.startswith("0x") or int(address[:2], 16) & 2:
+        if not address or address.startswith(("0x", "gpd:")) or int(address[:2], 16) & 2:
             return None
         return store.vendors.lookup(address)
 
@@ -421,7 +443,7 @@ class ZigbeeMonitor:
                 self.radios[(pan, addr)] = {
                     "channels": channels, "sent": sent, "received": received, "encrypted": encrypted, "hint": hint,
                     "types": types, "rssi": rssi, "lqi": lqi, "vendor": self._vendor(store, addr), "first": ts, "last": ts,
-                    "roles": 0, "eui": None}
+                    "roles": 0, "eui": None, "caps": None}
                 continue
             r["channels"] |= channels
             r["types"] |= types
@@ -441,6 +463,13 @@ class ZigbeeMonitor:
                 r["eui"] = eui
                 if r["vendor"] is None:   # a short address has no maker; the 64-bit address the radio announced in its network header does
                     r["vendor"] = self._vendor(store, eui)
+        for pan, addr, roles, caps in o.get("more") or []:
+            r = self.radios.get((pan, addr))
+            if r is None:
+                continue
+            r["roles"] |= roles
+            if caps is not None:
+                r["caps"] = caps
         self.pending = True
 
     def flush(self, store, c):
@@ -462,14 +491,15 @@ class ZigbeeMonitor:
                  json.dumps(sorted(routers)), n["vendor"], n["first"], n["last"], n["sightings"], n.get("protocol", "zigbee"),
                  n.get("name"), n.get("version")))
         c.executemany(
-            "INSERT INTO zigbee_radios(pan, addr, channels, sent, received, encrypted, hint, types, rssi, lqi, vendor, first_seen, last_seen, roles, eui) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(pan, addr) DO UPDATE SET roles=roles|excluded.roles, eui=COALESCE(excluded.eui, eui), "
+            "INSERT INTO zigbee_radios(pan, addr, channels, sent, received, encrypted, hint, types, rssi, lqi, vendor, first_seen, last_seen, roles, eui, caps) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(pan, addr) DO UPDATE SET roles=roles|excluded.roles, eui=COALESCE(excluded.eui, eui), "
+            "caps=COALESCE(excluded.caps, caps), "
             "channels=channels|excluded.channels, sent=sent+excluded.sent, received=received+excluded.received, "
             "encrypted=encrypted+excluded.encrypted, hint=MAX(hint, excluded.hint), types=types|excluded.types, "
             "rssi=COALESCE(excluded.rssi, rssi), lqi=COALESCE(excluded.lqi, lqi), "
             "vendor=COALESCE(excluded.vendor, vendor), last_seen=excluded.last_seen",
             [(pan, addr, r["channels"], r["sent"], r["received"], r["encrypted"], r["hint"], r["types"], r["rssi"], r["lqi"],
-              r["vendor"], r["first"], r["last"], r["roles"], r["eui"]) for (pan, addr), r in self.radios.items()])
+              r["vendor"], r["first"], r["last"], r["roles"], r["eui"], r.get("caps")) for (pan, addr), r in self.radios.items()])
         c.executemany("INSERT INTO zigbee_channels VALUES(?,?,?) ON CONFLICT(minute, channel) DO UPDATE SET "
                       "frames=frames+excluded.frames", [(m, ch, n) for (m, ch), n in self.channels.items()])
         c.executemany("INSERT OR REPLACE INTO zigbee_energy VALUES(?,?,?)",
@@ -564,7 +594,7 @@ def routes(ctx):
 
     @r.get("/api/export/zigbee-radios.csv")
     def export_radios(_=Depends(current_user)):
-        cols = ["pan", "addr", "channels", "sent", "received", "encrypted", "hint", "types", "rssi", "lqi", "vendor", "first_seen", "last_seen", "roles", "eui"]
+        cols = ["pan", "addr", "channels", "sent", "received", "encrypted", "hint", "types", "rssi", "lqi", "vendor", "first_seen", "last_seen", "roles", "eui", "caps"]
         return csv_response("zigbee-radios.csv", cols, ctx.rows("SELECT * FROM zigbee_radios ORDER BY last_seen DESC LIMIT 100000"))
 
     @r.get("/api/export/zigbee-networks.csv")
@@ -607,6 +637,8 @@ def routes(ctx):
             d["hint_label"] = HINT_LABELS[d["hint"]]
             d["role"] = role_of(d["roles"] or 0)
             d["behaviour"] = [label for bit, label in ROLE_LABELS if (d["roles"] or 0) & bit]
+            d["power"] = capability_labels(d.get("caps"))
+            d["device"] = device_guess(d["addr"], d["roles"] or 0, d.get("caps"), d["hint"])
         frames = {x["channel"]: x["frames"] for x in ctx.rows(
             "SELECT channel, SUM(frames) frames FROM zigbee_channels WHERE minute >= ? GROUP BY channel", (since,))}
         energy = {x["channel"]: x for x in ctx.rows(

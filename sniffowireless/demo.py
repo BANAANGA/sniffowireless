@@ -102,9 +102,9 @@ BLE_FPS = {
     "f0:55:ee:02:00:06": {"company": 0x01DA, "uuids": ["1812"]},
     "4a:66:ff:02:00:07": {"company": 0x004C, "apple": [0x0C, 0x10]},
     "5b:77:00:02:00:08": {"company": 0x0006, "ms_type": 15},
-    "6c:88:11:02:00:09": {"company": 0x004C, "apple": [0x12]},
+    "6c:88:11:02:00:09": {"company": 0x004C, "apple": [0x12], "findmy": {"kind": 0, "battery": 0}},   # a phone that can be found, not a tag
     "cb:99:22:02:00:0a": {"company": 0x0499, "ext_adv": True},
-    "7b:4f:3a:02:00:0b": {"company": 0x004C, "apple": [0x12]},
+    "7b:4f:3a:02:00:0b": {"company": 0x004C, "apple": [0x12], "findmy": {"kind": 1, "battery": 1}},   # an AirTag
     "6e:11:aa:02:00:0c": {"company": 0x004C, "apple": [0x0C, 0x10]},  # unknown AirTag following Alex every other day
 }
 
@@ -204,6 +204,7 @@ ZIGBEE_RADIOS = [
     (0x1a62, "0x8a10", 15, 12, 3, 0b0010, -68), (0x1a62, "00:12:4b:00:25:7c:11:9e", 15, 2, 3, 0b1000, -74),
     (0xc3d4, "04:cd:15:ff:fe:6b:20:7a", 20, 3, 1, 0b0010, -77), (0xc3d4, "0x0001", 20, 6, 1, 0b0010, -70),
     (0x4e20, "0x7c00", 25, 14, 2, 0b0010, -82),
+    (-1, "gpd:01a2b3c4", 15, 1, 3, 0b0010, -66),   # a battery-less Zigbee Green Power wall switch
 ]
 
 
@@ -594,6 +595,9 @@ class DemoGenerator:
             # roles seen in the frames and 64-bit addresses from the Zigbee network headers (Philips Hue, IKEA, a TI-based sensor)
             o["detail"] = [d for d in ([0x1a62, "0x0000", 8 | 16, "00:17:88:01:0b:a2:3c:de"], [0x1a62, "0x3f21", 4, "d0:cf:5e:ff:fe:12:34:56"],
                                        [0x1a62, "0x8a10", 1, "00:12:4b:00:2a:5c:81:07"], [0xc3d4, "0x0001", 4, None]) if d[1] in heard]
+            # later roles and join requests: the Thread radio advertises as a router, a sensor joined as a sleepy battery device, the switch is Green Power
+            o["more"] = [d for d in ([0x4e20, "0x7c00", 32, None], [0x1a62, "00:12:4b:00:25:7c:11:9e", 0, 0x80],
+                                     [-1, "gpd:01a2b3c4", 64 | 128, None]) if d[1] in heard]
             if int(t // 60) % 10 == 0:   # a Thread router answers someone's beacon request: its network name and extended PAN ID are in the clear
                 o["networks"] = [{"ext_pan": "dd:a1:7c:33:90:5e:12:08", "pan": 0x4e20, "channel": 25, "name": "OpenThread-4e20", "version": 2,
                                   "joining": False, "native": False, "rssi": -82, "lqi": 96}]
