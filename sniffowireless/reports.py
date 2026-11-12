@@ -132,10 +132,51 @@ def radio_lines(ctx, since):
     return out
 
 
+SENSOR_QUIET = 600  # a remote sensor that has not reported for this long is listed as offline
+
+
+def digest_lines(ctx, since, now):
+    """What happened in the period that someone should look at: [(heading, [lines])], only for headings with something under them."""
+    from .alerts import EVENT_TYPES, SEVERITY
+    out = []
+    new = ctx.rows("SELECT d.mac, d.name, d.vendor, d.dev_type, d.kind, m.label FROM devices d LEFT JOIN device_meta m ON m.mac = d.mac "
+                   "WHERE d.first_seen >= ? AND d.randomized = 0 ORDER BY d.first_seen DESC LIMIT 11", (since,))
+    if new:
+        from .identify import TYPE_LABELS
+        lines = [" · ".join(x for x in (d["label"] or d["name"] or d["mac"], d["vendor"], TYPE_LABELS.get(d["dev_type"])) if x) for d in new[:10]]
+        if len(new) > 10:
+            lines.append("and more: see Devices, sorted by first seen")
+        out.append(("New devices", lines))
+    trackers = ctx.rows("SELECT ts, mac, detail FROM events WHERE ts >= ? AND type = 'tracker_following' ORDER BY ts DESC LIMIT 5", (since,))
+    if trackers:
+        out.append(("Possible trackers", [f"{time.strftime('%a %H:%M', time.localtime(t['ts']))}: {t['detail'] or t['mac']}" for t in trackers]))
+    serious = [t for t, sev in SEVERITY.items() if sev in ("high", "medium") and t != "tracker_following"]
+    events = ctx.rows(f"SELECT type, COUNT(*) n FROM events WHERE ts >= ? AND type IN ({','.join('?' * len(serious))}) GROUP BY type ORDER BY n DESC",
+                      (since, *serious))
+    if events:
+        out.append(("Security and warnings", [f"{EVENT_TYPES.get(e['type'], e['type'])}: {e['n']}" for e in events]))
+    try:
+        quiet = ctx.rows("SELECT name, id, last_seen FROM sensors WHERE id != 'local' AND COALESCE(last_seen, 0) < ? ORDER BY name", (now - SENSOR_QUIET,))
+    except Exception:  # no sensors table (yet)
+        quiet = []
+    if quiet:
+        out.append(("Sensors offline now", [f"{q['name'] or q['id']}: " + (f"last report {_dur(now - q['last_seen'])} ago" if q["last_seen"] else "never reported")
+                                            for q in quiet]))
+    return out
+
+
 def weekly_summary(ctx):
-    rep = occupancy(ctx, 7, tz=-int(time.localtime().tm_gmtoff / 60))
+    return summary(ctx, 7)
+
+
+def summary(ctx, days=7):
+    """(title, text, html) of the report over the last `days` days: 7 for the weekly one, 1 for the daily one."""
+    import html as htmllib
+    rep = occupancy(ctx, days, tz=-int(time.localtime().tm_gmtoff / 60))
     now = time.time()
-    since = now - 7 * 86400
+    since = now - days * 86400
+    what = "daily" if days == 1 else "weekly"
+    sections = digest_lines(ctx, since, now)
     s = rep["summary"]
     new_dev = ctx.one("SELECT COUNT(*) n FROM devices WHERE first_seen >= ? AND randomized=0", (since,))["n"]
     alerts = ctx.one("SELECT COUNT(*) n FROM alert_log WHERE ts >= ?", (since,))["n"]
@@ -160,13 +201,17 @@ def weekly_summary(ctx):
                     f"<td>{d['new']}</td><td>{d['peak']}</td><td>{_dur(d['median_dwell'])}</td></tr>"
                     for d in rep["days"])
     html = f"""<div style="font-family:system-ui,sans-serif;color:#111;max-width:640px">
-<h2 style="margin:0 0 4px">sniffowireless weekly report</h2><p style="color:#666;margin:0 0 16px">
+<h2 style="margin:0 0 4px">sniffowireless {what} report</h2><p style="color:#666;margin:0 0 16px">
 {time.strftime('%d %b', time.localtime(since))} – {time.strftime('%d %b %Y', time.localtime(now))}</p>
-<ul>{''.join(f'<li>{l}</li>' for l in lines)}</ul>
+<ul>{''.join(f'<li>{htmllib.escape(l)}</li>' for l in lines)}</ul>
+{''.join(f'<h3 style="margin:16px 0 4px;font-size:15px">{htmllib.escape(h)}</h3><ul style="margin-top:0">' + ''.join(f'<li>{htmllib.escape(i)}</li>' for i in items) + '</ul>' for h, items in sections)}
 <table cellpadding="6" style="border-collapse:collapse;font-size:14px"><tr style="text-align:left;color:#666">
 <th>Day</th><th>People</th><th>New</th><th>Peak</th><th>Median visit</th></tr>{daily}</table>
 <p style="color:#888;font-size:12px">{rep['method']}</p></div>"""
-    return "sniffowireless weekly report", "\n".join(lines), html
+    text = "\n".join(lines)
+    for head, items in sections:
+        text += f"\n\n{head}\n" + "\n".join(f"- {i}" for i in items)
+    return f"sniffowireless {what} report", text, html
 
 
 class ReportScheduler:
@@ -178,15 +223,18 @@ class ReportScheduler:
 
     def due(self, cfg, now):
         lt = time.localtime(now)
-        return cfg["email"] and cfg["notifier_id"] and lt.tm_wday == int(cfg["weekday"]) and \
-            lt.tm_hour == int(cfg["hour"]) and now - (cfg.get("last_sent") or 0) > 6 * 86400
+        if not (cfg["email"] and cfg["notifier_id"] and lt.tm_hour == int(cfg["hour"])):
+            return False
+        if cfg.get("daily"):  # every day at that hour
+            return now - (cfg.get("last_sent") or 0) > 20 * 3600
+        return lt.tm_wday == int(cfg["weekday"]) and now - (cfg.get("last_sent") or 0) > 6 * 86400
 
     def send_now(self):
         cfg = self.ctx.settings.get("report")
         n = self.ctx.one("SELECT * FROM notifiers WHERE id=?", (cfg["notifier_id"],))
         if not n:
-            raise ValueError("Choose a notifier for the weekly report first")
-        title, body, html = weekly_summary(self.ctx)
+            raise ValueError("Choose a notifier for the report first")
+        title, body, html = summary(self.ctx, 1 if cfg.get("daily") else 7)
         send(n["type"], json.loads(n["config"] or "{}"), title, body, html=html)
         cfg["last_sent"] = time.time()
         self.ctx.settings.set("report", cfg)
@@ -196,9 +244,9 @@ class ReportScheduler:
             try:
                 if self.due(self.ctx.settings.get("report"), time.time()):
                     self.send_now()
-                    log.info("Weekly report sent")
+                    log.info("Report sent")
             except Exception as e:
-                log.warning("Weekly report failed: %s", e)
+                log.warning("Report failed: %s", e)
 
 
 def routes(ctx):

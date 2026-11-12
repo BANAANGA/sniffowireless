@@ -48,7 +48,7 @@
   - **You:** account (password, two-factor login, display on this browser)
   - **Monitoring:** my networks, investigations, ignore list, detection thresholds
   - **Radios & sensors:** sensors, modules, Wi-Fi channels, LoRa bands, Zigbee, LoRa flasher
-  - **Alerts & integrations:** notification channels, weekly report, MQTT, API tokens
+  - **Alerts & integrations:** notification channels, scheduled report (daily or weekly), MQTT, API tokens
   - **Data & privacy:** privacy, clear data, backup
   - **System:** users, appearance, performance, about
 

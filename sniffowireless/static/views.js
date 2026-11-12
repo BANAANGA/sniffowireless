@@ -486,13 +486,13 @@ addRoute('/reports', async (_, params) => {
   const s = r.summary;
   const rcfg = await api('/api/settings/report');
   app.innerHTML = `<div class="page-head"><div><h1>Occupancy report</h1><div class="sub">${dt(r.since)} – ${dt(r.until)}</div></div>
-    <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} <button class="btn" id="print">Print / PDF</button>${isAdmin() ? ' <button class="btn" id="send-now">Email weekly report now</button>' : ''}</div></div>
+    <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} <button class="btn" id="print">Print / PDF</button>${isAdmin() ? ' <button class="btn" id="send-now">Send report now</button>' : ''}</div></div>
     <div class="grid cols-4">${[['People (estimated)', s.unique, `${s.new} new`], ['Average present', s.avg_present, 'per hour'], ['Peak', s.peak, s.peak_at ? new Date(s.peak_at * 1000).toLocaleString([], clockOpts({ weekday: 'short', hour: '2-digit', minute: '2-digit' })) : ''],
       ['Median visit', dur(s.median_dwell), 'per person per day']].map(([l, v, m]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div><div class="meta">${esc(m)}</div></div>`).join('')}</div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel span-3"><header><h2>People present per hour</h2></header><div class="body"><div class="chart-box"><canvas id="occ"></canvas></div></div></section>
       <section class="panel span-2"><header><h2>Typical week</h2><span class="faint">average people present</span></header><div class="body" id="occ-heat"></div></section>
-      <section class="panel"><header><h2>Weekly email</h2></header><div class="body small-text">${rcfg.email ? `Sent every ${WEEKDAYS[rcfg.weekday]} at ${String(rcfg.hour).padStart(2, '0')}:00${rcfg.last_sent ? `; last sent ${dt(rcfg.last_sent)}` : ''}.` : 'Not scheduled.'} <a href="#/settings?tab=report" class="no-print">Configure</a></div></section>
+      <section class="panel"><header><h2>Scheduled report</h2></header><div class="body small-text">${rcfg.email ? `Sent every ${rcfg.daily ? 'day' : WEEKDAYS[rcfg.weekday]} at ${String(rcfg.hour).padStart(2, '0')}:00${rcfg.last_sent ? `; last sent ${dt(rcfg.last_sent)}` : ''}.` : 'Not scheduled.'} <a href="#/settings?tab=report" class="no-print">Configure</a></div></section>
       <section class="panel span-3"><header><h2>Per day</h2></header><div class="body flush">${tableHtml('<th>Day</th><th class="num">People</th><th class="num">New</th><th class="num">Returning</th><th class="num">Peak</th><th class="num">Median visit</th>',
         r.days.slice().reverse().map(d => `<tr><td>${new Date(d.day * 1000).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}</td><td class="num">${d.people}</td><td class="num muted">${d.new}</td><td class="num muted">${d.returning}</td><td class="num">${d.peak}</td><td class="num">${dur(d.median_dwell)}</td></tr>`).join(''), 'No data in this range')}</div></section>
     </div><p class="faint small-text" style="margin-top:12px">${esc(r.method)}</p>`;
@@ -530,7 +530,7 @@ const SETTINGS_GROUPS = [
   ]],
   ['Alerts & integrations', [
     ['notify', 'Notifications', 'bell', 'Where alerts are sent: email, ntfy, Telegram, webhooks', 'email smtp ntfy telegram webhook'],
-    ['report', 'Weekly report', 'calendar', 'A weekly occupancy and activity summary', 'email summary'],
+    ['report', 'Scheduled report', 'calendar', 'A daily or weekly occupancy and activity summary', 'email summary weekly daily digest'],
     ['mqtt', 'MQTT', 'link', 'Presence for labelled devices, e.g. for Home Assistant', 'home assistant broker'],
     ['tokens', 'API tokens', 'key', 'Tokens for Prometheus and scripts', 'bearer prometheus metrics api'],
   ]],
@@ -834,15 +834,19 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
   },
   async report(el) {
     const [cfg, ns] = await Promise.all([api('/api/settings/report'), api('/api/notifiers')]);
-    el.innerHTML = `<section class="panel"><header><h2>Weekly report</h2></header><div class="body"><form id="rf" class="form-narrow">
-      <label class="check"><input type="checkbox" name="email" ${cfg.email ? 'checked' : ''}> Send a weekly occupancy &amp; activity summary</label>
+    el.innerHTML = `<section class="panel"><header><h2>Scheduled report</h2></header><div class="body"><form id="rf" class="form-narrow">
+      <label class="check"><input type="checkbox" name="email" ${cfg.email ? 'checked' : ''}> Send an occupancy &amp; activity summary</label>
+      <label class="field">How often<select name="daily"><option value="0">Every week, over the last 7 days</option><option value="1" ${cfg.daily ? 'selected' : ''}>Every day, over the last 24 hours</option></select></label>
       <label class="field">Send via<select name="notifier_id"><option value="">Choose a channel…</option>${ns.map(n => `<option value="${n.id}" ${n.id === cfg.notifier_id ? 'selected' : ''}>${esc(n.name)} (${esc(n.type)})</option>`).join('')}</select></label>
-      <div class="row"><label class="field">Day<select name="weekday">${WEEKDAYS.map((d, i) => `<option value="${i}" ${i === +cfg.weekday ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+      <div class="row"><label class="field" id="rf-day">Day<select name="weekday">${WEEKDAYS.map((d, i) => `<option value="${i}" ${i === +cfg.weekday ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
       <label class="field">Hour<input type="number" name="hour" min="0" max="23" value="${cfg.hour}"></label></div>
       <button class="btn primary">Save</button> <button type="button" class="btn" id="send">Send now</button>
-      <p class="faint small-text">${cfg.last_sent ? 'Last sent ' + dt(cfg.last_sent) : 'Never sent'}. Email channels get an HTML report; other channels a text summary. See also <a href="#/reports">Reports</a>.</p></form></div></section>`;
+      <p class="faint small-text">${cfg.last_sent ? 'Last sent ' + dt(cfg.last_sent) : 'Never sent'}. Email channels get an HTML report; other channels a text summary. Besides the occupancy figures it lists new devices, possible trackers, security events and warnings, and remote sensors that are offline. See also <a href="#/reports">Reports</a>.</p></form></div></section>`;
     const f = el.querySelector('#rf');
-    f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour') }); toast('Saved'); };
+    const dayField = () => { el.querySelector('#rf-day').hidden = f.daily.value === '1'; };
+    f.daily.onchange = dayField;
+    dayField();
+    f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour'), daily: f.daily.value === '1' }); toast('Saved'); };
     el.querySelector('#send').onclick = async () => { try { await send('POST', '/api/reports/send'); toast('Report sent'); } catch (e) { toast(e.message, true); } };
   },
   async mqtt(el) {
