@@ -463,7 +463,7 @@ def test_passersby(env):
 def test_appearance(env):
     ctx, c = env
     a = c.get("/api/appearance").json()  # public: the sign-in page uses it too
-    assert a["name"] == "sniffowireless" and a["icon"] == "dot" and a["colors"]["ap"] == "#4cc2ff" and a["custom_colors"] == []
+    assert a["name"] == "sniffowireless" and a["icon"] == "sniff" and a["colors"]["ap"] == "#4cc2ff" and a["custom_colors"] == []
     body = {"name": "Home <b>radar</b>", "icon": "radar", "colors": {"ap": "#FF8800", "bg": "#0b0c0e"}}
     assert c.put("/api/appearance", json=body, headers=H).status_code == 401
     login(c, "viewer")
@@ -487,7 +487,7 @@ def test_appearance(env):
     assert ic.status_code == 200 and ic.headers["content-type"] == "image/png" and "sandbox" in ic.headers["content-security-policy"]
     # a tampered config backup can't make it serve or delete other files
     ctx.settings.set("appearance", {**ctx.settings.get("appearance"), "icon_file": "../t.db"})
-    assert c.get("/api/appearance/icon").status_code == 404 and c.get("/api/appearance").json()["icon"] == "dot"
+    assert c.get("/api/appearance/icon").status_code == 404 and c.get("/api/appearance").json()["icon"] == "sniff"
     login(c)
     assert c.delete("/api/appearance/icon", headers=H).status_code == 200
     assert os.path.exists(ctx.cfg.db_path)

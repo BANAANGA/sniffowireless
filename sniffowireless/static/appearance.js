@@ -16,7 +16,7 @@ const APPEARANCE_PRESETS = {
     wifi_client: '#4ee39b', ble: '#ffc65c', bt_classic: '#ff7a77', lan: '#c4ccd8', good: '#4ee39b', warn: '#ffc65c', bad: '#ff7a77' }],
 };
 const CLOCK_CHOICES = [['auto', 'Automatic (browser language)'], ['24', '24-hour (13:05)'], ['12', '12-hour (1:05 PM)']];
-const ICON_NAMES = { dot: 'Dot (default)', wifi: 'Wi-Fi', radar: 'Radar', bluetooth: 'Bluetooth', eye: 'Eye', shield: 'Shield', custom: 'Uploaded image' };
+const ICON_NAMES = { sniff: 'Sniffing nose (default)', dot: 'Dot', wifi: 'Wi-Fi', radar: 'Radar', bluetooth: 'Bluetooth', eye: 'Eye', shield: 'Shield', custom: 'Uploaded image' };
 
 SETTINGS_VIEWS.appearance = async function (el) {
   const saved = await api('/api/appearance');
@@ -93,7 +93,7 @@ SETTINGS_VIEWS.appearance = async function (el) {
     paintColors();
     preview();
   };
-  $('#ap-reset').onclick = () => { draft = { name: 'sniffowireless', icon: 'dot', clock: 'auto', style: '', font: '', font_custom: '', font_size: 13, colors: { ...defaults } }; $('#ap-name').value = 'sniffowireless'; $('#ap-clock').value = 'auto'; $('#ap-font').value = ''; $('#ap-font-custom').value = ''; $('#ap-font-custom-wrap').hidden = true; $('#ap-fsize').value = '13'; paintIcons(); paintColors(); preview(); };
+  $('#ap-reset').onclick = () => { draft = { name: 'sniffowireless', icon: 'sniff', clock: 'auto', style: '', font: '', font_custom: '', font_size: 13, colors: { ...defaults } }; $('#ap-name').value = 'sniffowireless'; $('#ap-clock').value = 'auto'; $('#ap-font').value = ''; $('#ap-font-custom').value = ''; $('#ap-font-custom-wrap').hidden = true; $('#ap-fsize').value = '13'; paintIcons(); paintColors(); preview(); };
   $('#ap-upload').onchange = async e => {
     const f = e.target.files[0];
     e.target.value = '';

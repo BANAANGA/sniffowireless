@@ -21,7 +21,7 @@ COLORS = {
     "ap": "#4cc2ff", "wifi_client": "#3ecf8e", "ble": "#f5b84a", "bt_classic": "#ef6f6c", "lan": "#a8b3c2",
     "good": "#3ecf8e", "warn": "#f5b84a", "bad": "#ef6f6c", "icon": "#e6e7e9",
 }
-ICONS = ("dot", "wifi", "radar", "bluetooth", "eye", "shield", "custom")
+ICONS = ("sniff", "dot", "wifi", "radar", "bluetooth", "eye", "shield", "custom")
 STYLES = ("", "vicecity")  # optional decoration on top of the colours (gradients, glow); see style.css
 CLOCKS = ("auto", "24", "12")  # auto: the browser's locale decides
 FONTS = ("", "system", "humanist", "serif", "mono", "custom")  # stacks live in theme.js; "custom" uses font_custom
@@ -50,7 +50,7 @@ def icon_type(data):
 
 class Appearance(BaseModel):
     name: str = Field("sniffowireless", max_length=32)
-    icon: str = "dot"
+    icon: str = "sniff"
     clock: str = "auto"
     style: str = ""
     font: str = ""
@@ -129,10 +129,10 @@ def time_format(ctx, seconds=False):
 
 def current(ctx):
     a = ctx.settings.get("appearance")
-    icon = a.get("icon") or "dot"
+    icon = a.get("icon") or "sniff"
     custom = icon_file(a) if icon == "custom" else None
     if icon == "custom" and not (custom and os.path.exists(os.path.join(ctx.cfg.data_dir, custom))):
-        icon, custom = "dot", None
+        icon, custom = "sniff", None
     return {"name": a.get("name") or "sniffowireless", "icon": icon,
             "clock": a.get("clock") if a.get("clock") in CLOCKS else "auto",
             "style": a.get("style") if a.get("style") in STYLES else "",
@@ -189,7 +189,7 @@ def routes(ctx):
                 os.remove(os.path.join(data_dir, icon_file(a)))
             except OSError:
                 pass
-        a.update({"icon": "dot" if a.get("icon") == "custom" else a.get("icon", "dot"), "icon_file": None})
+        a.update({"icon": "sniff" if a.get("icon") == "custom" else a.get("icon", "sniff"), "icon_file": None})
         ctx.settings.set("appearance", a)
         return current(ctx)
 

@@ -21,7 +21,7 @@ DEFAULTS = {
     # Networks under investigation: [{"ssid", "note", "added"}]
     "investigate": {"ssids": []},
     # Appearance (admin): app name, icon (built-in glyph or uploaded file) and colours differing from the defaults.
-    "appearance": {"name": "sniffowireless", "icon": "dot", "clock": "auto", "colors": {}, "icon_file": None, "icon_ver": 0},
+    "appearance": {"name": "sniffowireless", "icon": "sniff", "clock": "auto", "colors": {}, "icon_file": None, "icon_ver": 0},
     # Wi-Fi channel settings set from the web UI, for this server ("local") and per remote sensor id. See channels.py.
     "channels": {"local": {}, "sensors": {}},
     # LoRa profiles set from the web UI, for this server ("local") and per remote sensor id (see lora.py), and whether the

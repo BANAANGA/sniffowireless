@@ -2,7 +2,17 @@
 // Appearance (name, icon, colours) set by an admin. Loaded before everything else on every page; the last-used
 // appearance is cached in localStorage so pages don't flash the stock look while /api/appearance loads.
 
+// The logo (docs/logo.svg) drawn for 16 px: a face in profile sniffing a Wi-Fi and a Bluetooth sign. In the app the face follows the icon
+// colour and the two signs the access-point and BLE colours; sniffGlyph() fills in fixed colours where CSS variables don't reach (the tab icon).
+const SNIFF_FACE = 'M3.4 0C3.9 1.6 5 3.2 5.2 4.6 5.3 5.2 5 5.5 5.1 6 6.1 7.9 8 9.1 9.4 10 10.3 10.7 9.9 11.9 8.8 11.8 8.1 11.7 7.4 11.7 6.7 11.7 6.4 12.1 6.4 12.7 6.7 13.1 7.3 13.5 7 14.3 6.3 14.6 6.1 15 6.1 15.6 6.2 16H0V0Z';
+const sniffGlyph = (face, wifi, bt) => `<path fill="${face}" d="${SNIFF_FACE}"/>`
+  + `<g fill="none" stroke="${wifi}" stroke-width="1.25" stroke-linecap="round"><path d="M10.3 3.3a3.6 3.6 0 0 1 5 0"/><path d="M11.6 4.8a1.7 1.7 0 0 1 2.4 0"/></g>`
+  + `<circle cx="12.8" cy="6.5" r=".85" fill="${wifi}"/>`
+  + `<path d="M11.6 10.1 14.2 12.5 13 13.6V8.4l1.2 1.1-2.6 2.4" fill="none" stroke="${bt}" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round"/>`;
+const SNIFF_FAVICON = (bg, face, wifi, bt) => `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><defs><clipPath id='c'><rect width='16' height='16' rx='3.5'/></clipPath></defs>`
+  + `<g clip-path='url(#c)'><rect width='16' height='16' fill='${bg}'/>${sniffGlyph(face, wifi, bt)}</g></svg>`;
 const ICON_SVGS = {
+  sniff: sniffGlyph('currentColor', 'var(--ap, #4cc2ff)', 'var(--ble, #f5b84a)').replace(/stroke="var\(([^"]+)\)"/g, 'style="stroke:var($1)"').replace(/fill="var\(([^"]+)\)"/g, 'style="fill:var($1)"'),
   wifi: '<path d="M2 6.5a9 9 0 0 1 12 0M4.2 8.8a6 6 0 0 1 7.6 0M6.4 11a3 3 0 0 1 3.2 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="13" r="1.2" fill="currentColor"/>',
   radar: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-opacity=".55"/><circle cx="8" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-opacity=".8"/><path d="M8 8 13 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>',
   bluetooth: '<path d="M4.5 5 11 10.5 8 13V3l3 2.5L4.5 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -41,7 +51,9 @@ function applyAppearance(a, { cache = true, preview = false } = {}) {
   const fav = document.querySelector('link[rel="icon"]');
   if (fav) {
     const ic = HEX_RE.test(c.icon) ? c.icon : '#e6e7e9';
+    const col = (k, d) => HEX_RE.test(c[k]) ? c[k] : d;
     fav.href = a.icon === 'custom' && a.icon_url ? a.icon_url
+      : a.icon === 'sniff' ? 'data:image/svg+xml,' + encodeURIComponent(SNIFF_FAVICON(col('panel', '#12161c'), ic, col('ap', '#4cc2ff'), col('ble', '#f5b84a')))
       : 'data:image/svg+xml,' + encodeURIComponent(ICON_SVGS[a.icon]
         ? `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' color='${ic}'>${ICON_SVGS[a.icon]}</svg>` : DOT_FAVICON(ic));
   }
