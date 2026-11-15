@@ -638,6 +638,9 @@ def create_app(ctx):
                 x["clients"], x["sessions"] = c.get("clients", 0), c.get("sessions", 0)
                 x["ignored"], x["mine"] = x["ssid"] in ignored, x["ssid"] in mine
             return {"ssid_total": total, "ssids": ssids,
+                    # clients per channel: the channel each was last heard on (a client follows its access point)
+                    "client_channels": rows("SELECT channel, band b, COUNT(*) n FROM devices WHERE kind='wifi_client' AND channel IS NOT NULL "
+                                            "AND band IS NOT NULL AND last_seen>=? GROUP BY band, channel", (since,)),
                     "channels": rows("SELECT channel, COALESCE(band, CASE WHEN channel <= 14 THEN '2.4' ELSE '5' END) AS b, "
                                      "COUNT(*) aps FROM devices WHERE kind='ap' AND channel IS NOT NULL AND last_seen>=? "
                                      "GROUP BY b, channel ORDER BY b = '6', b = '5', channel", (since,))}
@@ -753,12 +756,20 @@ def create_app(ctx):
                 "MAX(os) os, MAX(wifi_gen) wifi_gen FROM devices WHERE fp_hash IS NOT NULL AND last_seen>=? "
                 "GROUP BY fp_hash HAVING n > 1 ORDER BY n DESC LIMIT ?", (since, limit))}
 
+        def airtime():
+            # Wi-Fi channel survey: how busy each channel was while a sensor listened on it, and per band over time
+            return {"airtime": survey.utilization(ctx, since),
+                    "airtime_series": survey.airtime_series(ctx, since, now, 3600 if days > 2 else 900 if days > 0.5 else 300)}
+
+        def radio_channels():
+            return {"zigbee_channels": zigbee.channel_frames(ctx, since), "lora_airtime": lora.airtime(ctx, since)}
+
         def radios():
             # Zigbee / Thread radios and LoRa nodes live in tables of their own: their breakdowns come ready-made.
             return {"zigbee": zigbee.breakdown(ctx, since), "lora": lora.breakdown(ctx, since)}
 
         out = {"days": days}
-        parts = (presence, radio_presence, vendors, networks, probes, new, sessions_part, events, sensors_part, fingerprints, radios,
+        parts = (presence, radio_presence, airtime, radio_channels, vendors, networks, probes, new, sessions_part, events, sensors_part, fingerprints, radios,
                  *(by_column(c) for c in ("dev_type", "brand", "os", "wifi_gen", "era")),
                  by_json("addr_type", "$.addr_type", ("ble",)), by_json("company", "$.company", ("ble",)),
                  by_json("bt_ver", "$.bt_ver", ("ble", "bt_classic")), by_json("mobility", "$.mobility.c", ()))

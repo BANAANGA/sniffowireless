@@ -118,27 +118,52 @@ def recommend(aps, util, my_bssids=()):
     return out
 
 
+def utilization(ctx, since, sensor=None):
+    """Per channel since `since`: the share of the listening time that frames were on the air (airtime / dwell time), retry rate,
+    noise and frames per second. All sensors together unless one is named: a channel heard by two sensors is then the average
+    over both listening times."""
+    w, p = ("AND sensor=?", [sensor]) if sensor else ("", [])
+    rows = ctx.rows(f"SELECT freq, SUM(dwell_ms) dwell, SUM(frames) frames, SUM(bytes) bytes, SUM(airtime_us) air, "
+                    f"SUM(retries) retries, SUM(noise_sum) ns, SUM(noise_cnt) nc FROM channel_stats WHERE minute>=? "
+                    f"{w} GROUP BY freq ORDER BY freq", [since] + p)
+    for x in rows:
+        x["channel"], x["band"] = freq_to_channel(x["freq"]), band_of(x["freq"])
+        x["utilization"] = round(min(1.0, x["air"] / (x["dwell"] * 1000)), 4) if x["dwell"] else None
+        x["retry_rate"] = round(x["retries"] / x["frames"], 4) if x["frames"] else None
+        x["noise"] = round(x["ns"] / x["nc"], 1) if x["nc"] else None
+        x["fps"] = round(x["frames"] / (x["dwell"] / 1000), 1) if x["dwell"] else None
+    return rows
+
+
+def airtime_series(ctx, since, now, bucket):
+    """Airtime per band over time: per bucket, the share of the listening time on that band's channels that frames were on the
+    air. A bucket in which no channel of a band was listened to is None (a gap, not a quiet band)."""
+    start = int(since // bucket * bucket)
+    ts = list(range(start, int(now) + 1, bucket))
+    acc = {}
+    for r in ctx.rows("SELECT (minute / ?) * ? t, freq, SUM(airtime_us) air, SUM(dwell_ms) dwell FROM channel_stats WHERE minute >= ? "
+                      "GROUP BY t, freq", (bucket, bucket, start)):
+        b = band_of(r["freq"])
+        if b:
+            a = acc.setdefault((b, r["t"]), [0, 0])
+            a[0] += r["air"] or 0
+            a[1] += r["dwell"] or 0
+    bands = sorted({b for b, _ in acc}, key=lambda b: float(b))
+    return {"bucket": bucket, "t": ts, "bands": {b: [round(min(1.0, acc[(b, t)][0] / (acc[(b, t)][1] * 1000)), 4)
+                                                     if (b, t) in acc and acc[(b, t)][1] else None for t in ts] for b in bands}}
+
+
 def routes(ctx):
     r = APIRouter()
 
-    def utilization(since, sensor=None):
-        w, p = ("AND sensor=?", [sensor]) if sensor else ("", [])
-        rows = ctx.rows(f"SELECT freq, SUM(dwell_ms) dwell, SUM(frames) frames, SUM(bytes) bytes, SUM(airtime_us) air, "
-                        f"SUM(retries) retries, SUM(noise_sum) ns, SUM(noise_cnt) nc FROM channel_stats WHERE minute>=? "
-                        f"{w} GROUP BY freq ORDER BY freq", [since] + p)
-        for x in rows:
-            x["channel"], x["band"] = freq_to_channel(x["freq"]), band_of(x["freq"])
-            x["utilization"] = round(min(1.0, x["air"] / (x["dwell"] * 1000)), 4) if x["dwell"] else None
-            x["retry_rate"] = round(x["retries"] / x["frames"], 4) if x["frames"] else None
-            x["noise"] = round(x["ns"] / x["nc"], 1) if x["nc"] else None
-            x["fps"] = round(x["frames"] / (x["dwell"] / 1000), 1) if x["dwell"] else None
-        return rows
+    def utilization_(since, sensor=None):
+        return utilization(ctx, since, sensor)
 
     @r.get("/api/channels")
     def channels(hours: float = 24, sensor: str = None, _=Depends(current_user)):
         now = time.time()
         since = now - hours * 3600
-        stats = utilization(since, sensor)
+        stats = utilization_(since, sensor)
         aps = ctx.rows("SELECT mac, ssid, channel, band, last_rssi, enc, wifi_gen FROM devices WHERE kind='ap' "
                        "AND channel IS NOT NULL AND last_seen >= ?", (since,))
         by_ch = {}
@@ -184,4 +209,4 @@ def routes(ctx):
     return r
 
 
-__all__ = ["SurveyCollector", "routes", "frame_airtime_us", "rate_from_radiotap", "recommend", "ch_to_freq"]
+__all__ = ["SurveyCollector", "routes", "utilization", "airtime_series", "frame_airtime_us", "rate_from_radiotap", "recommend", "ch_to_freq"]
