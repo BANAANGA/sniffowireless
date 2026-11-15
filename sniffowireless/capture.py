@@ -24,12 +24,15 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .auth import require_admin
+from . import dissect as dis  # a module import: dissect.py imports lora.py, which imports this module
+from .framefilter import FilterError, compile_filter
 
 log = logging.getLogger("sniffowireless.capture")
 
@@ -126,6 +129,105 @@ class Recorder:
 
 
 RECORDER = Recorder()
+
+VIEW_MAX = 200_000   # frames of one recording shown in the inspector (a 64 MB recording holds about 100,000 to 300,000)
+SUMMARY_KEYS = ("no", "time", "radio", "src", "dst", "proto", "len", "info", "rssi", "channel", "color", "type", "ssid", "name", "company", "bssid",
+                "sensor", "pan", "epid", "network")
+
+
+class Loaded:
+    def __init__(self, key, frames, summaries, truncated, incomplete):
+        self.key, self.frames, self.summaries = key, frames, summaries
+        self.truncated, self.incomplete = truncated, incomplete
+        self.first_ts = frames[0]["ts"] if frames else None
+        self.counts = {}
+        for f in frames:
+            self.counts[f["radio"]] = self.counts.get(f["radio"], 0) + 1
+
+
+class Views:
+    """The recording open in the inspector: its frames and their summaries, read once (in the background: a big recording takes a
+    while) and kept until another file is opened or the file changes; and the frames that passed the last few filters, so paging
+    through them does not filter again."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.current = None
+        self.filtered = {}
+        self.job = None
+
+    def get(self, path, vendor=None, wait=2.0):
+        """(Loaded, None) when the recording is read, else (None, job) with job["read"] frames so far. Waits up to `wait` seconds
+        (None: until it is done), so a small recording is answered at once."""
+        st = os.stat(path)
+        key = (path, st.st_mtime, st.st_size)
+        with self.lock:
+            if self.current and self.current.key == key:
+                return self.current, None
+            if not self.job or self.job["key"] != key:
+                self.current, self.filtered = None, {}   # let go of the previous recording before reading the next
+                self.job = {"key": key, "done": threading.Event(), "read": 0, "error": None}
+                threading.Thread(target=self._read, args=(self.job, path, vendor), daemon=True, name="frames").start()
+            job = self.job
+        job["done"].wait(wait)
+        with self.lock:
+            if self.current and self.current.key == key:
+                return self.current, None
+        return None, job
+
+    def load(self, path, vendor=None):
+        loaded, job = self.get(path, vendor, wait=None)
+        if loaded is None:
+            raise ValueError(job["error"] or "The recording could not be read")
+        return loaded
+
+    def _read(self, job, path, vendor):
+        frames, summaries, truncated, incomplete = [], [], False, False
+        try:
+            first = None
+            try:
+                for rec in read(path):
+                    if len(frames) >= VIEW_MAX:
+                        truncated = True
+                        break
+                    first = (rec.get("ts") or 0) if first is None else first
+                    s = dis.summarize(rec, vendor)
+                    s.update(no=len(frames) + 1, time=round((rec.get("ts") or first) - first, 6), radio=rec["radio"], sensor=rec.get("src"))
+                    summaries.append({k: s[k] for k in SUMMARY_KEYS if s.get(k) not in (None, "")})
+                    frames.append(rec)
+                    job["read"] = len(frames)
+                    if self.job is not job:   # another recording was opened meanwhile
+                        return
+            except (EOFError, OSError, zlib.error):  # still being written, or cut short: show what is there
+                incomplete = True
+            loaded = Loaded(job["key"], frames, summaries, truncated, incomplete)
+            with self.lock:
+                if self.job is job:
+                    self.current, self.filtered, self.job = loaded, {}, None
+        except Exception as e:
+            log.exception("Could not read the recording %s", path)
+            job["error"] = f"The recording could not be read: {e}"
+        finally:
+            job["done"].set()
+
+    def matching(self, loaded, text):
+        """Indexes of the frames that pass the filter (all of them for an empty one)."""
+        text = (text or "").strip()
+        with self.lock:
+            hit = self.filtered.get(text) if self.current is loaded else None
+        if hit is not None:
+            return hit
+        pred = compile_filter(text)
+        out = list(range(len(loaded.summaries))) if pred is None else [i for i, s in enumerate(loaded.summaries) if pred(s)]
+        with self.lock:
+            if self.current is loaded:
+                if len(self.filtered) > 8:
+                    self.filtered.clear()
+                self.filtered[text] = out
+        return out
+
+
+VIEWS = Views()
 
 
 def directory(cfg):
@@ -328,9 +430,55 @@ def routes(ctx):
     def download(name: str, _=Depends(require_admin)):
         return FileResponse(path_of(name), media_type="application/gzip", filename=name)
 
+    # ------------------------------------------------------------ frame inspector
+    def view_blocked():
+        from . import anonymize, macprivacy
+        if macprivacy.is_active() or any(anonymize.active_settings(ctx)):
+            raise HTTPException(409, "MAC address privacy or the anonymised view is on, and a recording shows the real addresses and bytes. "
+                                     "Switch it off to inspect recordings, or download the file.")
+
+    vendor = ctx.store.vendors.lookup if ctx.store and getattr(ctx.store, "vendors", None) else None
+
+    @r.get("/api/captures/{name}/frames")
+    def frames(name: str, filter: str = "", offset: int = 0, limit: int = 500, _=Depends(require_admin)):
+        """The frame list: one summary per frame (as many as `limit` from `offset`) of those that pass the display filter."""
+        view_blocked()
+        path = path_of(name)
+        loaded, job = VIEWS.get(path, vendor)
+        if loaded is None:  # a big recording: the page asks again and shows how far reading it has come
+            if job["error"]:
+                raise HTTPException(400, job["error"])
+            return {"loading": True, "read": job["read"]}
+        try:
+            matched = VIEWS.matching(loaded, filter)
+        except FilterError as e:
+            raise HTTPException(400, str(e))
+        offset, limit = max(0, offset), max(1, min(limit, 1000))  # the query limit (httpsec) allows 1000
+        return {"total": len(loaded.summaries), "matched": len(matched), "offset": offset, "truncated": loaded.truncated,
+                "incomplete": loaded.incomplete, "first_ts": loaded.first_ts, "counts": loaded.counts,
+                "items": [loaded.summaries[i] for i in matched[offset:offset + limit]]}
+
+    @r.get("/api/captures/{name}/frames/{number}")
+    def frame(name: str, number: int, _=Depends(require_admin)):
+        """One frame taken apart: its summary, the tree of fields with the bytes each came from, and the bytes."""
+        view_blocked()
+        loaded, job = VIEWS.get(path_of(name), vendor, wait=10)
+        if loaded is None:
+            raise HTTPException(409, job["error"] or "The recording is still being read")
+        if not 1 <= number <= len(loaded.frames):
+            raise HTTPException(404, "No such frame")
+        s, tree, shown = dis.dissect(loaded.frames[number - 1], number, loaded.first_ts, vendor)
+        return {"summary": loaded.summaries[number - 1], "tree": tree, "hex": shown.hex()}
+
     @r.delete("/api/captures/{name}")
     def delete(name: str, _=Depends(require_admin)):
-        os.remove(path_of(name))
+        path = path_of(name)
+        os.remove(path)
+        with VIEWS.lock:
+            if VIEWS.current and VIEWS.current.key[0] == path:  # don't keep a deleted recording in memory
+                VIEWS.current, VIEWS.filtered = None, {}
+            if VIEWS.job and VIEWS.job["key"][0] == path:  # nor go on reading it
+                VIEWS.job = None
         return {"ok": True}
 
     return r

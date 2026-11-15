@@ -25,6 +25,54 @@ A recording holds **real addresses and device names**, whatever the privacy sett
 The page records the radios of the server itself. On a **remote sensor**, set `CAPTURE_AT_START=<seconds>` in its environment: it
 then records from the moment it starts, into `captures/` in its data directory on that machine.
 
+## Inspecting a recording
+
+**Frames** in the menu (admins only), or **Open** next to a recording under Settings → Frame recording. The page is laid out like
+Wireshark's:
+
+- **The frame list:** number, time since the first frame, source, destination, protocol, length, signal, channel and a one-line
+  summary. Each kind of frame has its own colour: beacons, probes, deauthentications (red), Wi-Fi data, control frames, BLE
+  advertisements, Bluetooth classic, Zigbee, Thread and LoRa. It loads more as you scroll; the arrow keys, Page Up/Down,
+  Home and End move through it.
+- **The decoded fields** of the chosen frame, as a tree you can fold open. The first entry is about the frame itself: when it
+  was heard, on which interface, channel and signal. Then each layer:
+  - **Wi-Fi:** the radiotap header, the 802.11 header and the tagged elements. Examples are the SSID, rates, RSN (ciphers and
+    key management), HT/VHT/HE capabilities and operation, country, BSS load, vendor elements, WMM and WPS (device name, maker,
+    model). A frame check sequence is verified when the frame has one.
+  - **Bluetooth:** the HCI event. That includes LE advertising reports (legacy and extended) with every AD structure, Apple's
+    advertisement types and iBeacon, inquiry results with class of device and the extended inquiry response, and command
+    replies.
+  - **Zigbee / Thread:** the 802.15.4 MAC header with its security header. Then the Zigbee and Thread beacons (extended PAN
+    ID, stack profile, network name), MAC commands, the Zigbee network header and its security header (the payload itself is
+    encrypted), and 6LoWPAN.
+  - **LoRa:** the sniffer's radio settings. Then the Meshtastic header, LoRaWAN (MHDR, DevAddr, FCtrl, FCnt, FPort, MIC),
+    MeshCore and LoRa APRS.
+- **The bytes**, in hex and as text. Choosing a field highlights the bytes it was read from. Clicking a byte chooses the
+  smallest field that holds it. For LoRa the bytes are the received frame, not the text line the board printed.
+
+**The display filter** works like Wireshark's, with a smaller set of fields. Use a bare word for a radio or a kind of frame:
+`wifi`, `ble`, `zigbee`, `thread`, `lora`, `beacon`, `probe`. Compare fields with `==`, `!=`, `>`, `<`, `>=`, `<=` and
+`contains`, and combine them with `&&` / `and`, `||` / `or`, `!` / `not` and parentheses. For example:
+
+```text
+beacon && rssi > -60
+addr == aa:bb:cc:dd:ee:ff
+ssid contains "home"
+(ble || zigbee) && !ack
+channel == 6 && !beacon
+```
+
+The fields are `no`, `time`, `radio`, `proto`, `type`, `src`, `dst`, `addr` (source, destination or BSSID), `bssid`,
+`info`, `len`, `rssi`, `channel`, `ssid`, `name`, `company`, `sensor`, `pan`, `epid` and `network`. A filter with a mistake
+turns red and says what is wrong. The buttons under it are ready-made filters. **Filter** next to the source of a frame shows
+only the frames to or from that address.
+
+A big recording is read in the background. The page shows how far reading has got, which can take a minute for the largest
+ones on a Raspberry Pi. At most 200,000 frames of one recording are shown.
+
+The page shows the real addresses and bytes, so it cannot be used while MAC address privacy or the anonymised view is on.
+Download the file instead, or switch those off first. In demo mode there is a sample recording with one of each kind of frame.
+
 ## Replaying
 
 ```bash
