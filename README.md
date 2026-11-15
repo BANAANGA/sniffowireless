@@ -81,6 +81,7 @@ Open **http://<host>:8080** and create the admin account with the setup code fro
 | [LoRa](docs/lora.md) | Meshtastic, MeshCore, LoRaWAN, the receiver firmware, choosing bands in the UI |
 | [Multiple sensors & the map](docs/sensors.md) | Remote sensors, floor plan, Wi-Fi channels from the UI |
 | [Backup & restore](docs/backup.md) | Manual and scheduled backups, restoring |
+| [Recording & inspecting frames](docs/capture.md) | Record what the radios hear, go through it frame by frame like in Wireshark, replay it |
 | [Prometheus & Grafana](docs/prometheus.md) | Metrics and the ready-made dashboard |
 | [API](docs/api.md) | The JSON API and exports |
 | [Troubleshooting](docs/troubleshooting.md) | Symptoms and fixes |

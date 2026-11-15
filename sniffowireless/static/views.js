@@ -854,8 +854,8 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
       const c = await api('/api/captures');
       const a = c.active;
       el.innerHTML = `<section class="panel"><header><h2>Frame recording</h2></header><div class="body">
-        <p class="muted" style="margin-top:0">Records what this server's own radios hear, exactly as they deliver it, to a file. Play the file back with
-          <code>python -m sniffowireless replay FILE</code> to see what the parsers make of it: useful to check identification against real devices and to keep samples for testing.</p>
+        <p class="muted" style="margin-top:0">Records what this server's own radios hear, exactly as they deliver it, to a file. Open it to go through it frame by frame in
+          <a href="#/frames">Frames</a>, or play the file back with <code>python -m sniffowireless replay FILE</code> to see what the parsers make of it: useful to check identification against real devices and to keep samples for testing.</p>
         <div class="callout">A recording holds <b>real addresses and device names</b>, whatever the privacy settings are. Of Wi-Fi data frames only the headers are kept, never their contents. Only share a file with people who may see which devices were near you.</div>
         ${c.blocked ? `<div class="callout"><span class="err">${esc(c.blocked)}.</span> Switch it off first, or record on a test setup.</div>` : ''}
         ${a ? `<p><b>Recording</b> ${esc(a.radios.map(r => RADIO_NAMES[r]).join(', '))} · ${num(a.frames)} frames · stops in ${dur(Math.max(0, Math.round(a.until - Date.now() / 1000)))}</p>
@@ -868,7 +868,7 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
         <section class="panel" style="margin-top:16px"><header><h2>Recordings</h2><span class="faint">${c.files.length} of at most ${c.max_files}</span></header><div class="body flush">${tableHtml(
           '<th>File</th><th class="num">Size</th><th class="num">Made</th><th></th>',
           c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
-            <td class="num"><a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
+            <td class="num"><a class="btn small" href="#/frames?file=${enc(f.name)}">Open</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
       const f = el.querySelector('#capf');
       if (f) f.onsubmit = async e => { e.preventDefault();
         try { await send('POST', '/api/captures', { seconds: +f.seconds.value, radios: Object.keys(RADIO_NAMES).filter(k => f[`r-${k}`].checked) }); toast('Recording'); } catch (err) { toast(err.message, true); }

@@ -170,6 +170,8 @@ def main():
         from .demo import DemoGenerator
         demo = DemoGenerator(cfg, store, ctx)
         demo.backfill(cfg.demo_backfill_hours)
+        from .demo import sample_recording
+        sample_recording(cfg)
         threading.Thread(target=demo.run, args=(stop,), daemon=True, name="demo").start()
         log.info("Demo mode enabled: generating synthetic devices")
     from .channels import attach

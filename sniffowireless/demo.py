@@ -731,3 +731,15 @@ class DemoGenerator:
             for o in self._bt_connections(t, state):
                 self.store.put(o)
             self._sensors_alive()
+
+
+def sample_recording(cfg):
+    """The demo's frame recording, so the frame inspector has something to show: one of each kind of frame the decoders know,
+    built from the published layouts (sample_frames.py). Written once, when there is no recording yet."""
+    import os
+
+    from . import capture, sample_frames
+    folder = capture.directory(cfg)
+    if os.path.isdir(folder) and any(capture.NAME.match(n) for n in os.listdir(folder)):
+        return None
+    return sample_frames.write_recording(os.path.join(folder, time.strftime("capture-%Y%m%d-%H%M%S.jsonl.gz")), count=800)
