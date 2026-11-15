@@ -1,6 +1,6 @@
 # sniffowireless
 
-A self-hosted radio monitor that runs as a single Docker container: **Wi-Fi, Bluetooth, Ethernet, Zigbee and LoRa**. It works like a small Kismet, with one difference: it is built to track **how devices connect over time**. It records which Wi-Fi client was associated with which access point and when, and when phones, wearables and other Bluetooth devices come into and leave range. You drill into all of it from a dark, minimal web UI.
+A self-hosted radio monitor that runs as a single Docker container: **Wi-Fi, Bluetooth, Ethernet, Zigbee and LoRa**. It works like Kismet on steroids, with one difference: it is built to track **how devices connect over time**. It records which Wi-Fi client was associated with which access point and when, and when phones, wearables and other Bluetooth devices come into and leave range. You drill into all of it from a dark, minimal web UI.
 
 - **Wi-Fi:** passive monitor-mode capture with channel hopping over 2.4, 5 and **6 GHz (Wi-Fi 6E/7)**, on one or more USB adapters
 - **Bluetooth:** BLE advertising (including Bluetooth 5/6 extended and LE Audio broadcasts) plus Classic inquiry, over a raw HCI socket
