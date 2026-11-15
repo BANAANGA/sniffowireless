@@ -154,6 +154,7 @@ def main():
 
     import uvicorn
 
+    from .httpsec import behind_proxies
     from .web import create_app
 
     ctx = build(cfg)
@@ -181,10 +182,10 @@ def main():
     writer = threading.Thread(target=store.run, args=(stop,), name="store")
     writer.start()
     try:
-        uvicorn.run(create_app(ctx), host=cfg.web_host, port=cfg.web_port, log_level="warning",
-                    # X-Forwarded-For/-Proto are only believed from these addresses (else anyone could fake
-                    # their IP to dodge login throttling)
-                    proxy_headers=True, forwarded_allow_ips=cfg.trusted_proxies, server_header=False)
+        # X-Forwarded-For/-Proto/-Host are only believed from TRUSTED_PROXIES (else anyone could fake their IP to dodge login
+        # throttling); behind_proxies applies uvicorn's own handling for that and marks those connections
+        uvicorn.run(behind_proxies(create_app(ctx), cfg.trusted_proxies), host=cfg.web_host, port=cfg.web_port, log_level="warning",
+                    proxy_headers=False, server_header=False)
     finally:
         log.info("Shutting down")
         stop.set()

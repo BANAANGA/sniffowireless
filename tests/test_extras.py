@@ -145,7 +145,7 @@ def _two_servers(tmp_path):
     src.store.flush()
     src.store.conn.execute("ANALYZE")  # creates SQLite's own sqlite_stat1, which must not show up as "other data"
     os.makedirs(os.path.join(src.cfg.data_dir, "handshakes"), exist_ok=True)
-    with open(os.path.join(src.cfg.data_dir, "handshakes", "abc.pcap"), "wb") as fh:
+    with open(os.path.join(src.cfg.data_dir, "handshakes", "0123456789abcdef0123.pcap"), "wb") as fh:
         fh.write(b"pcap")
     with open(os.path.join(src.cfg.data_dir, "floorplan.svg"), "w") as fh:
         fh.write("<svg/>")
@@ -210,7 +210,7 @@ def test_restore_only_chosen_sections(tmp_path):
     assert [r["username"] for r in q("SELECT username FROM users")] == ["admin"]
     assert json.loads(q("SELECT value FROM settings WHERE key='networks'")[0]["value"])["ssids"] == ["HomeNet"]
     assert os.path.exists(os.path.join(tcfg.data_dir, "floorplan.svg"))
-    assert open(os.path.join(tcfg.data_dir, "handshakes", "abc.pcap"), "rb").read() == b"pcap"
+    assert open(os.path.join(tcfg.data_dir, "handshakes", "0123456789abcdef0123.pcap"), "rb").read() == b"pcap"
 
     # History: the devices are the backup's, the hourly roll-up is rebuilt for them, and identification is redone.
     restore_sections(tcfg, path, ["history"])

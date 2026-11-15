@@ -336,7 +336,7 @@ All settings are environment variables (put them in `.env`).
 | `WEB_USER` / `WEB_PASSWORD` | – | Admin account created/reset on start. If unset, create it in the browser with the setup code from the log. |
 | `AUTH_DISABLED` | `0` | `1` disables login completely (trusted networks only). |
 | `ALLOWED_HOSTS` | – | Comma-separated host names/IPs the UI may be reached as (DNS-rebinding protection). Empty = any. |
-| `TRUSTED_PROXIES` | `127.0.0.1` | Addresses whose `X-Forwarded-*` headers are trusted (your reverse proxy). |
+| `TRUSTED_PROXIES` | `127.0.0.1` | Addresses whose `X-Forwarded-For`/`-Proto`/`-Host` headers are trusted (your reverse proxy); ignored from anyone else. |
 | `SNIFFOWIRELESS_MODE` | `server` | `sensor` = capture only and forward to `SERVER_URL` (see [Multiple sensors](docs/sensors.md#multiple-sensors--the-map)). |
 | `SERVER_URL` / `SENSOR_TOKEN` | – | Sensor mode: URL of the main sniffowireless server and the token from Settings → Sensors. |
 | `DB_PATH` | `/data/sniffowireless.db` | SQLite database location. |

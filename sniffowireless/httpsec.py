@@ -20,7 +20,12 @@ def make_csp(cdn):
 CSP = make_csp(not all(os.path.exists(os.path.join(VENDOR_DIR, f)) for f in VENDOR_FILES))
 # Uploaded images (an SVG floor plan could contain script) are served inert and sandboxed.
 UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"
-DOCS_PATHS = ("/api/docs", "/api/openapi.json")  # Swagger UI needs inline script + its CDN
+DOCS_PATHS = ("/api/docs", "/api/openapi.json")
+# The API docs page (signed-in users only) is Swagger UI: a pinned version from the CDN plus one inline script that starts it.
+# This policy allows just that, so the page cannot load anything else or be framed.
+DOCS_CSP = ("default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+TRUSTED_PEER = "sniffowireless.trusted_peer"  # scope key: the connection came from one of TRUSTED_PROXIES (set by behind_proxies)
 
 MB = 1024 * 1024
 BODY_LIMITS = [("/api/backup/restore", 4096 * MB), ("/api/backup/inspect", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB), ("/api/appearance/icon", 1 * MB),
@@ -45,13 +50,37 @@ def headers_for(path, scheme_https):
          (b"cross-origin-resource-policy", b"same-origin"), (b"x-permitted-cross-domain-policies", b"none")]
     if path.startswith(("/api/floorplan/image", "/api/appearance/icon")):
         h.append((b"content-security-policy", UPLOAD_CSP.encode()))
-    elif not path.startswith(DOCS_PATHS):
+    elif path.startswith(DOCS_PATHS):
+        h.append((b"content-security-policy", DOCS_CSP.encode()))
+    else:
         h.append((b"content-security-policy", CSP.encode()))
     if path.startswith("/api/") or path in ("/metrics", "/login", "/"):
         h.append((b"cache-control", b"no-store"))
     if scheme_https:
         h.append((b"strict-transport-security", b"max-age=31536000"))
     return h
+
+
+def host_name(host):
+    """The name in a Host header without its port: example.org:8080 -> example.org, [::1]:8080 and [::1] -> ::1."""
+    host = (host or "").strip().lower()
+    if host.startswith("["):
+        return host[1:host.index("]")] if "]" in host else host[1:]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def behind_proxies(app, trusted):
+    """Wrap the app for uvicorn: X-Forwarded-For/-Proto are believed only from TRUSTED_PROXIES (uvicorn's own middleware), and the
+    request is marked when it came from one, so X-Forwarded-Host is believed from those connections only (see auth.same_origin)."""
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    inner = ProxyHeadersMiddleware(app, trusted_hosts=trusted)
+
+    async def outer(scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            peer = (scope.get("client") or (None,))[0]
+            scope[TRUSTED_PEER] = peer in inner.trusted_hosts
+        await inner(scope, receive, send)
+    return outer
 
 
 class SecurityMiddleware:
@@ -75,8 +104,7 @@ class SecurityMiddleware:
             await send({"type": "http.response.body", "body": body})
 
         if self.allowed:
-            host = hdrs.get("host", "").rsplit(":", 1)[0].strip("[]").lower()
-            if host not in self.allowed:
+            if host_name(hdrs.get("host")) not in self.allowed:
                 return await reject(421, "host not allowed (ALLOWED_HOSTS)")
         for k, v in parse_qsl(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True):
             if k in QUERY_LIMITS and v != "":

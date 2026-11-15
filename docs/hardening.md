@@ -17,8 +17,11 @@ What the application does to protect itself, what is checked on every change, an
 - **Radio text is never markup.** Network names, device names, vendors, notes and everything else heard over the air or typed in is escaped before it is shown; the CSP blocks inline scripts as a second line. Checked by planting HTML in every such field and opening every page.
 - **Stored file names are not trusted as paths.** The floor plan and app icon are only served or deleted under the names the app itself writes, also after restoring a configuration backup made elsewhere.
 - **Transmitting is for admins.** *Play sound* and *read exact version* make the sensor connect to a Bluetooth device, so viewers cannot use them.
-- **Backups without secrets have none.** A configuration backup made without secrets leaves out notification secrets, the MQTT password and the key for pseudonymised MAC addresses; restoring it keeps this server's own.
-- **DNS-rebinding protection** with `ALLOWED_HOSTS` (see below).
+- **Backups without secrets leave out the secrets.** A configuration backup made without secrets leaves out notification secrets, the MQTT password, the key for pseudonymised MAC addresses and two-factor login secrets; restoring it keeps this server's own, so nobody's two-factor login is switched off. If it includes the user accounts it does hold their password *hashes* (needed to sign in after a restore), so keep backups private either way.
+- **A backup can only put back what the app wrote.** A restore puts back the database and, of the files, only the floor plan, the app icon and handshake captures under the names the app gives them; anything else in the archive is skipped, so a backup made by someone else cannot replace the database or plant files. A backup that would not fit on the disk once unpacked is refused before it is unpacked.
+- **Proxy headers only from your proxy.** `X-Forwarded-For`, `-Proto` and `-Host` are believed only from the addresses in `TRUSTED_PROXIES`; from anyone else they are ignored, for sign-in throttling, the same-origin check and the cookie's `Secure` flag alike.
+- **API docs.** `/api/docs` needs a sign-in and loads one pinned version of Swagger UI under its own Content-Security-Policy (nothing else can be loaded and the page cannot be framed).
+- **DNS-rebinding protection** with `ALLOWED_HOSTS` (see below), also for IPv6 addresses such as `[::1]`.
 
 ## Checked on every change
 
@@ -26,6 +29,7 @@ GitHub Actions runs on every pull request and push to `main` and `stable`, and o
 - the test suite (more than 560 tests, including the security tests for sign-in, request checks, headers, uploads and limits) on Python 3.12, the version the image uses,
 - `ruff` for syntax errors, undefined names and unused code,
 - `pip-audit` against `requirements.txt`, so a newly published vulnerability in a dependency shows up within a week,
+- the GitHub Actions in the workflows are pinned to a commit, not a tag that could be moved; Dependabot proposes their updates,
 - a build of the image for 64-bit and 32-bit Raspberry Pi systems.
 
 One advisory is accepted on purpose: scapy `GHSA-cq46-m9x9-j8w2` is about loading a pickled session file in scapy's interactive shell. The application never starts that shell or loads sessions, so it is not reachable. The fixed scapy version renames packet-flag names that the capture code relies on, so it is not adopted until it has been tried against real captures.
