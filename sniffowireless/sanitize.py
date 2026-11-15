@@ -315,6 +315,9 @@ def remote_log_line(x, now, adjust=0.0):
             "logger": clean_str(x.get("logger"), 64) or "?", "msg": msg, "thread": clean_str(x.get("thread"), 40)}
 
 
+BATTERY_SOURCES = ("ac", "usb", "wireless", "dock")  # what the device is charging from, when it says
+
+
 def remote_system(s):
     """A remote sensor's load and memory figures (the shape of sysinfo.snapshot, without the database): numbers in
     sane ranges only, since the server shows them and exports them to Prometheus."""
@@ -328,6 +331,12 @@ def remote_system(s):
            "memory": {"total": clean_num(m.get("total"), 0, big, True), "used": clean_num(m.get("used"), 0, big, True),
                       "sniffowireless_rss": clean_num(m.get("sniffowireless_rss"), 0, big, True)},
            "disk": {k: clean_num(d.get(k), 0, big, True) for k in ("total", "used", "free")}}
+    b = s.get("battery") if isinstance(s.get("battery"), dict) else {}
+    if clean_num(b.get("percent"), 0, 100) is not None:  # a battery is only worth showing with its level
+        out["battery"] = {"percent": round(clean_num(b.get("percent"), 0, 100), 1),
+                          "charging": b["charging"] if isinstance(b.get("charging"), bool) else None,
+                          "source": b["source"] if b.get("source") in BATTERY_SOURCES else None,
+                          "temperature": clean_num(b.get("temperature"), -40, 120)}
     out = {k: {a: b for a, b in v.items() if b is not None} for k, v in out.items()}
     return {k: v for k, v in out.items() if v} or None
 

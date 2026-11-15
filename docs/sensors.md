@@ -50,3 +50,21 @@ The sensor itself must run a version that has this feature; the page says *senso
 ### Logs of remote sensors
 
 **Logs** (admin) has a tab for *This server* and one per remote sensor. A sensor sends the log lines it has not sent yet with every upload (up to 200 at a time) and the server keeps the last 2,000 per sensor in memory, so they are gone after a server restart and are removed with the sensor. A dot shows whether the sensor is online. The sensor's log level is its own `LOG_LEVEL` (the level selector only exists on the server's tab); the lines are the same ones `docker logs sniffowireless-sensor` shows. Like the server's own log they can contain device names and SSIDs, and the usual redaction of tokens and setup codes applies on both ends. A sensor needs the image from the release that added this before its tab fills up.
+
+## Battery
+
+A sensor that runs on a battery shows its level with its status: on the **Sensors** page (a meter, and a tag next to the sensor's
+name), under **Settings → Sensors** and in the overview's sensor panel. It turns amber at 20% and red at 10% while not charging.
+`sniffowireless_sensor_battery_percent` and `sniffowireless_sensor_battery_charging` carry it to Prometheus.
+
+- **Linux machines** (the server or a Raspberry Pi sensor) report it by themselves when the kernel knows a battery: a laptop,
+  or a UPS add-on whose driver registers one under `/sys/class/power_supply`.
+- **The Android app** and other remote sensors send it in the `system` object of each upload to `/api/ingest`:
+
+  ```json
+  "system": {"battery": {"percent": 54, "charging": true, "source": "usb", "temperature": 31.5}}
+  ```
+
+  `percent` (0–100) is required; the rest is optional. `charging` is true while charging or full, `source` is one of `ac`, `usb`,
+  `wireless` or `dock`, and `temperature` is in °C. Anything else is dropped. A sensor that sends no battery simply shows none.
+

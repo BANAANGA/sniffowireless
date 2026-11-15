@@ -768,7 +768,9 @@ const SETTINGS_VIEWS = {
       if (q.stale) return `<span class="faint">no report for ${dur(q.quiet_for || 0)}</span>`;
       const f = loadFigures(q.system), hot = (p, at) => p != null && p >= at ? ' warn-text' : '';
       return `<div class="${hot(f.loadP, 80).trim()}"><span class="mono">${f.load ? f.load[0].toFixed(2) : '—'}</span> <span class="faint">load${f.cores ? ` · ${f.cores} core${f.cores > 1 ? 's' : ''}` : ''}</span></div>
-        <div class="${hot(f.memP, 90).trim()}"><span class="mono">${f.memP == null ? '—' : f.memP.toFixed(0) + '%'}</span> <span class="faint">memory${f.m.total ? ` · ${bytes(f.m.used || 0)} of ${bytes(f.m.total)}` : ''}</span></div>`;
+        <div class="${hot(f.memP, 90).trim()}"><span class="mono">${f.memP == null ? '—' : f.memP.toFixed(0) + '%'}</span> <span class="faint">memory${f.m.total ? ` · ${bytes(f.m.used || 0)} of ${bytes(f.m.total)}` : ''}</span></div>
+        ${(() => { const st = batteryState(q.system && q.system.battery);
+          return st ? `<div class="${st.lvl === 'bad' ? 'err' : st.lvl ? 'warn-text' : ''}"><span class="mono">${st.value}</span> <span class="faint">battery · ${esc(st.detail)}</span></div>` : ''; })()}`;
     };
     el.innerHTML = `<section class="panel"><header><h2>Sensors</h2><button class="btn primary" id="add-sensor">Add remote sensor</button></header><div class="body flush">${tableHtml(
       '<th>Sensor</th><th>Version</th><th>Room</th><th>Status</th><th>Load · memory</th><th class="num">Last report</th><th>On map</th><th></th>',

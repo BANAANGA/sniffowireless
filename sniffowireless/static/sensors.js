@@ -79,11 +79,14 @@ addRoute('/sensors', async (_, params) => {
     return `<section class="panel sn-sensor"><header><h2 class="sn-title"><span class="state-dot ${dot}"></span>${esc(s.name)}</h2>
         <span class="row faint small-text">${s.room ? `<span class="tag">${esc(s.room)}</span>` : ''}
           ${v && v.version ? `<span>version <b>${esc(v.version)}</b>${v.arch ? ` · ${esc(v.arch)}` : ''}</span>` : ''}${differs ? '<span class="tag warn">differs from the server</span>' : ''}
+          ${(() => { const b = sys && !sys.stale && sys.system && sys.system.battery, st = batteryState(b);
+            return st ? `<span class="tag ${st.lvl || (b.charging ? 'on' : '')}" title="Battery: ${esc(st.detail)}">battery ${st.value}${b.charging ? ' ⚡' : ''}</span>` : ''; })()}
           <span>${s.id === 'local' ? 'this server' : s.online ? `last report ${ago(s.last_seen)}` : `<span class="warn-text">offline${s.last_seen ? ` · last report ${ago(s.last_seen)}` : ''}</span>`}</span></span></header>
       ${f ? `<div class="body sn-sys">
         ${sysMeter('Load', sysPct(f.loadP), f.load ? f.load[0].toFixed(2) : '—', f.load ? `${num(f.cores)} core${f.cores > 1 ? 's' : ''}${f.cpu != null ? ` · CPU ${Number(f.cpu).toFixed(0)}%` : ''}` : 'unknown')}
         ${sysMeter('Memory', sysPct(f.memP), f.memP == null ? '—' : `${f.memP.toFixed(0)}%`, f.m.total ? `${bytes(f.m.used || 0)} of ${bytes(f.m.total)}` : 'unknown')}
-        ${f.d ? sysMeter('Disk', sysPct(f.diskP), f.diskP == null ? '—' : `${f.diskP.toFixed(0)}%`, `${bytes(f.d.free)} free`) : ''}</div>` : ''}
+        ${f.d ? sysMeter('Disk', sysPct(f.diskP), f.diskP == null ? '—' : `${f.diskP.toFixed(0)}%`, `${bytes(f.d.free)} free`) : ''}
+        ${batteryMeter(sys.system && sys.system.battery)}</div>` : ''}
       <div class="body flush">${tableHtml('<th>Interface</th><th>Status</th><th>Hardware</th><th>Listening on</th><th class="num">Frames</th>',
         list.map(ifaceRow).join(''), s.online || s.id === 'local' ? 'No interfaces on this sensor' : 'Offline: no interfaces reported')}</div></section>`;
   }

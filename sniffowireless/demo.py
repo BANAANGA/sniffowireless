@@ -712,6 +712,13 @@ class DemoGenerator:
                     status.SENSORS[e["name"]] = {**status.SENSORS.get(e["name"], {}), **e, "since": now - 3600}
             else:
                 status.replace_remote(sid, live, now)
+                # the remote sensors' machines: a Pi in the living room, a laptop on battery in the office
+                gb = 1024 ** 3
+                system = {"cpu": {"cores": 4, "load": [round(rnd.uniform(.2, .9), 2), .5, .4]}, "memory": {"total": 4 * gb, "used": int(rnd.uniform(.8, 1.4) * gb)},
+                          "disk": {"total": 32 * gb, "used": 9 * gb, "free": 23 * gb}}
+                if sid == "office":
+                    system["battery"] = {"percent": max(5, 87 - int(now // 600) % 80), "charging": False}
+                status.set_system(sid, system, now)
 
     def run(self, stop):
         state = getattr(self, "_conn_state", {})

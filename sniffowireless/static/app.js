@@ -422,6 +422,22 @@ function loadFigures(sys) {
   return { load, cores, loadP: load ? load[0] / cores * 100 : null, cpu: c.percent,
     memP: m.total && m.used != null ? m.used / m.total * 100 : null, m, diskP: d && d.total ? d.used / d.total * 100 : null, d };
 }
+// A sensor's battery (a phone running the app, a laptop, a UPS add-on): the level, and whether it charges and from what. Low is only
+// a warning while it is not charging: amber at 20 % and below, red at 10 %.
+const BATTERY_SOURCES = { ac: 'charger', usb: 'USB', wireless: 'wireless charger', dock: 'dock' };
+function batteryState(b) {
+  if (!b || b.percent == null) return null;
+  const lvl = b.charging ? '' : b.percent <= 10 ? 'bad' : b.percent <= 20 ? 'warn' : '';
+  const how = b.charging ? `charging${b.source ? ` from ${BATTERY_SOURCES[b.source] || b.source}` : ''}${b.percent >= 100 ? ' · full' : ''}` : 'not charging';
+  return { lvl, value: `${Math.round(b.percent)}%`, detail: how + (b.temperature != null ? ` · ${Number(b.temperature).toFixed(0)} °C` : '') };
+}
+function batteryMeter(b) {
+  const st = batteryState(b);
+  if (!st) return '';
+  return `<div class="sysm ${st.lvl}" title="Battery of the sensor's device"><div class="sysm-top"><span class="muted">Battery</span><b class="mono">${st.value}</b></div>
+    <div class="sysm-track" role="meter" aria-label="Battery" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(b.percent)}"><i class="${b.charging ? 'charging' : ''}" style="width:${Math.max(0, Math.min(100, b.percent))}%"></i></div>
+    <div class="faint small-text">${esc(st.detail)}</div></div>`;
+}
 function renderSensorSystems(list) {
   const panel = document.getElementById('sensor-sys-panel');
   if (!panel) return;
@@ -432,7 +448,7 @@ function renderSensorSystems(list) {
     const f = loadFigures(x.system);
     return `<div class="sysrow"><div><span class="state-dot ok"></span><b>${esc(x.name)}</b>${x.room ? ` <span class="faint">${esc(x.room)}</span>` : ''}</div>
       ${sysMeter('Load', sysPct(f.loadP), f.load ? f.load[0].toFixed(2) : '—', f.load ? `${f.load.map(v => v.toFixed(2)).join(' · ')} · ${num(f.cores)} core${f.cores > 1 ? 's' : ''}${f.cpu != null ? ` · CPU ${Number(f.cpu).toFixed(0)}%` : ''}` : 'load unknown', 'Load average over 1, 5 and 15 minutes; the bar is the 1-minute load per core')}
-      ${sysMeter('Memory', sysPct(f.memP), f.memP == null ? '—' : `${f.memP.toFixed(0)}%`, `${f.m.used != null ? bytes(f.m.used) : '—'} of ${f.m.total ? bytes(f.m.total) : '—'}${f.m.sniffowireless_rss ? ` · sniffowireless ${bytes(f.m.sniffowireless_rss)}` : ''}${f.d ? ` · ${bytes(f.d.free)} disk free` : ''}`, 'Memory in use on the sensor machine (excluding cache)')}</div>`;
+      ${sysMeter('Memory', sysPct(f.memP), f.memP == null ? '—' : `${f.memP.toFixed(0)}%`, `${f.m.used != null ? bytes(f.m.used) : '—'} of ${f.m.total ? bytes(f.m.total) : '—'}${f.m.sniffowireless_rss ? ` · sniffowireless ${bytes(f.m.sniffowireless_rss)}` : ''}${f.d ? ` · ${bytes(f.d.free)} disk free` : ''}`, 'Memory in use on the sensor machine (excluding cache)')}${batteryMeter(x.system && x.system.battery)}</div>`;
   }).join('');
 }
 function renderSystem(sys) {
@@ -448,7 +464,8 @@ function renderSystem(sys) {
     + meter('Memory', pct(memP), memP == null ? '—' : `${memP.toFixed(0)}%`,
       `${m.used != null ? bytes(m.used) : '—'} of ${m.total ? bytes(m.total) : '—'}${m.sniffowireless_rss ? ` · sniffowireless ${bytes(m.sniffowireless_rss)}` : ''}`, 'Host memory in use (excluding cache)')
     + meter('Database', pct(diskP), bytes(db.bytes || 0),
-      d ? `${bytes(d.free)} free on the data disk (${diskP.toFixed(0)}% used)` : 'data disk size unknown', `Database ${bytes(db.main || 0)} + write-ahead log ${bytes(db.wal || 0)}; the bar shows the data disk`);
+      d ? `${bytes(d.free)} free on the data disk (${diskP.toFixed(0)}% used)` : 'data disk size unknown', `Database ${bytes(db.main || 0)} + write-ahead log ${bytes(db.wal || 0)}; the bar shows the data disk`)
+    + batteryMeter(sys.battery);
 }
 let tlView = (() => { try { return localStorage.getItem('sniffowireless.tlview') || 'band'; } catch { return 'band'; } })();
 let actWin = (() => { try { return +localStorage.getItem('sniffowireless.actwin') || 300; } catch { return 300; } })();
