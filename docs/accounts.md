@@ -18,7 +18,7 @@ The web UI and API need a login.
 
   Remote sensors get their own tokens, created under Settings → Sensors.
 - Passwords are stored as salted PBKDF2-SHA256 hashes. Sessions are HttpOnly cookies that expire after 14 days of inactivity. Logins are rate-limited per IP.
-- **HTTPS:** put sniffowireless behind a reverse proxy (Caddy, Traefik, nginx) for TLS when you reach it from outside your LAN. The session cookie is marked `Secure` when the proxy sets `X-Forwarded-Proto: https`.
+- **HTTPS:** put sniffowireless behind a reverse proxy (Caddy, Traefik, nginx) for TLS when you reach it from outside your LAN. The session cookie is marked `Secure` when the proxy sets `X-Forwarded-Proto: https` and its address is in `TRUSTED_PROXIES`.
 - `AUTH_DISABLED=1` turns login off entirely. Only use it on a network where you trust everyone, and set `ALLOWED_HOSTS` then; see below.
 
 ## Security hardening
@@ -40,7 +40,7 @@ sniffowireless treats everything it receives as untrusted. Device names and SSID
   - minimum password rules
 - **Exports:** CSV cells that start with `=`, `+`, `-` or `@` are prefixed so spreadsheets don't run them as formulas.
 - **Proxies and hosts:**
-  - `TRUSTED_PROXIES` (default `127.0.0.1`): only these addresses may set `X-Forwarded-For`/`-Proto`, so clients can't fake their IP to dodge the lockout. Set it to your reverse proxy's address.
+  - `TRUSTED_PROXIES` (default `127.0.0.1`): only these addresses may set `X-Forwarded-For`/`-Proto`/`-Host`, so clients can't fake their IP to dodge the lockout. Set it to your reverse proxy's address.
   - `ALLOWED_HOSTS` (e.g. `sniffowireless.lan,192.168.1.10`): refuses requests for any other host name, which protects against DNS-rebinding attacks from malicious websites, especially with `AUTH_DISABLED=1`.
 
 The container needs `privileged`/host networking to capture, so run it on a machine you control and don't expose port 8080 to the internet; use a VPN or an authenticating reverse proxy with TLS for remote access.

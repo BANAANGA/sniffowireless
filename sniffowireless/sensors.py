@@ -296,7 +296,7 @@ def routes(ctx):
                 if d.unconsumed_tail:
                     raise HTTPException(413, "decompressed batch too large")
             body = json.loads(raw)
-        except (zlib.error, ValueError):
+        except (zlib.error, ValueError, RecursionError):  # RecursionError: JSON nested deeper than the parser goes
             raise HTTPException(400, "invalid batch")
         if not isinstance(body, dict):
             raise HTTPException(400, "invalid batch")

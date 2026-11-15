@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
@@ -25,6 +26,8 @@ log = logging.getLogger("sniffowireless.web")
 CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
 ESPTOOL_JS_CDN = "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js"
 QRCODE_JS_CDN = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"
+SWAGGER_JS = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"
+SWAGGER_CSS = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css"
 
 KINDS = ("ap", "wifi_client", "ble", "bt_classic", "lan")
 PROBE_MAX_AGE = 120  # seconds: how recently a device must have been heard to be asked for its version
@@ -71,7 +74,7 @@ PASSERBY_SWING_DB = 10  # a pass whose signal rises and falls by about this much
 
 def create_app(ctx):
     cfg, store = ctx.cfg, ctx.store
-    app = FastAPI(title="sniffowireless", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app = FastAPI(title="sniffowireless", docs_url=None, openapi_url="/api/openapi.json", redoc_url=None)
     static = Path(__file__).parent / "static"
     vendor_dir = Path("/app/vendor")
     ctx.auth.install(app)
@@ -88,6 +91,12 @@ def create_app(ctx):
                     d[k] = json.loads(d[k] or "null")
             d["extra"] = d.get("extra") or {}
         return d
+
+    @app.get("/api/docs", include_in_schema=False, dependencies=[Depends(current_user)])
+    def api_docs():
+        """Swagger UI from a pinned version (FastAPI's default follows the newest 5.x), under its own CSP (httpsec.DOCS_CSP)."""
+        return get_swagger_ui_html(openapi_url="/api/openapi.json", title="sniffowireless API", swagger_js_url=SWAGGER_JS,
+                                   swagger_css_url=SWAGGER_CSS, swagger_favicon_url="/api/appearance/icon")
 
     # ---------------------------------------------------------------- overview
     @app.get("/api/health")

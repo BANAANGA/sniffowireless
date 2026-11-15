@@ -51,6 +51,11 @@ RESTART_DELAY = 1.5                       # seconds between answering a restore 
 _restart_thread = None
 LEGACY_DB_MEMBER, LEGACY_FORMAT = "yolo.db", "yolo-full"  # from before the yolo -> sniffowireless rename
 NAME_RX = re.compile(r"^sniffowireless-\d{8}-\d{6}\.tar\.gz$")
+# The only files a restore may put in DATA_DIR (files/) and in its handshakes folder: what the app itself writes there. A backup is
+# an archive anyone could have made, and a file such as files/sniffowireless.db would otherwise replace the database.
+DATA_FILE_RX = re.compile(r"^(floorplan\.(png|jpg|webp|svg)|appicon\.(png|jpg|webp))$")
+HANDSHAKE_FILE_RX = re.compile(r"^[0-9a-f]{20}\.(pcap|json)$")
+SPACE_MARGIN = 256 * 1024 ** 2   # free space left over after unpacking a backup
 
 
 # What a restore can bring back, one checkbox each. "tables" are database tables, "config" the same data as it appears
@@ -164,8 +169,9 @@ def export_config(ctx, include_secrets=False, include_users=True):
                     r["config"] = json.dumps(cfg)
             out["tables"][t] = rows
         if include_users:
+            # two-factor secrets only in a backup with secrets; restoring one without them keeps this server's (else 2FA would be off)
             out["tables"]["users"] = [dict(r) for r in c.execute(
-                "SELECT id, username, pw_hash, role, created, from_env FROM users")]
+                "SELECT id, username, pw_hash, role, created, from_env" + (", totp_secret, totp_last, recovery" if include_secrets else "") + " FROM users")]
     out["settings"].get("report", {}).pop("last_sent", None)
     if not include_secrets:
         for key, fields in SETTING_SECRETS.items():
@@ -209,6 +215,11 @@ def import_config(ctx, data, only=None):
                 rows = tables[t]
                 if t == "users" and not rows:
                     continue  # never lock everyone out
+                if t == "users":  # keep two-factor login of accounts whose secrets weren't exported
+                    old = {r[0].lower(): r[1:] for r in c.execute("SELECT username, totp_secret, totp_last, recovery FROM users") if r[1]}
+                    for r in rows:
+                        if isinstance(r, dict) and "totp_secret" not in r and isinstance(r.get("username"), str) and r["username"].lower() in old:
+                            r["totp_secret"], r["totp_last"], r["recovery"] = old[r["username"].lower()]
                 if t == "notifiers":  # keep secrets that weren't exported
                     old = {r[0]: json.loads(r[1] or "{}") for r in c.execute("SELECT id, config FROM notifiers")}
                     for r in rows:
@@ -303,6 +314,10 @@ def validate_full_backup(path):
         for m in tar.getmembers():
             if m.name.startswith("/") or ".." in m.name.split("/") or not (m.isfile() or m.isdir()):
                 raise ValueError(f"Unsafe entry in archive: {m.name}")
+        unpacked = sum(m.size for m in tar.getmembers() if m.isfile())
+        free = shutil.disk_usage(os.path.dirname(os.path.abspath(path))).free
+        if unpacked + SPACE_MARGIN > free:  # it is unpacked next to itself: refuse rather than fill the disk
+            raise ValueError(f"Unpacking it needs {unpacked / 1024 ** 3:.1f} GB, more than the free space")
         manifest = json.load(tar.extractfile("manifest.json"))
         if manifest.get("format") not in ("sniffowireless-full", LEGACY_FORMAT):
             raise ValueError("Unknown backup format")
@@ -330,6 +345,18 @@ def inspect_full_backup(path):
                 tar.extract(db_member, tmp, filter="data")
                 counts = section_counts(os.path.join(tmp, db_member), names)
     return {"created": manifest.get("created"), "app_version": manifest.get("app_version"), "sections": _sections_info(counts)}
+
+
+def _move_known(src, dest, rx):
+    """Move the files of an unpacked backup folder into place, only those whose name the app itself uses; returns how many."""
+    n = 0
+    for f in os.listdir(src):
+        if rx.match(f) and os.path.isfile(os.path.join(src, f)):
+            shutil.move(os.path.join(src, f), os.path.join(dest, f))
+            n += 1
+        else:
+            log.warning("Restore: skipped %r, which is not a file this app writes", f[:80])
+    return n
 
 
 def _safety_copy(cfg):
@@ -397,16 +424,13 @@ def restore_sections(cfg, archive, ids):
                 for f in os.listdir(cfg.data_dir):  # an older icon with another extension must not linger
                     if f.startswith(("floorplan.", "appicon.")):
                         os.remove(os.path.join(cfg.data_dir, f))
-                done["files"] = len(os.listdir(src))
-                for f in os.listdir(src):
-                    shutil.move(os.path.join(src, f), os.path.join(cfg.data_dir, f))
+                done["files"] = _move_known(src, cfg.data_dir, DATA_FILE_RX)
         if "handshakes" in ids:
             src = os.path.join(tmp, HANDSHAKES)
             if os.path.isdir(src):
                 dest = os.path.join(cfg.data_dir, HANDSHAKES)
                 os.makedirs(dest, exist_ok=True)
-                for f in os.listdir(src):
-                    shutil.move(os.path.join(src, f), os.path.join(dest, f))
+                _move_known(src, dest, HANDSHAKE_FILE_RX)
                 done["handshakes"] = len(os.listdir(dest))
     log.warning("Restored from a backup: %s. The previous database was saved as %s",
                 ", ".join(f"{k} ({v})" for k, v in done.items()) or "nothing", keep)
@@ -447,13 +471,11 @@ def apply_staged_restore(cfg):
                 shutil.move(os.path.join(tmp, db_member), cfg.db_path)
                 files = os.path.join(tmp, "files")
                 if os.path.isdir(files):
-                    for f in os.listdir(files):
-                        shutil.move(os.path.join(files, f), os.path.join(cfg.data_dir, f))
+                    _move_known(files, cfg.data_dir, DATA_FILE_RX)
                 hs = os.path.join(tmp, HANDSHAKES)
                 if os.path.isdir(hs):
                     os.makedirs(os.path.join(cfg.data_dir, HANDSHAKES), exist_ok=True)
-                    for f in os.listdir(hs):
-                        shutil.move(os.path.join(hs, f), os.path.join(cfg.data_dir, HANDSHAKES, f))
+                    _move_known(hs, os.path.join(cfg.data_dir, HANDSHAKES), HANDSHAKE_FILE_RX)
         log.warning("Restored full backup; the previous database was saved as %s", keep)
     except Exception as e:
         log.error("Staged restore failed, keeping the current database: %s", e)

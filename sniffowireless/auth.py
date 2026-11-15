@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import totp
+from .httpsec import TRUSTED_PEER
 from .sanitize import clean_str
 
 log = logging.getLogger("sniffowireless.auth")
@@ -277,7 +278,9 @@ def require_admin(request: Request):
 
 def same_origin(origin, request):
     """Origin must match the host the request was sent to (scheme-agnostic, so it works behind TLS proxies)."""
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    # X-Forwarded-Host only counts from a reverse proxy in TRUSTED_PROXIES; from anyone else it could be anything
+    fwd = request.headers.get("x-forwarded-host") if request.scope.get(TRUSTED_PEER) else None
+    host = fwd or request.headers.get("host") or ""
     return origin.split("://", 1)[-1].rstrip("/").lower() == host.split(",")[0].strip().lower()
 
 
@@ -340,7 +343,7 @@ def routes(ctx):
     r = APIRouter()
 
     def set_cookie(request, response, token):
-        secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+        secure = request.url.scheme == "https"  # behind a proxy in TRUSTED_PROXIES uvicorn has set this from X-Forwarded-Proto
         response.set_cookie(COOKIE, token, max_age=SESSION_DAYS * 86400, httponly=True, samesite="lax",
                             secure=secure, path="/")
 

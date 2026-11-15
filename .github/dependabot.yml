@@ -1,0 +1,7 @@
+# The workflows pin each action to a commit (a moved tag cannot change what runs); this proposes the updates once a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
