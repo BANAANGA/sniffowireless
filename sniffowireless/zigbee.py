@@ -104,6 +104,13 @@ def breakdown(ctx, since):
     return {"total": len(radios), "charts": [{"key": k, "title": t, "rows": _counted([c[k] for c in cats])} for k, t in BREAKDOWN]}
 
 
+def channel_frames(ctx, since):
+    """[{channel, frames}] 802.15.4 frames heard per channel since `since`, every channel 11-26 (0 where none)."""
+    got = {r["channel"]: r["frames"] for r in ctx.rows("SELECT channel, SUM(frames) frames FROM zigbee_channels WHERE minute >= ? GROUP BY channel",
+                                                       (int(since),))}
+    return [{"channel": c, "frames": got.get(c, 0)} for c in ALL_CHANNELS]
+
+
 def new_per_day(ctx, since, off):
     """[{day, n}] radios first heard per local day (day = its start, like the devices' own count)."""
     return ctx.rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, COUNT(*) n FROM zigbee_radios WHERE first_seen >= ? "

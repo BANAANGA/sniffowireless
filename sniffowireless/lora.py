@@ -625,6 +625,17 @@ def breakdown(ctx, since):
     return {"total": len(cats), "charts": [{"key": k, "title": t, "rows": counted([c[k] for c in cats])} for k, t in BREAKDOWN]}
 
 
+def airtime(ctx, since):
+    """[{profile, label, protocol, protocol_label, packets, air_s}] LoRa airtime heard per listening profile and protocol since `since`.
+    Airtime is computed from each frame's length and settings, so it is what was on the air while a board listened there."""
+    out = ctx.rows("SELECT profile, protocol, SUM(packets) packets, ROUND(SUM(air_ms) / 1000.0, 2) air_s FROM lora_stats WHERE minute >= ? "
+                   "GROUP BY profile, protocol ORDER BY air_s DESC", (int(since),))
+    for r in out:
+        r["label"] = PROFILES[r["profile"]].label if r["profile"] in PROFILES else r["profile"]
+        r["protocol_label"] = PROTOCOLS.get(r["protocol"], r["protocol"])
+    return out
+
+
 def new_per_day(ctx, since, off):
     """[{day, n}] nodes first heard per local day (day = its start, like the devices' own count)."""
     return ctx.rows("SELECT CAST((first_seen - ?) / 86400 AS INTEGER) * 86400 + ? day, COUNT(*) n FROM lora_nodes WHERE first_seen >= ? "

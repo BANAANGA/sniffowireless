@@ -1290,14 +1290,19 @@ async function viewStats(params) {
     <section class="panel" data-list="st-era"><header><h2>${ttl('st-era', 'Estimated age')}</h2><span class="faint">earliest possible year</span></header><div class="body"><ul class="bars-list" id="st-era"></ul></div></section>
     <section class="panel" data-list="st-os"><header><h2>${ttl('st-os', 'Operating systems')}</h2></header><div class="body"><ul class="bars-list" id="st-os"></ul></div></section>
     <section class="panel" data-list="st-fp"><header><h2>${ttl('st-fp', 'Shared fingerprints')}</h2><span class="faint">same probe layout = same model / OS</span></header><div class="body flush table-wrap" id="st-fp"></div></section>
-    <section class="panel"><header><h2>${ttl('', 'AP channels', '#/channels')}</h2><span class="legend" id="bandlegend"></span></header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
+    <section class="panel"><header><h2>${ttl('', 'Channels', '#/channels')}</h2>${seg('chkind', [['ap', 'APs'], ['client', 'Clients']], 'ap')}</header><div class="body"><div class="chart-box"><canvas id="chans"></canvas></div><ul class="bars-list" id="bands" style="margin-top:12px"></ul></div></section>
     <section class="panel"><header><h2>${ttl('', 'Events', '#/events')}</h2></header><div class="body flush table-wrap" id="evtypes"></div></section>
+    <section class="panel" id="zbch-panel" ${modOn('zigbee') ? '' : 'hidden'}><header><h2>${ttl('', 'Zigbee channels', '#/zigbee')}</h2><span class="faint">802.15.4 frames heard</span></header><div class="body"><div class="chart-box short"><canvas id="zbch"></canvas></div></div></section>
+    <section class="panel span-2" id="air-panel"><header><h2>${ttl('', 'Airtime per channel', '#/channels')}</h2><span id="airband-seg"></span></header>
+      <div class="body"><div class="chart-box"><canvas id="airch"></canvas></div><p class="faint small-text" id="air-note" style="margin:8px 0 0"></p></div></section>
+    <section class="panel" id="airtl-panel"><header><h2>Airtime by band</h2><span class="faint">share of listening time</span></header><div class="body"><div class="legend" id="airtl-legend"></div><div class="chart-box"><canvas id="airtl"></canvas></div></div></section>
+    <section class="panel span-3" id="loraair-panel" ${modOn('lora') ? '' : 'hidden'}><header><h2>${ttl('', 'LoRa airtime', '#/lora')}</h2><span class="faint">time on the air per listening profile</span></header><div class="body"><div class="legend" id="loraair-legend"></div><div class="chart-box short"><canvas id="loraair"></canvas></div></div></section>
     <section class="panel span-3"><header><h2>${ttl('', 'Networks (SSIDs)', '#/ssids')}</h2><span class="row"><span class="faint" id="ssids-count"></span><button class="btn small" id="ssids-more" hidden></button></span></header><div class="body flush table-wrap" id="ssids"></div></section>
     <section class="panel" data-list="topc"><header><h2>${ttl('topc', 'Most connected clients')}</h2></header><div class="body flush table-wrap" id="topc"></div></section>
     <section class="panel" data-list="topap"><header><h2>${ttl('topap', 'Busiest access points')}</h2></header><div class="body flush table-wrap" id="topap"></div></section>
     <section class="panel" data-list="probes"><header><h2>${ttl('probes', 'Probed SSIDs')}</h2><span class="faint">networks clients are looking for</span></header><div class="body flush table-wrap" id="probes"></div></section>`;
 
-  if (!modOn('wifi')) ['st-gen', 'chans', 'ssids', 'topc', 'topap', 'probes'].forEach(id => { const p = document.getElementById(id) || root.querySelector(`[data-list="${id}"]`); const sec = p && p.closest('section'); if (sec) sec.hidden = true; });
+  if (!modOn('wifi')) ['st-gen', 'chans', 'ssids', 'topc', 'topap', 'probes', 'airch', 'airtl'].forEach(id => { const p = document.getElementById(id) || root.querySelector(`[data-list="${id}"]`); const sec = p && p.closest('section'); if (sec) sec.hidden = true; });
 
   if (listId) {
     const keep = root.querySelector(`[data-list="${listId}"]`);
@@ -1429,15 +1434,90 @@ async function viewStats(params) {
     <td class="num">${f.n}${f.randomized ? ` <span class="tag warn">${f.randomized} rand</span>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No shared fingerprints yet</div>';
   linkRows(fpEl);
 
-  // channels + bands
-  document.getElementById('bandlegend').innerHTML = BAND_LIST.map(([b, m]) => `<span><span class="swatch" style="background:${m.color}"></span>${b}G</span>`).join('');
-  chart(document.getElementById('chans'), {
-    type: 'bar', data: { labels: s.channels.map(c => c.b === '6' ? `6G:${c.channel}` : c.channel),
-      datasets: [{ data: s.channels.map(c => c.aps), backgroundColor: s.channels.map(c => (BANDS[c.b] || BANDS['2.4']).color + 'cc'), borderRadius: 2, maxBarThickness: 40 }] },
-    options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale() },
-      plugins: { tooltip: { callbacks: { title: i => `Channel ${i[0].label} (${s.channels[i[0].dataIndex].b} GHz)`, label: i => `${i.raw} access points` } } },
-      onClick: (e, els) => { if (els.length) { const c = s.channels[els[0].index]; location.hash = hrefWith('/devices', { kind: 'ap', channel: c.channel, band: c.b }); } } },
-  });
+  // channels: access points or clients per channel, coloured by band
+  const chanChart = which => {
+    const list = which === 'client' ? (s.client_channels || []).slice().sort((x, y) => (x.b === '6') - (y.b === '6') || (x.b === '5') - (y.b === '5') || x.channel - y.channel) : s.channels;
+    const val = c => which === 'client' ? c.n : c.aps;
+    chart(document.getElementById('chans'), {
+      type: 'bar', data: { labels: list.map(c => c.b === '6' ? `6G:${c.channel}` : c.channel),
+        datasets: [{ data: list.map(val), backgroundColor: list.map(c => (which === 'client' ? KINDS.wifi_client.color : (BANDS[c.b] || BANDS['2.4']).color) + 'cc'), borderRadius: 2, maxBarThickness: 40 }] },
+      options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale() },
+        plugins: { tooltip: { callbacks: { title: i => `Channel ${i[0].label} (${list[i[0].dataIndex].b} GHz)`, label: i => ` ${num(i.raw)} ${which === 'client' ? 'clients (the channel each was last heard on)' : 'access points'}` } } },
+        onClick: (e, els) => { if (els.length) { const c = list[els[0].index]; location.hash = hrefWith('/devices', { kind: which === 'client' ? 'wifi_client' : 'ap', channel: c.channel, band: c.b }); } } },
+    });
+  };
+  chanChart('ap');
+  onSeg(root, 'chkind', chanChart);
+
+  // airtime: how busy each channel was while a sensor listened on it (from the channel survey of hopping Wi-Fi sensors)
+  const air = s.airtime || [];
+  const airBands = BAND_LIST.filter(([b]) => air.some(x => x.band === b && x.utilization != null)).map(([b]) => b);
+  const level = u => u >= .6 ? '#ef6f6c' : u >= .3 ? '#f5b84a' : '#3ecf8e';
+  const pct = v => v == null ? '—' : `${(v * 100).toFixed(v < .1 ? 1 : 0)}%`;
+  const airChart = band => {
+    const list = air.filter(x => x.band === band && x.utilization != null).sort((a, c) => a.channel - c.channel);
+    const aps = Object.fromEntries((s.channels || []).filter(c => c.b === band).map(c => [c.channel, c.aps]));
+    chart(document.getElementById('airch'), {
+      type: 'bar', data: { labels: list.map(x => x.channel), datasets: [{ data: list.map(x => +(x.utilization * 100).toFixed(1)), backgroundColor: list.map(x => level(x.utilization) + 'cc'), borderRadius: 2, maxBarThickness: 36 }] },
+      options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ suggestedMax: 20, ticks: { color: FAINT, callback: v => v + '%' } }) },
+        plugins: { tooltip: { callbacks: { title: i => `Channel ${i[0].label} (${band} GHz)`, label: i => {
+          const x = list[i.dataIndex];
+          return [` Airtime ${pct(x.utilization)} of the time listened`, ` ${num(x.fps)} frames/s · retries ${pct(x.retry_rate)}`, x.noise != null ? ` Noise ${x.noise} dBm` : null,
+            ` ${num(aps[x.channel] || 0)} access points · listened ${dur(Math.round(x.dwell / 1000))}`].filter(Boolean);
+        } } } },
+        onClick: () => { location.hash = '#/channels'; } },
+    });
+  };
+  if (airBands.length) {
+    document.getElementById('airband-seg').innerHTML = seg('airband', airBands.map(b => [b, BANDS[b].label]), airBands[0]);
+    onSeg(root, 'airband', airChart);
+    airChart(airBands[0]);
+    document.getElementById('air-note').textContent = 'The share of the time a sensor listened on a channel that frames were on the air there. Green below 30%, amber to 60%, red above. A sensor listens to one channel at a time, so each channel is a sample of its listening time, not the whole period.';
+  } else {
+    document.getElementById('airch').parentElement.innerHTML = '<div class="empty">No channel survey in this period. It comes from Wi-Fi sensors that hop channels.</div>';
+  }
+  const ser = s.airtime_series || { t: [], bands: {} };
+  const serBands = BAND_LIST.filter(([b]) => (ser.bands[b] || []).some(v => v != null));
+  document.getElementById('airtl-legend').innerHTML = serBands.map(([b, m]) => `<span><span class="swatch" style="background:${m.color}"></span>${m.label}</span>`).join('');
+  if (serBands.length) {
+    const span = ser.t.length ? ser.t[ser.t.length - 1] - ser.t[0] + ser.bucket : 86400;
+    chart(document.getElementById('airtl'), {
+      type: 'line', data: { datasets: serBands.map(([b, m]) => ({ label: m.label, data: ser.t.map((t, i) => ({ x: t + ser.bucket / 2, y: ser.bands[b][i] == null ? null : +(ser.bands[b][i] * 100).toFixed(1) })),
+        borderColor: m.color, fill: false, borderWidth: 1.5, pointRadius: 0, tension: .3, spanGaps: false })) },
+      options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        scales: { x: { ...timeScale(span), min: ser.t[0], max: ser.t[ser.t.length - 1] + ser.bucket }, y: yScale({ suggestedMax: 10, ticks: { color: FAINT, callback: v => v + '%' } }) },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y}%` } } } },
+    });
+  } else document.getElementById('airtl').parentElement.innerHTML = '<div class="empty">No channel survey in this period</div>';
+
+  // Zigbee: frames per channel; LoRa: seconds on the air per listening profile, by protocol
+  if (modOn('zigbee')) {
+    const zc = s.zigbee_channels || [];
+    if (zc.some(c => c.frames)) chart(document.getElementById('zbch'), {
+      type: 'bar', data: { labels: zc.map(c => c.channel), datasets: [{ data: zc.map(c => c.frames), backgroundColor: EXTRA_KINDS.zigbee.color + 'cc', borderRadius: 2, maxBarThickness: 30 }] },
+      options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale() },
+        plugins: { tooltip: { callbacks: { title: i => `Channel ${i[0].label}`, label: i => ` ${num(i.raw)} frames` } } }, onClick: () => { location.hash = '#/zigbee'; } },
+    });
+    else document.getElementById('zbch').parentElement.innerHTML = '<div class="empty">No 802.15.4 frames in this period</div>';
+  }
+  if (modOn('lora')) {
+    const la = s.lora_airtime || [];
+    const profiles = [...new Set(la.map(r => r.profile))];
+    const protos = [...new Set(la.map(r => r.protocol))];
+    const label = Object.fromEntries(la.map(r => [r.profile, r.label]));
+    const plabel = Object.fromEntries(la.map(r => [r.protocol, r.protocol_label]));
+    const pcol = p => (typeof LORA_COLORS !== 'undefined' && LORA_COLORS[p]) || EXTRA_KINDS.lora.color;
+    document.getElementById('loraair-legend').innerHTML = protos.map(p => `<span><span class="swatch" style="background:${pcol(p)}"></span>${esc(plabel[p])}</span>`).join('');
+    if (la.length) chart(document.getElementById('loraair'), {
+      type: 'bar', data: { labels: profiles.map(p => label[p]), datasets: protos.map(p => ({ label: plabel[p], backgroundColor: pcol(p) + 'cc', borderRadius: 2, maxBarThickness: 40, stack: 'a',
+        data: profiles.map(pr => { const r = la.find(x => x.profile === pr && x.protocol === p); return r ? r.air_s : 0; }) })) },
+      options: { indexAxis: 'y', maintainAspectRatio: false, scales: { x: { stacked: true, grid: { color: GRID }, ticks: { color: FAINT, callback: v => dur(v) } }, y: { stacked: true, grid: { display: false }, ticks: { color: FAINT } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const r = la.find(x => x.profile === profiles[c.dataIndex] && x.protocol === protos[c.datasetIndex]);
+          return r ? ` ${c.dataset.label}: ${r.air_s < 60 ? r.air_s.toFixed(1) + ' s' : dur(Math.round(r.air_s))} on the air · ${num(r.packets)} packets` : ''; } } } },
+        onClick: () => { location.hash = '#/lora'; } },
+    });
+    else document.getElementById('loraair').parentElement.innerHTML = '<div class="empty">No LoRa frames in this period</div>';
+  }
   const bandTot = {};
   s.bands.forEach(r => { bandTot[r.band] = bandTot[r.band] || { ap: 0, wifi_client: 0 }; bandTot[r.band][r.kind] = r.n; });
   const bmax = Math.max(1, ...Object.values(bandTot).map(o => o.ap + o.wifi_client));
