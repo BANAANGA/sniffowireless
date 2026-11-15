@@ -5,7 +5,7 @@ A self-hosted radio monitor that runs as a single Docker container: **Wi-Fi, Blu
 - **Wi-Fi:** passive monitor-mode capture with channel hopping over 2.4, 5 and **6 GHz (Wi-Fi 6E/7)**, on one or more USB adapters
 - **Bluetooth:** BLE advertising (including Bluetooth 5/6 extended and LE Audio broadcasts) plus Classic inquiry, over a raw HCI socket
 - **Ethernet / LAN:** passive capture; finds devices through ARP, DHCP, mDNS, SSDP and LLDP, and catches rogue DHCP servers and ARP spoofing
-- **Zigbee / IEEE 802.15.4:** network scans and (with the right stick) passive listening, with channel interference
+- **Zigbee / Tread / IEEE 802.15.4:** network scans and (with the right stick) passive listening, with channel interference
 - **LoRa:** Meshtastic, MeshCore and LoRaWAN traffic from a receive-only Heltec V3, including the public Meshtastic channel's messages and positions
 - **Connectivity history:** presence sessions, Wi-Fi client→AP connections (roaming, deauths) and Bluetooth links, for every device
 - **Device identification:** brand, model, type, OS and age from passive evidence, each result with its confidence
