@@ -663,3 +663,5 @@ header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
 /* Android app hint in the Add remote sensor dialog */
 .callout.mobile-app { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin: 0 0 14px; }
 .callout.mobile-app .row { gap: 6px; flex-wrap: wrap; }
+
+.sysm-track i.charging { background: var(--good); }

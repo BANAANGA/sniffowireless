@@ -51,6 +51,35 @@ def _size(path):
         return 0
 
 
+POWER_SUPPLY = "/sys/class/power_supply"  # tests point this at a fake tree
+SOURCES = {"Mains": "ac", "USB": "usb", "USB_C": "usb", "USB_PD": "usb", "Wireless": "wireless"}
+
+
+def battery():
+    """This machine's battery, if it has one the kernel knows (a laptop, or a UPS add-on with a driver): {"percent", "charging",
+    "source"}. None without one. With several batteries, the first one that reports a percentage."""
+    try:
+        names = sorted(os.listdir(POWER_SUPPLY))
+    except OSError:
+        return None
+    source = None
+    for n in names:  # which supply is online: mains, USB, wireless
+        d = os.path.join(POWER_SUPPLY, n)
+        kind = _read(os.path.join(d, "type")).strip()
+        if kind in SOURCES and _read(os.path.join(d, "online")).strip() == "1":
+            source = SOURCES[kind]
+    for n in names:
+        d = os.path.join(POWER_SUPPLY, n)
+        if _read(os.path.join(d, "type")).strip() != "Battery":
+            continue
+        cap = _read(os.path.join(d, "capacity")).strip()
+        if not cap.isdigit():
+            continue
+        state = _read(os.path.join(d, "status")).strip()
+        return {"percent": min(100, int(cap)), "charging": state in ("Charging", "Full"), "source": source}
+    return None
+
+
 def snapshot(db_path, data_dir):
     now = time.monotonic()
     cpu, proc = _cpu_times(), os.times()
@@ -89,4 +118,5 @@ def snapshot(db_path, data_dir):
         "memory": {"total": total, "used": total - avail if total and avail is not None else None, "sniffowireless_rss": _rss()},
         "db": {"bytes": db + wal, "main": db, "wal": wal},
         "disk": disk,
+        "battery": battery(),
     }

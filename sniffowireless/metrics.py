@@ -81,6 +81,11 @@ def render(ctx):
         cpu, mem = v["system"].get("cpu", {}), v["system"].get("memory", {})
         if cpu.get("load"):
             o.add("sniffowireless_sensor_load1", cpu["load"][0], "Load average over 1 minute of a remote sensor's machine", sensor=sid)
+        bat = v["system"].get("battery") or {}
+        if bat.get("percent") is not None:
+            o.add("sniffowireless_sensor_battery_percent", bat["percent"], "Battery level of a remote sensor (a phone, a laptop, a UPS)", sensor=sid)
+            if bat.get("charging") is not None:
+                o.add("sniffowireless_sensor_battery_charging", int(bat["charging"]), "1 while a remote sensor's battery is charging or full", sensor=sid)
         if mem.get("total") and mem.get("used") is not None:
             o.add("sniffowireless_sensor_memory_used_ratio", round(mem["used"] / mem["total"], 4), "Memory in use on a remote sensor's machine (excluding cache)", sensor=sid)
     for r in ctx.rows("SELECT t.mac, COALESCE(m.label, d.name, d.ip, t.mac) label, SUM(t.bytes_out) o, SUM(t.bytes_in) i "
