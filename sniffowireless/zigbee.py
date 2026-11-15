@@ -656,6 +656,7 @@ def routes(ctx):
     @r.get("/api/zigbee")
     def overview(hours: float = 24, _=Depends(current_user)):
         now = time.time()
+        hours = max(1 / 6, min(hours, 24 * 30))
         since = now - hours * 3600
         networks = ctx.rows("SELECT * FROM zigbee_networks WHERE last_seen >= ? ORDER BY last_seen DESC, lqi DESC LIMIT 200",
                             (since,))
