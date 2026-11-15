@@ -15,11 +15,11 @@ addRoute('/zigbee', async (_, params) => {
 
   app.innerHTML = `<div class="page-head"><div><h1>Zigbee &amp; 802.15.4</h1><div class="sub">Zigbee and Thread (Matter) networks found by scanning or in beacons, and every radio heard by listening passively. Encrypted contents stay hidden: you see addresses, frame types and timing.</div></div>
     <div class="row"><a class="btn small ghost" href="/api/export/zigbee-radios.csv" download>Radios (CSV)</a><a class="btn small ghost" href="/api/export/zigbee-networks.csv" download>Networks (CSV)</a>
-      ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d']], hours)}</div></div>
+      ${seg('hours', [[1, '1h'], [24, '24h'], [168, '7d'], [720, '30d']], hours)}</div></div>
     ${!z.configured ? '<div class="callout">No Zigbee stick configured. Plug in a coordinator stick and set <code>ZIGBEE_DEVICES</code> (see README → Zigbee &amp; 802.15.4).</div>' : ''}
     ${z.configured && !hasData && !z.sensors.some(s => s.error) ? '<div class="empty">Nothing heard yet. Scans run every few minutes; battery devices transmit only briefly.</div>' : ''}
     ${z.sensors.map(s => `<div class="callout">${esc(s.iface || s.name)}: ${s.error ? `<span class="err">${esc(s.error)}</span>` : esc([s.state, s.firmware, s.channel ? 'ch ' + s.channel : ''].filter(Boolean).join(' · '))}${s.warning ? `<div class="warn-text small-text">${esc(s.warning)}</div>` : ''}</div>`).join('')}
-    <div class="grid cols-4">${[['Networks', z.networks.length, 'answered a scan'], ['Radios', z.radios.length, 'heard or addressed'], ['Frames', num(z.total_frames), `in ${hours}h`],
+    <div class="grid cols-4">${[['Networks', z.networks.length, 'answered a scan'], ['Radios', z.radios.length, 'heard or addressed'], ['Frames', num(z.total_frames), `in ${hours >= 24 ? hours / 24 + 'd' : hours + 'h'}`],
       ['Encrypted radios', z.radios.filter(r => r.encrypted > 0).length, 'at the radio layer']].map(([a, b, c]) => `<div class="card"><div class="label">${a}</div><div class="value">${b}</div><div class="meta">${esc(c)}</div></div>`).join('')}</div>
     <div class="grid cols-3" style="margin-top:16px">
       <section class="panel"><header><h2>Frames per channel</h2></header><div class="body"><ul class="bars-list">${z.channels.map(c => `<li><div><div class="name">Channel ${c.channel}</div><div class="track"><i style="width:${c.frames / maxFrames * 100}%;background:${KINDS.ble.color}"></i></div></div><div class="n">${num(c.frames)}</div></li>`).join('')}</ul></div></section>
