@@ -11,6 +11,7 @@ A self-hosted radio monitor that runs as a single Docker container: **Wi-Fi, Blu
 - **Device identification:** brand, model, type, OS and age from passive evidence, each result with its confidence
 - **Alerts and security monitoring:** watched or unknown devices, evil twins, deauth floods, KARMA access points, unknown trackers, interference and DFS radar, delivered via ntfy, Telegram, Discord, webhooks or email
 - **Several sensors and a map:** remote Raspberry Pi sensors forward to one server; each device gets a room and a position on your floor plan. Channels and bands of every sensor are set from the web UI.
+- **Android app:** [sniffowireless-mobile](https://github.com/BANAANGA/sniffowireless-mobile) scans on its own and can run as a remote sensor, with the phone's radios or USB adapters ([details](#android-app))
 - **Operations:** login with admin/viewer roles, API tokens, backups and restore, a Prometheus endpoint with a Grafana dashboard, CSV export and a JSON API
 - **Demo mode** to try the UI without any radios
 
@@ -83,6 +84,18 @@ Open **http://<host>:8080** and create the admin account with the setup code fro
 | [Prometheus & Grafana](docs/prometheus.md) | Metrics and the ready-made dashboard |
 | [API](docs/api.md) | The JSON API and exports |
 | [Troubleshooting](docs/troubleshooting.md) | Symptoms and fixes |
+
+---
+
+## Android app
+
+<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/BANAANGA/sniffowireless-mobile"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="50" alt="Get it on Obtainium"></a>
+
+[sniffowireless-mobile](https://github.com/BANAANGA/sniffowireless-mobile) is the Android companion. On its own it is a Wi-Fi, Bluetooth, Zigbee and LAN scanner; it can also run as a **remote sensor** that sends everything to this server, where the phone shows up like any Raspberry Pi sensor: on the map, in the device history, in the alerts and on the Sensors page.
+
+- **Install:** the button above opens [Obtainium](https://github.com/ImranR98/Obtainium) on your phone with the app filled in, so it installs and keeps itself updated from the [GitHub releases](https://github.com/BANAANGA/sniffowireless-mobile/releases). Without Obtainium, download the APK from the [latest release](https://github.com/BANAANGA/sniffowireless-mobile/releases/latest). The *Add remote sensor* dialog has the same two links.
+- **Connect it:** on the server, **Settings → Sensors → Add remote sensor** and copy the command it shows. In the app, open **Sensor** and tap **Paste from clipboard**: it takes the server address and token from the command.
+- **What it captures:** the phone's own Wi-Fi scan and Bluetooth, or more through USB adapters (an MT7921U in monitor mode, a USB Bluetooth dongle, a Zigbee stick). The phone's own radios see less than a USB adapter: Android filters Bluetooth adverts and only reports access points from Wi-Fi scans. See the [app's README](https://github.com/BANAANGA/sniffowireless-mobile#readme) for details.
 
 ---
 
