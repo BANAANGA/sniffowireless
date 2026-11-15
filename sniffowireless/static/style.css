@@ -659,3 +659,7 @@ header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
 .sn-sensor td { white-space: normal; vertical-align: top; }
 .sn-sensor td:first-child, .sn-sensor td.num { white-space: nowrap; }
 .sn-hw { min-width: 180px; max-width: 340px; }
+
+/* Android app hint in the Add remote sensor dialog */
+.callout.mobile-app { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin: 0 0 14px; }
+.callout.mobile-app .row { gap: 6px; flex-wrap: wrap; }

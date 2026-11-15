@@ -2,7 +2,7 @@
 
 # Multiple sensors & the map
 
-Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server:
+Run extra sensors, for example a Raspberry Pi with a USB Wi-Fi adapter in another room, and send everything to one server. An Android phone can be a sensor too, with the [sniffowireless-mobile](https://github.com/BANAANGA/sniffowireless-mobile) app ([get it in Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/BANAANGA/sniffowireless-mobile)): add the sensor as below, copy the command, and in the app tap **Sensor → Paste from clipboard**.
 
 1. On the server: **Settings → Sensors → Add remote sensor**, then give it a name and room. You get a token and a ready-made `docker run` command.
 2. On the sensor machine: connect the adapters as described above, then run that command (it pulls the [published image](deploy.md#prebuilt-image); to build it yourself instead, use `sniffowireless:latest` as the image). It's the same image with `SNIFFOWIRELESS_MODE=sensor`, `SERVER_URL` and `SENSOR_TOKEN`:
