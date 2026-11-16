@@ -50,17 +50,19 @@ def test_a_remote_sensor_records_and_uploads(setup):
         with open(path, "rb") as f:
             res = sensor.post(f"/api/ingest/capture?id={rid}", content=f.read(), headers={"content-type": "application/gzip"})
         assert res.status_code == 200, res.text
-    capture.record_for_server({**cmd, "seconds": 1}, sensor_dir, upload)
-    for _ in range(50):
-        if capture.RECORDER.active:
+    capture.record_for_server({**cmd, "seconds": 60}, sensor_dir, upload)
+    for _ in range(500):   # the recording starts in a thread of its own: wait for it, however slow the machine
+        if capture.RECORDER.active and capture.SENSOR_JOB.get("state") == "recording":
             break
-        time.sleep(0.02)
+        time.sleep(0.01)
+    assert capture.RECORDER.active
     capture.RECORDER.record("wifi", "wifi:wlan0mon", sf.beacon(), tuned=2437)
     capture.RECORDER.record("bt", "bt:hci0", sf.le_adv())
     capture.RECORDER.record("zigbee", "zigbee:ttyUSB0", sf.zb_ack(), channel=15)   # not asked for: not recorded
     batch(sensor, capture=dict(capture.SENSOR_JOB))
+    capture.RECORDER.stop()   # rather than waiting for the time to run out: then the sensor uploads
     assert admin.get("/api/captures").json()["remote"][0]["state"] in ("recording", "uploading", "done")
-    for _ in range(100):
+    for _ in range(400):
         if not capture.SENSOR_JOB:
             break
         time.sleep(0.05)
