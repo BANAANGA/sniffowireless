@@ -193,7 +193,7 @@
       const quiet = d.open && d.now - (d.last_frame || d.started) > 10;
       stateEl.innerHTML = d.open
         ? `<span class="tag on">Live</span> ${num(d.total)} frames · stops in ${dur(Math.max(0, Math.round(d.until - d.now)))}${d.dropped ? ` · <span class="warn-text">${num(d.dropped)} frames were too many to send live</span>` : ''}
-           ${quiet ? `<div class="faint">Nothing heard for a while.${source !== 'local' ? ' A remote sensor needs version 33.3 or newer to send its frames live.' : ''}</div>` : ''}`
+           ${quiet ? `<div class="faint">Nothing heard for a while.${source !== 'local' ? ' A remote sensor needs version 33.3 or newer to send its frames live (the Android app: 1.4.0).' : ''}</div>` : ''}`
         : `<span class="tag">Stopped</span> ${num(d.total)} frames heard${d.total > d.kept ? `, the newest ${num(d.kept)} kept` : ''}. Start again for more, or save them as a recording.`;
       root.querySelector('#fx-count').textContent = `Displayed ${num(st.items.length)}${st.items.length >= LIVE_ROWS ? ' (the newest)' : ''} of ${num(d.total)} frames`;
     };
