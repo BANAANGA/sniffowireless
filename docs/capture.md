@@ -105,7 +105,8 @@ as in a recording.
 
 A remote sensor sends its frames with its next uploads, every 2 seconds, so they arrive in small bursts. It sends at most
 3,000 frames per upload. When a busy channel produces more, the rest are dropped, and the page says how many. Live frames
-from a remote sensor need version 33.3 or newer on that sensor; the Android app does not send them yet.
+from a remote sensor need version 33.3 or newer on that sensor, or the Android app 1.4.0 or newer (its USB adapters only, as
+for recordings).
 
 Like inspecting a recording, live frames show the real addresses and bytes, so they are not available while MAC address
 privacy or the anonymised view is on.
