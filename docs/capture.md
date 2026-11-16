@@ -29,6 +29,10 @@ the sensor's name under **From**, and its name ends in the sensor's id (`capture
 server checks what arrives and writes it again, keeping only what a recording holds. A sensor can only send a recording that
 was asked of it.
 
+The **Android app** (sniffowireless-mobile 1.3.0 or newer) records the same way. It can only record its USB adapters: the
+MT7921U for Wi-Fi, a USB Bluetooth adapter, a Zigbee stick and a LoRa board. The phone's own Wi-Fi and Bluetooth only pass
+on what Android already decoded, not the frames.
+
 This needs the sensor to run version 33.2 or newer. An older sensor does not answer the request, and after a minute and a half
 the page says so. On such a sensor, or to record from the moment a sensor starts, set `CAPTURE_AT_START=<seconds>` in its
 environment instead. That recording stays in `captures/` in the sensor's own data directory; copy it to the server's

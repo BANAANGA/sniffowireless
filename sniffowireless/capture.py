@@ -210,7 +210,7 @@ def remote_jobs():
         for job in REMOTE.values():
             if job["state"] == "requested" and now - job["requested"] > REMOTE_START_WAIT:
                 job.update(state="failed", error="The sensor did not start recording. It may be offline, or run a version older than 33.2 "
-                                                 "(update it, or use CAPTURE_AT_START on that machine).")
+                                                 "(the Android app: older than 1.3.0). Update it, or use CAPTURE_AT_START on that machine.")
             elif job["state"] in ("recording", "uploading") and now - job.get("started", job["requested"]) > job["seconds"] + REMOTE_UPLOAD_WAIT:
                 job.update(state="failed", error="The recording did not arrive from the sensor.")
         return {sid: dict(job) for sid, job in REMOTE.items()}
