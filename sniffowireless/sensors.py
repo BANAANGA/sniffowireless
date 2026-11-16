@@ -51,7 +51,9 @@ class Forwarder:
         self.on_lora_config = None     # the same for the LoRa profiles
         self.on_zigbee_config = None   # and for the Zigbee channels
         self.version = {**version.info(), "arch": version.runtime()["arch"]}  # reported with every batch, for the Sensors page
-        self.log_cursor, self.log_epoch = 0, secrets.token_hex(4)  # the last log line sent (this run's counter), and which run that is
+        self.log_cursor, self.log_epoch = 0, secrets.token_hex(4)
+        self.live = deque(maxlen=capture.LIVE_SENSOR_BUFFER)   # frames for the server's live capture, until the next batch
+        self.live_dropped = 0  # the last log line sent (this run's counter), and which run that is
         if not cfg.server_url or not cfg.sensor_token:
             raise SystemExit("SNIFFOWIRELESS_MODE=sensor needs SERVER_URL and SENSOR_TOKEN")
 
@@ -75,6 +77,7 @@ class Forwarder:
         try:
             parsed = json.loads(reply)
             conf, cmds, lora = parsed.get("channel_config"), parsed.get("commands"), parsed.get("lora_config")
+            self._live_config(parsed.get("live"))
             zigbee = parsed.get("zigbee_config")
         except (ValueError, AttributeError):
             return
@@ -105,6 +108,30 @@ class Forwarder:
         if len(data) > 4 * 1024 * 1024:
             raise ValueError("the firmware image from the server is too large")
         return data
+
+    def _live_add(self, rec):
+        if len(self.live) == self.live.maxlen:
+            self.live_dropped += 1
+        self.live.append({**rec, "raw": rec["raw"].hex()})
+
+    def _live_config(self, live):
+        """The server's reply says whether its Frames page wants this sensor's frames live: for how long, and which radios."""
+        if isinstance(live, dict) and isinstance(live.get("radios"), list):
+            try:
+                seconds = max(1.0, min(float(live.get("seconds") or 0), capture.LIVE_REMOTE_HOLD))
+            except (TypeError, ValueError):
+                seconds = capture.LIVE_REMOTE_HOLD
+            capture.LIVE.open([r for r in live["radios"] if r in capture.RADIOS], seconds, self._live_add)
+        elif capture.LIVE.sink is not None:
+            capture.LIVE.close()
+            self.live.clear()
+
+    def _live_batch(self):
+        """The live frames for this batch (at most LIVE_SEND_MAX; the rest wait, and what didn't fit in the buffer is counted)."""
+        if not self.live and not capture.LIVE.active:
+            return {}
+        frames = [self.live.popleft() for _ in range(min(len(self.live), capture.LIVE_SEND_MAX))]
+        return {"frames": frames, "frames_dropped": self.live_dropped}
 
     def record_for_server(self, cmd):
         """The server asked for a recording of this sensor's radios: record it here, then upload it."""
@@ -168,7 +195,8 @@ class Forwarder:
             body = gzip.compress(json.dumps({"sent_at": time.time(), "obs": batch, "status": status.snapshot(),
                                              "dropped": self.dropped, "version": self.version, "system": self._system(),
                                              "logs": lines, "log_epoch": self.log_epoch,
-                                             **({"capture": dict(capture.SENSOR_JOB)} if capture.SENSOR_JOB else {})}, default=str).encode())
+                                             **({"capture": dict(capture.SENSOR_JOB)} if capture.SENSOR_JOB else {}),
+                                             **self._live_batch()}, default=str).encode())
             try:
                 reply = self._post(body)
                 self.sent += len(batch)
@@ -337,6 +365,8 @@ def routes(ctx):
         if isinstance(body.get("status"), list):  # a batch without one leaves the last report as it was
             status.replace_remote(sid, sts, now)
         capture.remote_progress(sid, body.get("capture"))   # how a recording asked of this sensor is going
+        if "frames" in body:   # frames for a live capture on the Frames page
+            capture.live_ingest(sid, body.get("frames"), body.get("frames_dropped"))
         system = sanitize.remote_system(body.get("system"))
         if "system" in body:  # older sensors send none: leave whatever is there to go stale
             status.set_system(sid, system, now)
@@ -349,6 +379,9 @@ def routes(ctx):
                     (now, json.dumps({"dropped": dropped, "clock_offset": round(offset, 1), "status": sts,
                                       "version": sanitize.remote_version(body.get("version"))}), sid))
         reply = {"accepted": n, "rejected": rejected}
+        live = capture.live_request(sid)
+        if live:   # the Frames page has a live capture of this sensor open: send its frames with the next batches
+            reply["live"] = live
         cmds = adapters.take(sid)
         if cmds:  # an admin asked for an adapter of this sensor to be reset
             reply["commands"] = cmds

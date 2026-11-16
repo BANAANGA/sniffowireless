@@ -723,3 +723,7 @@ header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
   .fx-detail { grid-template-columns: minmax(0, 1fr); }
   .fx-tree { border-right: 0; border-bottom: 1px solid var(--border-2); }
 }
+.fx-live { margin-bottom: 10px; }
+.fx-live form.row { flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.fx-live .field { margin: 0; }
+#fx-live-state { margin-top: 8px; color: var(--muted); }

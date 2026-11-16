@@ -768,3 +768,32 @@ def fake_remote_recording(cfg, sid, rid, seconds):
         with capture.REMOTE_LOCK:
             job.update(state="done", file=os.path.basename(path), frames=min(seconds, 20) * 25)
     threading.Thread(target=work, daemon=True, name="demo-remote-capture").start()
+
+
+def fake_live(cap):
+    """Demo mode: a remote sensor's live frames, made up from the sample frames, while the page keeps the capture open."""
+    import random
+    import threading
+
+    from . import sample_frames
+    kinds = [k for k in sample_frames.samples() if k[0] in cap.radios]
+    if not kinds:
+        return
+
+    def work():
+        rnd = random.Random()
+        seq = 0
+        while cap.open and capture_is_current(cap):
+            for _ in range(rnd.randint(3, 15)):
+                radio, src, raw, meta = rnd.choice(kinds)
+                if radio == "wifi" and raw[int.from_bytes(raw[2:4], "little")] == 0x80:
+                    seq += 1
+                    raw = sample_frames.beacon(seq=seq % 4096, rssi=-45 - rnd.randint(0, 10))
+                cap.add({"ts": round(time.time(), 6), "radio": radio, "src": src, "raw": raw, **meta})
+            time.sleep(0.5)
+    threading.Thread(target=work, daemon=True, name="demo-live").start()
+
+
+def capture_is_current(cap):
+    from . import capture
+    return capture.LIVE_CAPTURES.get(cap.source) is cap

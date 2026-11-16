@@ -107,7 +107,8 @@ class Recorder:
         return self.path
 
     def record(self, radio, src, raw, **meta):
-        """Called by the sensors for every frame; cheap when nothing is being recorded."""
+        """Called by the sensors for every frame (when tapping() says something wants them): for a live view, and for a recording."""
+        LIVE.record(radio, src, raw, meta)
         if not self.active or radio not in self.radios:
             return
         if radio == "wifi":
@@ -133,6 +134,144 @@ class Recorder:
 
 
 RECORDER = Recorder()
+
+
+# ------------------------------------------------------------------ live view
+LIVE_DEFAULT, LIVE_MAX = 60, MAX_SECONDS   # how long a live capture runs: a minute unless chosen otherwise, an hour at most
+LIVE_KEEP = 20_000         # frames kept per live capture for the page (the oldest go first)
+LIVE_IDLE = 30             # seconds without the page asking before a live capture stops (the tab was closed)
+LIVE_REMOTE_HOLD = 15      # seconds a remote sensor keeps sending after the last batch reply that asked for it
+LIVE_SEND_MAX = 3000       # frames a remote sensor sends with one batch (one every 2 s); more are dropped and counted
+LIVE_SENSOR_BUFFER = 6000
+
+
+class LiveTap:
+    """While a live capture is open, hands every frame of the chosen radios to `sink`: on the server to the capture of "local", on a
+    remote sensor to its next batch. The radios only build anything for it while tapping() says so."""
+
+    def __init__(self):
+        self.radios, self.until, self.sink = frozenset(), 0.0, None
+
+    @property
+    def active(self):
+        return self.sink is not None and time.time() < self.until
+
+    def open(self, radios, seconds, sink):
+        self.radios = frozenset(r for r in radios if r in RADIOS)
+        self.sink = sink
+        self.until = time.time() + seconds
+
+    def close(self):
+        self.sink, self.until = None, 0.0
+
+    def record(self, radio, src, raw, meta):
+        sink = self.sink
+        if sink is None or radio not in self.radios or time.time() >= self.until:
+            return
+        if radio == "wifi":
+            raw = trim_wifi(raw)
+        rec = {"ts": round(time.time(), 6), "radio": radio, "src": src, "raw": bytes(raw)}
+        rec.update((k, v) for k, v in meta.items() if v is not None)
+        sink(rec)
+
+
+LIVE = LiveTap()
+
+
+def tapping():
+    """Whether a recording or a live capture wants the frames (the radios ask before they hand any over)."""
+    return RECORDER.active or LIVE.active
+
+
+class LiveCapture:
+    """The frames of one live capture (this server's radios, or a remote sensor's), numbered as they arrive, for the Frames page."""
+
+    def __init__(self, source, radios, seconds):
+        from collections import deque
+        self.source, self.radios = source, list(radios)
+        self.started = time.time()
+        self.until = self.started + seconds
+        self.seen = self.started          # when the page last asked: a closed tab ends the capture
+        self.items = deque(maxlen=LIVE_KEEP)   # [number, frame, summary or None]
+        self.seq = 0
+        self.dropped = 0
+        self.last_frame = None
+        self.lock = threading.Lock()
+
+    @property
+    def open(self):
+        now = time.time()
+        return now < self.until and now - self.seen < LIVE_IDLE
+
+    def ends(self):
+        """When the capture stops if the page stops asking now."""
+        return min(self.until, self.seen + LIVE_IDLE)
+
+    def add(self, rec):
+        with self.lock:
+            self.seq += 1
+            self.items.append([self.seq, rec, None])
+            self.last_frame = time.time()
+
+    def summary(self, entry, vendor=None):
+        if entry[2] is None:
+            s = dis.summarize(entry[1], vendor)
+            s.update(no=entry[0], time=round((entry[1].get("ts") or self.started) - self.started, 6), radio=entry[1]["radio"],
+                     sensor=entry[1].get("src"))
+            entry[2] = {k: s[k] for k in SUMMARY_KEYS if s.get(k) not in (None, "")}
+        return entry[2]
+
+    def after(self, after, pred, limit, vendor=None):
+        """Summaries of the frames numbered after `after` that pass the filter, at most `limit`, and the number of the last frame looked at."""
+        import itertools
+        with self.lock:
+            start = max(0, after - self.items[0][0] + 1) if self.items else 0   # numbers are consecutive: no need to look at older frames
+            entries = list(itertools.islice(self.items, start, None))
+        out, last = [], after
+        for e in entries:
+            last = e[0]
+            s = self.summary(e, vendor)
+            if pred is None or pred(s):
+                out.append(s)
+                if len(out) >= limit:
+                    break
+        return out, last
+
+    def get(self, number):
+        with self.lock:
+            if not self.items:
+                return None
+            i = number - self.items[0][0]
+            return self.items[i] if 0 <= i < len(self.items) else None
+
+
+LIVE_CAPTURES = {}   # source ("local" or a sensor id) -> LiveCapture
+LIVE_LOCK = threading.Lock()
+
+
+def live_request(sid):
+    """For the reply to a remote sensor's batch: which radios to send live, and for how long, while the page has a capture open."""
+    cap = LIVE_CAPTURES.get(sid)
+    if not cap or not cap.open:
+        return None
+    return {"radios": cap.radios, "seconds": round(max(1.0, min(LIVE_REMOTE_HOLD, cap.ends() - time.time())), 1)}
+
+
+def live_ingest(sid, frames, dropped=None):
+    """The frames a remote sensor sent with its batch for the live capture, checked like an uploaded recording."""
+    cap = LIVE_CAPTURES.get(sid)
+    if not cap or not isinstance(frames, list) or time.time() > cap.until + 10:
+        return 0
+    n = 0
+    for rec in frames[:LIVE_SEND_MAX]:
+        clean = clean_record(rec)
+        if clean:
+            clean["raw"] = bytes.fromhex(clean["raw"])
+            cap.add(clean)
+            n += 1
+    if isinstance(dropped, int) and not isinstance(dropped, bool) and 0 <= dropped < 10 ** 9:
+        cap.dropped = max(cap.dropped, dropped)
+    return n
 
 
 # ------------------------------------------------------------------ remote sensors
@@ -216,6 +355,26 @@ def remote_jobs():
         return {sid: dict(job) for sid, job in REMOTE.items()}
 
 
+def clean_record(rec):
+    """One frame from a remote sensor (an uploaded recording, or sent live) with only what a recording holds, or None."""
+    if not isinstance(rec, dict) or rec.get("radio") not in RADIOS or not isinstance(rec.get("raw"), str):
+        return None
+    try:
+        raw = bytes.fromhex(rec["raw"])
+    except ValueError:
+        return None
+    if len(raw) > RAW_MAX:
+        return None
+    ts = rec.get("ts")
+    clean = {"ts": round(float(ts), 6) if isinstance(ts, (int, float)) and not isinstance(ts, bool) and 0 < ts < 4e9 else 0,
+             "radio": rec["radio"], "src": "".join(ch for ch in str(rec.get("src") or "")[:64] if ch.isprintable()), "raw": raw.hex()}
+    for key, lo, hi in (("channel", 0, 300), ("rssi", -200, 50), ("lqi", 0, 255), ("tuned", 0, 100000)):
+        v = rec.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi:
+            clean[key] = v
+    return clean
+
+
 def clean_upload(data, dest):
     """Check a recording a remote sensor uploaded and write it again, line by line, keeping only what a recording holds. Returns how
     many frames it holds. Raises ValueError for anything that is not a recording."""
@@ -229,19 +388,11 @@ def clean_upload(data, dest):
                 if size > MAX_BYTES * 2:
                     raise ValueError("the recording is larger than a recording can be")
                 try:
-                    rec = json.loads(line)
-                    raw = bytes.fromhex(rec["raw"])
-                except (ValueError, KeyError, TypeError):
-                    raise ValueError("the file is not a recording") from None
-                if not isinstance(rec, dict) or rec.get("radio") not in RADIOS or len(raw) > RAW_MAX:
+                    clean = clean_record(json.loads(line))
+                except ValueError:
+                    clean = None
+                if not clean:
                     raise ValueError("the file is not a recording")
-                ts = rec.get("ts")
-                clean = {"ts": round(float(ts), 6) if isinstance(ts, (int, float)) and not isinstance(ts, bool) and 0 < ts < 4e9 else 0,
-                         "radio": rec["radio"], "src": "".join(ch for ch in str(rec.get("src") or "")[:64] if ch.isprintable()), "raw": raw.hex()}
-                for key, lo, hi in (("channel", 0, 300), ("rssi", -200, 50), ("lqi", 0, 255), ("tuned", 0, 100000)):
-                    v = rec.get(key)
-                    if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi:
-                        clean[key] = v
                 out.write(json.dumps(clean, separators=(",", ":")) + "\n")
                 n += 1
         out.close()
@@ -502,6 +653,12 @@ def replay_cli(argv):
     return 0
 
 
+class LiveBody(BaseModel):
+    source: str = Field("local", max_length=32)   # "local" or a remote sensor's id
+    radios: list[str] = Field(default_factory=lambda: list(RADIOS), max_length=4)
+    seconds: int = Field(LIVE_DEFAULT, ge=10, le=LIVE_MAX)
+
+
 class StartBody(BaseModel):
     seconds: int = Field(60, ge=5, le=MAX_SECONDS)
     radios: list[str] = Field(default_factory=lambda: list(RADIOS), max_length=4)
@@ -657,6 +814,110 @@ def routes(ctx):
             raise HTTPException(404, "No such frame")
         s, tree, shown = dis.dissect(loaded.frames[number - 1], number, loaded.first_ts, vendor)
         return {"summary": loaded.summaries[number - 1], "tree": tree, "hex": shown.hex()}
+
+    @r.delete("/api/captures")
+    def delete_all(_=Depends(require_admin)):
+        """Every recording (not one that is being made right now)."""
+        n = 0
+        for f in files():
+            try:
+                os.remove(os.path.join(folder, f["name"]))
+                n += 1
+            except OSError:
+                pass
+        with VIEWS.lock:
+            VIEWS.current, VIEWS.filtered, VIEWS.job = None, {}, None
+        log.info("Deleted all %d recordings", n)
+        return {"deleted": n}
+
+    # ------------------------------------------------------------ live capture
+    @r.post("/api/frames/live")
+    def live_start(body: LiveBody, _=Depends(require_admin)):
+        """Start (or start again) a live capture of this server's radios or a remote sensor's: one minute unless chosen otherwise, an
+        hour at most, and it stops by itself within LIVE_IDLE seconds once the page stops asking (the tab was closed)."""
+        view_blocked()
+        radios = [x for x in body.radios if x in RADIOS]
+        if not radios:
+            raise HTTPException(400, "Choose at least one radio")
+        if body.source != "local":
+            sensor = next((x for x in remote_sensors() if x["id"] == body.source), None)
+            if not sensor:
+                raise HTTPException(404, "No such sensor")
+            if not sensor["online"]:
+                raise HTTPException(409, f"{sensor['name']} is offline")
+        cap = LiveCapture(body.source, radios, body.seconds)
+        with LIVE_LOCK:
+            LIVE_CAPTURES[body.source] = cap
+        if body.source == "local":
+            LIVE.open(radios, LIVE_IDLE, cap.add)
+        if ctx.cfg.demo:   # the demo's radios are simulated: make up the frames they would hear
+            from .demo import fake_live
+            fake_live(cap)
+        return {"ok": True, "until": cap.until}
+
+    def live_of(source):
+        cap = LIVE_CAPTURES.get(source)
+        if not cap:
+            raise HTTPException(404, "No live capture for this source: start one")
+        return cap
+
+    @r.get("/api/frames/live")
+    def live_frames(source: str = "local", after: int = 0, filter: str = "", limit: int = 1000, _=Depends(require_admin)):
+        """The frames that arrived after number `after` (and pass the filter); asking keeps the capture going."""
+        view_blocked()
+        cap = live_of(source)
+        now = time.time()
+        if cap.open:
+            cap.seen = now
+            if source == "local" and LIVE.sink == cap.add:
+                LIVE.until = cap.ends()
+        elif source == "local" and LIVE.sink == cap.add:
+            LIVE.close()
+        try:
+            pred = compile_filter(filter)
+        except FilterError as e:
+            raise HTTPException(400, str(e))
+        items, last = cap.after(max(0, after), pred, max(1, min(limit, 1000)), vendor)
+        return {"items": items, "last": last, "open": cap.open, "started": cap.started, "until": cap.until, "kept": len(cap.items),
+                "total": cap.seq, "dropped": cap.dropped, "last_frame": cap.last_frame, "radios": cap.radios, "now": now}
+
+    @r.get("/api/frames/live/{number}")
+    def live_frame(number: int, source: str = "local", _=Depends(require_admin)):
+        view_blocked()
+        cap = live_of(source)
+        entry = cap.get(number)
+        if not entry:
+            raise HTTPException(404, "That frame is no longer kept")
+        s, tree, shown = dis.dissect(entry[1], number, cap.started, vendor)
+        return {"summary": cap.summary(entry, vendor), "tree": tree, "hex": shown.hex()}
+
+    @r.delete("/api/frames/live")
+    def live_stop(source: str = "local", _=Depends(require_admin)):
+        """Stop it; what was heard stays on the page."""
+        cap = live_of(source)
+        cap.until = min(cap.until, time.time())
+        if source == "local" and LIVE.sink == cap.add:
+            LIVE.close()
+        return {"ok": True}
+
+    @r.post("/api/frames/live/save")
+    def live_save(source: str = "local", _=Depends(require_admin)):
+        """Keep what the live capture holds as a recording (listed with the others, and opened like them)."""
+        cap = live_of(source)
+        with cap.lock:
+            frames = [e[1] for e in cap.items]
+        if not frames:
+            raise HTTPException(400, "Nothing was heard yet")
+        if len(files()) >= MAX_FILES:
+            raise HTTPException(409, f"There are {MAX_FILES} recordings already. Delete some first.")
+        name = time.strftime("capture-%Y%m%d-%H%M%S", time.localtime(cap.started)) + ("" if source == "local" else f"-{source}") + ".jsonl.gz"
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, name)
+        with gzip.open(path + ".part", "wt", encoding="ascii") as f:
+            for rec in frames:
+                f.write(json.dumps({**rec, "raw": bytes(rec["raw"]).hex()}, separators=(",", ":")) + "\n")
+        os.replace(path + ".part", path)
+        return {"name": name, "frames": len(frames)}
 
     @r.delete("/api/captures/{name}")
     def delete(name: str, _=Depends(require_admin)):
