@@ -22,8 +22,17 @@ A recording holds **real addresses and device names**, whatever the privacy sett
 - Recording is refused while MAC address privacy is on.
 - Only share a file with people who may see which devices were near you.
 
-The page records the radios of the server itself. On a **remote sensor**, set `CAPTURE_AT_START=<seconds>` in its environment: it
-then records from the moment it starts, into `captures/` in its data directory on that machine.
+**Record on** chooses the radios of this server or those of a remote sensor (the choice appears once there are remote sensors).
+A remote sensor hears of the request with its next batch, within a few seconds, and records its own radios. While it records,
+it reports how many frames it has; when it is done it sends the file to the server with its own token. The file is listed with
+the sensor's name under **From**, and its name ends in the sensor's id (`capture-20261116-101500-office.jsonl.gz`). The
+server checks what arrives and writes it again, keeping only what a recording holds. A sensor can only send a recording that
+was asked of it.
+
+This needs the sensor to run version 33.2 or newer. An older sensor does not answer the request, and after a minute and a half
+the page says so. On such a sensor, or to record from the moment a sensor starts, set `CAPTURE_AT_START=<seconds>` in its
+environment instead. That recording stays in `captures/` in the sensor's own data directory; copy it to the server's
+`captures/` folder to open it there.
 
 ## Inspecting a recording
 

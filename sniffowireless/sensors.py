@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import adapters, logs, sanitize, status, sysinfo, version
+from . import adapters, capture, logs, sanitize, status, sysinfo, version
 from .sanitize import Name
 from .auth import current_user, require_admin
 
@@ -79,7 +79,7 @@ class Forwarder:
         except (ValueError, AttributeError):
             return
         if isinstance(cmds, list) and cmds:
-            adapters.run_commands(cmds, self.fetch_firmware)
+            adapters.run_commands(cmds, self.fetch_firmware, self.record_for_server)
         if conf and self.on_channel_config:
             try:
                 self.on_channel_config(conf)
@@ -105,6 +105,18 @@ class Forwarder:
         if len(data) > 4 * 1024 * 1024:
             raise ValueError("the firmware image from the server is too large")
         return data
+
+    def record_for_server(self, cmd):
+        """The server asked for a recording of this sensor's radios: record it here, then upload it."""
+        capture.record_for_server(cmd, capture.directory(self.cfg), self.upload_capture)
+
+    def upload_capture(self, path, rid):
+        with open(path, "rb") as f:
+            data = f.read()
+        req = urllib.request.Request(f"{self.cfg.server_url.rstrip('/')}/api/ingest/capture?id={rid}", data=data, method="POST", headers={
+            "Authorization": f"Bearer {self.cfg.sensor_token}", "Content-Type": "application/gzip", "User-Agent": "sniffowireless-sensor"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            r.read()
 
     def _post(self, body):
         """POST one batch to /api/ingest and return the reply. The connection is kept open between batches (one every 2 s),
@@ -155,7 +167,8 @@ class Forwarder:
             lines = logs.HANDLER.since(self.log_cursor, logs.REMOTE_BATCH)  # new log lines, for the server's Logs page
             body = gzip.compress(json.dumps({"sent_at": time.time(), "obs": batch, "status": status.snapshot(),
                                              "dropped": self.dropped, "version": self.version, "system": self._system(),
-                                             "logs": lines, "log_epoch": self.log_epoch}, default=str).encode())
+                                             "logs": lines, "log_epoch": self.log_epoch,
+                                             **({"capture": dict(capture.SENSOR_JOB)} if capture.SENSOR_JOB else {})}, default=str).encode())
             try:
                 reply = self._post(body)
                 self.sent += len(batch)
@@ -323,6 +336,7 @@ def routes(ctx):
                            if isinstance(body.get("status"), list)) if x]
         if isinstance(body.get("status"), list):  # a batch without one leaves the last report as it was
             status.replace_remote(sid, sts, now)
+        capture.remote_progress(sid, body.get("capture"))   # how a recording asked of this sensor is going
         system = sanitize.remote_system(body.get("system"))
         if "system" in body:  # older sensors send none: leave whatever is there to go stale
             status.set_system(sid, system, now)

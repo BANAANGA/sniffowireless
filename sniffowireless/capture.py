@@ -26,7 +26,7 @@ import threading
 import time
 import zlib
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -40,7 +40,11 @@ RADIOS = ("wifi", "bt", "zigbee", "lora")
 MAX_SECONDS = 3600
 MAX_BYTES = 64 * 1024 * 1024      # of frames written (before compression)
 MAX_FILES = 20
-NAME = re.compile(r"^capture-\d{8}-\d{6}\.jsonl\.gz$")
+NAME = re.compile(r"^capture-\d{8}-\d{6}(?:-([a-z0-9][a-z0-9-]{0,31}))?\.jsonl\.gz$")  # the suffix: a remote sensor's id
+REMOTE_UPLOAD_MAX = 48 * 1024 * 1024   # a remote sensor's recording as it arrives (gzip); httpsec.BODY_LIMITS has the same
+REMOTE_START_WAIT = 90     # seconds for a sensor to say it started (it hears of the request with its next batch, every 2 s)
+REMOTE_UPLOAD_WAIT = 600   # and after the recording should have ended, to deliver the file
+RAW_MAX = 4096             # bytes of one frame in an uploaded recording
 
 
 def trim_wifi(raw):
@@ -129,6 +133,127 @@ class Recorder:
 
 
 RECORDER = Recorder()
+
+
+# ------------------------------------------------------------------ remote sensors
+# On a remote sensor: the recording the server asked for, reported with every batch until it has been delivered.
+SENSOR_JOB = {}
+
+
+def record_for_server(cmd, folder, upload):
+    """On a remote sensor: record what the server asked for, then upload the file with this sensor's token and remove it here."""
+    rid = cmd.get("id")
+    if not isinstance(rid, str) or not re.fullmatch(r"[0-9a-f]{16}", rid):
+        return
+    try:
+        seconds = max(1, min(int(cmd.get("seconds") or 60), MAX_SECONDS))
+    except (TypeError, ValueError):
+        seconds = 60
+    radios = [r for r in (cmd.get("radios") or RADIOS) if r in RADIOS] or list(RADIOS)
+
+    def work():
+        SENSOR_JOB.clear()
+        SENSOR_JOB.update(id=rid, state="recording", frames=0, error=None)
+        try:
+            RECORDER.start(folder, seconds, radios)
+            path = RECORDER.path
+            while RECORDER.active and RECORDER.path == path:
+                SENSOR_JOB["frames"] = RECORDER.frames
+                time.sleep(1)
+            SENSOR_JOB.update(state="uploading", frames=RECORDER.frames)
+            for attempt in range(4):
+                try:
+                    upload(path, rid)
+                    break
+                except Exception as e:
+                    if attempt == 3:
+                        raise
+                    log.warning("Uploading the recording to the server failed (%s); trying again", e)
+                    time.sleep(10 * (attempt + 1))
+            os.remove(path)
+            SENSOR_JOB.clear()   # delivered: the server knows it from the upload
+        except Exception as e:
+            log.warning("The recording the server asked for failed: %s", e)
+            SENSOR_JOB.update(state="failed", error=str(e)[:200])
+    threading.Thread(target=work, daemon=True, name="capture-for-server").start()
+
+
+# On the server: the recording asked of each remote sensor, {sensor id: {...}}, kept until the next one.
+REMOTE = {}
+REMOTE_LOCK = threading.Lock()
+
+
+def remote_progress(sid, report):
+    """A batch from a remote sensor said how its recording is going: {"id", "state", "frames", "error"}."""
+    if not isinstance(report, dict):
+        return
+    with REMOTE_LOCK:
+        job = REMOTE.get(sid)
+        if not job or report.get("id") != job["id"] or job["state"] in ("done", "failed"):
+            return
+        state = report.get("state")
+        if state in ("recording", "uploading"):
+            if job["state"] == "requested":
+                job["started"] = time.time()
+            job["state"] = state
+        elif state == "failed":
+            job.update(state="failed", error=str(report.get("error") or "The sensor could not record")[:200])
+        frames = report.get("frames")
+        if isinstance(frames, int) and not isinstance(frames, bool) and 0 <= frames < 10 ** 9:
+            job["frames"] = frames
+
+
+def remote_jobs():
+    """The remote recordings with a state that is up to date: one that took too long has failed."""
+    now = time.time()
+    with REMOTE_LOCK:
+        for job in REMOTE.values():
+            if job["state"] == "requested" and now - job["requested"] > REMOTE_START_WAIT:
+                job.update(state="failed", error="The sensor did not start recording. It may be offline, or run a version older than 33.2 "
+                                                 "(update it, or use CAPTURE_AT_START on that machine).")
+            elif job["state"] in ("recording", "uploading") and now - job.get("started", job["requested"]) > job["seconds"] + REMOTE_UPLOAD_WAIT:
+                job.update(state="failed", error="The recording did not arrive from the sensor.")
+        return {sid: dict(job) for sid, job in REMOTE.items()}
+
+
+def clean_upload(data, dest):
+    """Check a recording a remote sensor uploaded and write it again, line by line, keeping only what a recording holds. Returns how
+    many frames it holds. Raises ValueError for anything that is not a recording."""
+    import io
+    out = gzip.open(dest + ".part", "wt", encoding="ascii")
+    n = size = 0
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(data)) as f:
+            for line in f:
+                size += len(line)
+                if size > MAX_BYTES * 2:
+                    raise ValueError("the recording is larger than a recording can be")
+                try:
+                    rec = json.loads(line)
+                    raw = bytes.fromhex(rec["raw"])
+                except (ValueError, KeyError, TypeError):
+                    raise ValueError("the file is not a recording") from None
+                if not isinstance(rec, dict) or rec.get("radio") not in RADIOS or len(raw) > RAW_MAX:
+                    raise ValueError("the file is not a recording")
+                ts = rec.get("ts")
+                clean = {"ts": round(float(ts), 6) if isinstance(ts, (int, float)) and not isinstance(ts, bool) and 0 < ts < 4e9 else 0,
+                         "radio": rec["radio"], "src": "".join(ch for ch in str(rec.get("src") or "")[:64] if ch.isprintable()), "raw": raw.hex()}
+                for key, lo, hi in (("channel", 0, 300), ("rssi", -200, 50), ("lqi", 0, 255), ("tuned", 0, 100000)):
+                    v = rec.get(key)
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi:
+                        clean[key] = v
+                out.write(json.dumps(clean, separators=(",", ":")) + "\n")
+                n += 1
+        out.close()
+        os.replace(dest + ".part", dest)
+        return n
+    except (OSError, EOFError, zlib.error) as e:
+        raise ValueError(f"the file is not a readable recording ({e})") from None
+    finally:
+        if not out.closed:
+            out.close()
+        if os.path.exists(dest + ".part"):
+            os.remove(dest + ".part")
 
 VIEW_MAX = 200_000   # frames of one recording shown in the inspector (a 64 MB recording holds about 100,000 to 300,000)
 SUMMARY_KEYS = ("no", "time", "radio", "src", "dst", "proto", "len", "info", "rssi", "channel", "color", "type", "ssid", "name", "company", "bssid",
@@ -380,6 +505,7 @@ def replay_cli(argv):
 class StartBody(BaseModel):
     seconds: int = Field(60, ge=5, le=MAX_SECONDS)
     radios: list[str] = Field(default_factory=lambda: list(RADIOS), max_length=4)
+    sensor: str = Field("local", max_length=32)   # "local" (this server's radios) or a remote sensor's id
 
 
 def routes(ctx):
@@ -392,8 +518,13 @@ def routes(ctx):
         except OSError:
             return []
         current = os.path.basename(RECORDER.path) if RECORDER.active else None
-        return [{"name": n, "size": os.path.getsize(os.path.join(folder, n)), "created": os.path.getmtime(os.path.join(folder, n))}
-                for n in names if n != current]
+        return [{"name": n, "size": os.path.getsize(os.path.join(folder, n)), "created": os.path.getmtime(os.path.join(folder, n)),
+                 "sensor": NAME.match(n).group(1)} for n in names if n != current]
+
+    def remote_sensors():
+        now = time.time()
+        return [{"id": x["id"], "name": x["name"] or x["id"], "online": bool(x["last_seen"] and now - x["last_seen"] < 120)}
+                for x in ctx.rows("SELECT id, name, last_seen FROM sensors WHERE id != 'local' ORDER BY name")]
 
     def path_of(name):
         if not NAME.match(name) or not os.path.isfile(os.path.join(folder, name)):
@@ -403,7 +534,14 @@ def routes(ctx):
     @r.get("/api/captures")
     def listing(_=Depends(require_admin)):
         from . import macprivacy
-        return {"active": RECORDER.state(), "files": files(), "max_seconds": MAX_SECONDS, "max_files": MAX_FILES,
+        sensors = remote_sensors()
+        names = {x["id"]: x["name"] for x in sensors}
+        out = files()
+        for f in out:
+            f["sensor_name"] = names.get(f["sensor"], f["sensor"]) if f["sensor"] else None
+        remote = [{"sensor": sid, "sensor_name": names.get(sid, sid), **{k: v for k, v in job.items() if k != "id"}}
+                  for sid, job in remote_jobs().items()]
+        return {"active": RECORDER.state(), "files": out, "max_seconds": MAX_SECONDS, "max_files": MAX_FILES, "sensors": sensors, "remote": remote,
                 "blocked": "MAC address privacy is on: a recording would hold the real addresses" if macprivacy.is_active() else None}
 
     @r.post("/api/captures")
@@ -416,10 +554,60 @@ def routes(ctx):
             raise HTTPException(400, "Choose at least one radio")
         if len(files()) >= MAX_FILES:
             raise HTTPException(409, f"There are {MAX_FILES} recordings already. Delete some first.")
+        if body.sensor != "local":   # a remote sensor: it hears of it with its next batch, records, and uploads the file
+            from . import adapters
+            sensor = next((x for x in remote_sensors() if x["id"] == body.sensor), None)
+            if not sensor:
+                raise HTTPException(404, "No such sensor")
+            if not sensor["online"]:
+                raise HTTPException(409, f"{sensor['name']} is offline")
+            busy = remote_jobs().get(body.sensor)
+            if busy and busy["state"] in ("requested", "recording", "uploading"):
+                raise HTTPException(409, f"{sensor['name']} is recording already")
+            import secrets
+            rid = secrets.token_hex(8)
+            with REMOTE_LOCK:
+                REMOTE[body.sensor] = {"id": rid, "state": "requested", "requested": time.time(), "seconds": body.seconds, "radios": radios,
+                                       "frames": 0, "error": None, "file": None}
+            if ctx.cfg.demo:   # the demo's sensors are simulated: act out what a real one does
+                from .demo import fake_remote_recording
+                fake_remote_recording(ctx.cfg, body.sensor, rid, body.seconds)
+            else:
+                adapters.queue_capture(body.sensor, rid, body.seconds, radios)
+            return {"queued": True, "sensor": body.sensor}
         try:
             return RECORDER.start(folder, body.seconds, radios)
         except RuntimeError as e:
             raise HTTPException(409, str(e))
+
+    @r.post("/api/ingest/capture")
+    async def upload(request: Request, id: str = ""):
+        """A remote sensor delivers the recording the server asked for (sensor tokens only, and only the one asked for)."""
+        u = request.state.user
+        if not u or getattr(u, "scope", None) != "sensor" or not u.sensor_id:
+            raise HTTPException(401, "sensor token required")
+        sid = u.sensor_id
+        with REMOTE_LOCK:
+            job = REMOTE.get(sid)
+            if not job or job["id"] != id or job["state"] in ("done", "failed"):
+                raise HTTPException(409, "No recording was asked of this sensor")
+            job["state"] = "uploading"
+        data = await request.body()
+        if len(data) > REMOTE_UPLOAD_MAX:
+            raise HTTPException(413, "The recording is too large")
+        name = time.strftime("capture-%Y%m%d-%H%M%S", time.localtime(job["requested"])) + f"-{sid}.jsonl.gz"
+        os.makedirs(folder, exist_ok=True)
+        try:
+            from starlette.concurrency import run_in_threadpool
+            n = await run_in_threadpool(clean_upload, data, os.path.join(folder, name))
+        except ValueError as e:
+            with REMOTE_LOCK:
+                job.update(state="failed", error=f"The sensor sent a file that could not be used: {e}")
+            raise HTTPException(400, str(e))
+        with REMOTE_LOCK:
+            job.update(state="done", file=name, frames=n)
+        log.info("Received a recording of %d frames from sensor %s", n, sid)
+        return {"ok": True, "frames": n}
 
     @r.post("/api/captures/stop")
     def stop(_=Depends(require_admin)):

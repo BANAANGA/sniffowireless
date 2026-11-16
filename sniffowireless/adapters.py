@@ -163,6 +163,14 @@ def queue_probe(sid, name, mac, addr_type):
             {"action": "btprobe", "name": name, "mac": mac, "addr_type": addr_type, "at": time.time()}]
 
 
+def queue_capture(sid, rid, seconds, radios):
+    """Ask a remote sensor to record its radios for a while and upload the file (capture.record_for_server)."""
+    with _lock:
+        q = PENDING.setdefault(sid, [])
+        q[:] = [c for c in q if c["action"] != "capture"][-9:] + [
+            {"action": "capture", "name": "capture", "id": rid, "seconds": seconds, "radios": list(radios), "at": time.time()}]
+
+
 def take(sid):
     """The requests waiting for this sensor (handed over once, and only fresh ones)."""
     with _lock:
@@ -183,7 +191,7 @@ def flash_lora(name, image):
     log.info("Updated the firmware of %s", name)
 
 
-def run_commands(cmds, fetch_firmware=None):
+def run_commands(cmds, fetch_firmware=None, record=None):
     """On the sensor: carry out what the server asked for, in a thread (a USB reset can take several seconds, a firmware update
     about a minute). `fetch_firmware()` downloads the image from the server."""
     def work():
@@ -198,6 +206,8 @@ def run_commands(cmds, fetch_firmware=None):
                     if len(image) != c.get("size") or hashlib.sha256(image).hexdigest() != c.get("sha256"):
                         raise ValueError("the firmware image from the server does not match what it announced")
                     flash_lora(c["name"], image)
+                elif c.get("action") == "capture" and record:   # record the radios for the server (capture.record_for_server)
+                    record(c)
                 elif c.get("action") == "btprobe" and NAME_RX.match(c["name"]) and c["name"].startswith("bt:"):
                     from .bluetooth import SENSORS
                     sensor = SENSORS.get(c["name"])

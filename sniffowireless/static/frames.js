@@ -16,7 +16,7 @@
     const filter = params.get('f') || '';
     app.innerHTML = `<div class="page-head"><div><h1>Frames</h1><div class="sub">A recording, frame by frame: what each radio delivered and how it is taken apart.
       Record under <a href="#/settings?tab=capture">Settings → Frame recording</a>.</div></div>
-      ${files.length ? `<div class="row"><select id="fx-file" title="Recording">${files.map(f => `<option value="${esc(f.name)}" ${f.name === file ? 'selected' : ''}>${esc(f.name)} · ${bytes(f.size)}</option>`).join('')}</select>
+      ${files.length ? `<div class="row"><select id="fx-file" title="Recording">${files.map(f => `<option value="${esc(f.name)}" ${f.name === file ? 'selected' : ''}>${esc(f.name)}${f.sensor_name ? ' · ' + esc(f.sensor_name) : ''} · ${bytes(f.size)}</option>`).join('')}</select>
         <a class="btn ghost" href="/api/captures/${enc(file)}" download>Download</a></div>` : ''}</div>
       <div id="fx-root">${files.length ? '<div class="empty">Reading the recording…</div>' : `<div class="callout">There are no recordings yet. ${list.blocked ? esc(list.blocked) + '.' : 'Make one under <a href="#/settings?tab=capture">Settings → Frame recording</a>, then open it here.'}</div>`}</div>`;
     if (!files.length) return;

@@ -850,33 +850,45 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
   },
   async capture(el) {
     const RADIO_NAMES = { wifi: 'Wi-Fi', bt: 'Bluetooth', zigbee: 'Zigbee / Thread', lora: 'LoRa' };
+    const STATES = { requested: 'waiting for the sensor to start', recording: 'recording', uploading: 'sending the file to this server', failed: 'failed', done: 'done' };
     const draw = async () => {
       const c = await api('/api/captures');
       const a = c.active;
+      const busy = c.remote.filter(x => ['requested', 'recording', 'uploading'].includes(x.state));
       el.innerHTML = `<section class="panel"><header><h2>Frame recording</h2></header><div class="body">
-        <p class="muted" style="margin-top:0">Records what this server's own radios hear, exactly as they deliver it, to a file. Open it to go through it frame by frame in
-          <a href="#/frames">Frames</a>, or play the file back with <code>python -m sniffowireless replay FILE</code> to see what the parsers make of it: useful to check identification against real devices and to keep samples for testing.</p>
+        <p class="muted" style="margin-top:0">Records what the radios of this server or of a remote sensor hear, exactly as they deliver it, to a file. Open it to go through it
+          frame by frame in <a href="#/frames">Frames</a>, or play the file back with <code>python -m sniffowireless replay FILE</code> to see what the parsers make of it: useful to check identification against real devices and to keep samples for testing.</p>
         <div class="callout">A recording holds <b>real addresses and device names</b>, whatever the privacy settings are. Of Wi-Fi data frames only the headers are kept, never their contents. Only share a file with people who may see which devices were near you.</div>
         ${c.blocked ? `<div class="callout"><span class="err">${esc(c.blocked)}.</span> Switch it off first, or record on a test setup.</div>` : ''}
-        ${a ? `<p><b>Recording</b> ${esc(a.radios.map(r => RADIO_NAMES[r]).join(', '))} · ${num(a.frames)} frames · stops in ${dur(Math.max(0, Math.round(a.until - Date.now() / 1000)))}</p>
-          <button class="btn" id="cap-stop">Stop now</button>`
-        : `<form id="capf" class="form-narrow"><div class="row">${Object.entries(RADIO_NAMES).map(([k, l]) => `<label class="check"><input type="checkbox" name="r-${k}" checked> ${l}</label>`).join('')}</div>
+        ${a ? `<p><b>This server is recording</b> ${esc(a.radios.map(r => RADIO_NAMES[r]).join(', '))} · ${num(a.frames)} frames · stops in ${dur(Math.max(0, Math.round(a.until - Date.now() / 1000)))}
+          <button class="btn small" id="cap-stop">Stop now</button></p>` : ''}
+        ${c.remote.map(x => `<p class="small-text"><b>${esc(x.sensor_name)}</b>: ${x.state === 'failed' ? `<span class="err">${esc(x.error || 'failed')}</span>`
+          : x.state === 'done' ? `done, ${num(x.frames)} frames${x.file ? ` · <a href="#/frames?file=${enc(x.file)}">Open</a>` : ''}`
+          : `${STATES[x.state]}${x.state === 'recording' ? ` · ${num(x.frames)} frames · ${x.seconds} s in all` : ''}`}</p>`).join('')}
+        <form id="capf" class="form-narrow">
+          ${c.sensors.length ? `<label class="field">Record on<select name="sensor"><option value="local">This server</option>${c.sensors.map(x =>
+            `<option value="${esc(x.id)}" ${x.online ? '' : 'disabled'}>${esc(x.name)}${x.online ? '' : ' (offline)'}</option>`).join('')}</select></label>` : ''}
+          <div class="row">${Object.entries(RADIO_NAMES).map(([k, l]) => `<label class="check"><input type="checkbox" name="r-${k}" checked> ${l}</label>`).join('')}</div>
           <label class="field">For how long<select name="seconds">${[[30, '30 seconds'], [60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour']].map(([v, l]) => `<option value="${v}" ${v === 60 ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <button class="btn primary" ${c.blocked ? 'disabled' : ''}>Start recording</button>
-          <p class="faint small-text">It stops by itself after that time, or at 64 MB. On a remote sensor, start it with <code>CAPTURE_AT_START=&lt;seconds&gt;</code>; the file is then written on that sensor.</p></form>`}
+          <p class="faint small-text">It stops by itself after that time, or at 64 MB. A remote sensor starts within a few seconds and sends the file here when it is done (it needs version 33.2 or newer).</p></form>
         </div></section>
         <section class="panel" style="margin-top:16px"><header><h2>Recordings</h2><span class="faint">${c.files.length} of at most ${c.max_files}</span></header><div class="body flush">${tableHtml(
-          '<th>File</th><th class="num">Size</th><th class="num">Made</th><th></th>',
-          c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
+          '<th>File</th><th>From</th><th class="num">Size</th><th class="num">Made</th><th></th>',
+          c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.sensor_name || 'This server')}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
             <td class="num"><a class="btn small" href="#/frames?file=${enc(f.name)}">Open</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
       const f = el.querySelector('#capf');
-      if (f) f.onsubmit = async e => { e.preventDefault();
-        try { await send('POST', '/api/captures', { seconds: +f.seconds.value, radios: Object.keys(RADIO_NAMES).filter(k => f[`r-${k}`].checked) }); toast('Recording'); } catch (err) { toast(err.message, true); }
+      f.onsubmit = async e => { e.preventDefault();
+        const sensor = f.sensor ? f.sensor.value : 'local';
+        try {
+          const r = await send('POST', '/api/captures', { sensor, seconds: +f.seconds.value, radios: Object.keys(RADIO_NAMES).filter(k => f[`r-${k}`].checked) });
+          toast(r && r.queued ? 'Asked the sensor to record' : 'Recording');
+        } catch (err) { toast(err.message, true); }
         draw(); };
       const stop = el.querySelector('#cap-stop');
       if (stop) stop.onclick = async () => { await send('POST', '/api/captures/stop'); draw(); };
       el.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => { if (!confirm(`Delete ${b.dataset.del}?`)) return; await send('DELETE', `/api/captures/${enc(b.dataset.del)}`); draw(); });
-      if (a) setTimeout(() => { if (el.isConnected && el.querySelector('#cap-stop')) draw(); }, 2000);
+      if (a || busy.length) setTimeout(() => { if (el.isConnected && el.querySelector('#capf')) draw(); }, 2000);
     };
     await draw();
   },

@@ -743,3 +743,28 @@ def sample_recording(cfg):
     if os.path.isdir(folder) and any(capture.NAME.match(n) for n in os.listdir(folder)):
         return None
     return sample_frames.write_recording(os.path.join(folder, time.strftime("capture-%Y%m%d-%H%M%S.jsonl.gz")), count=800)
+
+
+def fake_remote_recording(cfg, sid, rid, seconds):
+    """Demo mode has no real remote sensors: act out what one does when asked to record (start, count frames, deliver a file)."""
+    import os
+    import threading
+
+    from . import capture, sample_frames
+
+    def work():
+        time.sleep(2)
+        capture.remote_progress(sid, {"id": rid, "state": "recording", "frames": 0})
+        end = time.time() + min(seconds, 20)
+        while time.time() < end:
+            time.sleep(1)
+            capture.remote_progress(sid, {"id": rid, "state": "recording", "frames": int((time.time() - end + min(seconds, 20)) * 25)})
+        job = capture.REMOTE.get(sid) or {}
+        if job.get("id") != rid or job.get("state") == "failed":
+            return
+        name = time.strftime("capture-%Y%m%d-%H%M%S", time.localtime(job["requested"])) + f"-{sid}.jsonl.gz"
+        path = sample_frames.write_recording(os.path.join(capture.directory(cfg), name), count=min(seconds, 20) * 25,
+                                             seed=hash(sid) & 0xFFFF)
+        with capture.REMOTE_LOCK:
+            job.update(state="done", file=os.path.basename(path), frames=min(seconds, 20) * 25)
+    threading.Thread(target=work, daemon=True, name="demo-remote-capture").start()
