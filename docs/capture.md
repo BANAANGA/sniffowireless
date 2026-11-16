@@ -5,8 +5,8 @@ changes can be tested against, you can record what the radios hear and play it b
 
 ## Recording
 
-**Settings → Frame recording** (admins only). Choose the radios and how long, and start. It stops by itself after that time or at
-64 MB, whichever comes first; the longest is one hour. Finished recordings are listed there to download or delete (at most 20).
+**Settings → Frame recording** (admins only). Choose the radios and how long (one minute unless you choose otherwise, one hour at most), and start. It
+stops by itself after that time or at 64 MB, whichever comes first. Finished recordings are listed there to download or delete (at most 20).
 
 What is recorded, per frame, exactly as the radio delivered it:
 
@@ -85,6 +85,33 @@ ones on a Raspberry Pi. At most 200,000 frames of one recording are shown.
 
 The page shows the real addresses and bytes, so it cannot be used while MAC address privacy or the anonymised view is on.
 Download the file instead, or switch those off first. In demo mode there is a sample recording with one of each kind of frame.
+
+## Live frames
+
+**Frames → Live** shows what the radios hear right now, as it is heard, in the same three panes and with the same display
+filter as a recording.
+
+- **Radios of:** this server, or a remote sensor.
+- **Which radios** to show, and **for how long:** one minute unless you choose longer, and an hour at most. The capture
+  stops by itself when that time is up.
+- **It also stops** about half a minute after the page is closed, or when its tab is in the background, because the page
+  stops asking for frames. **Stop** ends it straight away.
+- **Follow the newest** keeps the list scrolled to the newest frames. Scroll up to look at one and following pauses; scroll
+  back to the end to resume.
+- **Save as recording** keeps what was heard as a recording. It is listed with the others and opens like them.
+
+The page keeps the newest 5,000 frames and the server the newest 20,000. Of Wi-Fi data frames only the headers are shown,
+as in a recording.
+
+A remote sensor sends its frames with its next uploads, every 2 seconds, so they arrive in small bursts. It sends at most
+3,000 frames per upload. When a busy channel produces more, the rest are dropped, and the page says how many. Live frames
+from a remote sensor need version 33.3 or newer on that sensor; the Android app does not send them yet.
+
+Like inspecting a recording, live frames show the real addresses and bytes, so they are not available while MAC address
+privacy or the anonymised view is on.
+
+**Delete all…** (on the Frames page and under Settings → Frame recording) deletes every recording at once, except one that is
+being made right now.
 
 ## Replaying
 

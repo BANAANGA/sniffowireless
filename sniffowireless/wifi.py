@@ -469,7 +469,7 @@ class WifiSensor:
 
     def _handle(self, pkt):
         self.packets += 1
-        if capture.RECORDER.active:
+        if capture.tapping():
             capture.RECORDER.record("wifi", self.name, getattr(pkt, "original", None) or bytes(pkt), tuned=self.cur_freq)
         try:
             self._measure(pkt)

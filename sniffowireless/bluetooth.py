@@ -529,7 +529,7 @@ class BluetoothSensor:
             now = time.time()
             if r:
                 pkt = self.sock.recv(4096)
-                if capture.RECORDER.active:
+                if capture.tapping():
                     capture.RECORDER.record("bt", self.name, pkt)
                 for ev in parse_event(pkt):
                     self._handle(ev, now)

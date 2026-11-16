@@ -356,7 +356,7 @@ class ZigbeeSensor:
         last_report = [time.monotonic()]
 
         def on_frame(captured):
-            if capture.RECORDER.active:
+            if capture.tapping():
                 capture.RECORDER.record("zigbee", self.name, captured["data"], channel=captured.get("channel"), rssi=captured.get("rssi"), lqi=captured.get("lqi"))
             batch.add(captured)
             self.packets += 1

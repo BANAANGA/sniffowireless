@@ -342,7 +342,7 @@ class LoraSensor:
     def handle_line(self, line):
         rx = parse_rx(line)
         if rx:
-            if capture.RECORDER.active:
+            if capture.tapping():
                 capture.RECORDER.record("lora", self.name, line.encode("ascii", "replace"))
             self.packets += 1
             self.sink.put({"t": "lora_frame", "ts": time.time(), "mac": "-", "profile": self.match(rx), **rx})
