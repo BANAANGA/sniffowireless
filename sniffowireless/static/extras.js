@@ -162,3 +162,41 @@ SETTINGS_VIEWS.backup = async function (el) {
     chooseRestore(f.name, 'upload', info);
   };
 };
+
+/* Co-channel interference between my own access points (cci.py): per band, a matrix of how loud two of my radios are heard together
+   (the weaker of the two, at the sensor that hears both best), where they share a channel, and a channel plan for all of them. */
+async function loadCci(el) {
+  if (!el) return;
+  const r = await api('/api/channels/cci?hours=24');
+  if (!r.radios.length) return;
+  el.hidden = false;
+  const byId = Object.fromEntries(r.radios.map(x => [x.id, x]));
+  const short = x => `${esc(x.ssids[0] || 'hidden')}${x.ssids.length > 1 ? ` +${x.ssids.length - 1}` : ''} <span class="mono faint">${esc(x.bssids[0].slice(-5))}</span>`;
+  const shade = (p) => !p ? '' : `background:color-mix(in srgb, var(--${p.conflict >= 1 ? 'bad' : p.conflict > 0 ? 'warn' : 'ap'}) ${Math.round(15 + 60 * Math.min(1, (p.overlap + 95) / 45))}%, transparent)`;
+  const bands = ['2.4', '5', '6'].filter(b => r.radios.some(x => x.band === b));
+  const matrix = b => {
+    const rs = r.radios.filter(x => x.band === b);
+    if (rs.length < 2) return `<div class="faint small-text">Only one of your radios on ${b} GHz.</div>`;
+    const pair = (a, c) => r.pairs.find(p => (p.a === a.id && p.b === c.id) || (p.a === c.id && p.b === a.id));
+    return `<div class="table-wrap"><table class="cci"><thead><tr><th></th>${rs.map(x => `<th title="${esc(x.label)}">${short(x)}<div class="faint">ch ${x.channel}</div></th>`).join('')}</tr></thead><tbody>
+      ${rs.map(a => `<tr><th title="${esc(a.label)}">${short(a)} <span class="faint">ch ${a.channel}</span></th>${rs.map(c => {
+        if (a.id === c.id) return '<td class="faint">—</td>';
+        const p = pair(a, c);
+        return p ? `<td style="${shade(p)}" title="Heard together at ${esc(p.sensor_name)}: the weaker at ${p.overlap} dBm.${p.same_channel ? ' Same channel: they share its airtime there.' : p.conflict > 0 ? ' Overlapping channels.' : ' Different channels: no conflict.'}">${p.overlap}${p.same_channel ? ' <b>!</b>' : ''}</td>` : '<td></td>';
+      }).join('')}</tr>`).join('')}</tbody></table></div>`;
+  };
+  const plans = bands.map(b => r.plan[b]).filter(Boolean);
+  const changes = bands.flatMap(b => (r.plan[b] && r.plan[b].change ? r.plan[b].radios.filter(x => x.suggested !== x.current).map(x => ({ ...x, band: b })) : []));
+  const shared = r.spots.filter(s => s.mine.length >= 2);
+  el.innerHTML = `<header><h2>Your access points: co-channel interference</h2><span class="faint">two of your radios on one channel share its airtime wherever both are heard at ${r.cca} dBm or stronger</span></header>
+    <div class="body">
+      ${shared.length ? shared.map(s => `<div class="small-text" style="margin:3px 0"><span class="tag warn">shared</span> At <b>${esc(s.sensor_name)}</b>, channel ${s.channel} (${s.band} GHz) is used by ${s.mine.length} of your radios (${s.mine.map(i => short(byId[i])).join(', ')})${s.others ? ` and ${s.others} neighbouring access point${s.others === 1 ? '' : 's'}` : ''}.</div>`).join('')
+        : '<div class="small-text"><span class="tag on">ok</span> None of your radios that are heard together share a channel.</div>'}
+      <div class="grid cols-${Math.min(3, bands.length)}" style="margin-top:10px">${bands.map(b => `<div><h3 class="subhead">${b} GHz</h3>${matrix(b)}</div>`).join('')}</div>
+      <p class="faint small-text">Each cell: the weaker of the two signals where one sensor hears both best. Red: the same channel; amber: overlapping channels. With sensors in several rooms this shows where your access points meet.</p>
+      <h3 class="subhead">Channel plan</h3>
+      ${changes.length ? tableHtml('<th>Radio</th><th>Band</th><th>Now</th><th>Suggested</th>', changes.map(x => `<tr><td>${short(byId[x.id])}</td><td class="muted">${x.band} GHz</td><td>ch ${x.current}</td><td><b>ch ${x.suggested}</b></td></tr>`).join(''))
+        + `<p class="faint small-text">Overlap score of all your radios together: ${plans.map((p, i) => `${bands[i]} GHz ${p.before} → ${p.after}`).join(' · ')} (lower is better). It counts your own radios that are heard together, the neighbours' access points they hear and the measured airtime per channel. Channel widths are not known, so on 5 and 6 GHz radios in the same 80 MHz block count as half a conflict.</p>`
+        : '<div class="small-text"><span class="tag on">ok</span> Your radios are on a good set of channels; no change would help enough to be worth it.</div>'}
+    </div>`;
+}

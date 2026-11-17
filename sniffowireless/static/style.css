@@ -727,3 +727,9 @@ header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
 .fx-live form.row { flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
 .fx-live .field { margin: 0; }
 #fx-live-state { margin-top: 8px; color: var(--muted); }
+
+/* co-channel interference matrix (extras.js loadCci) */
+table.cci { border-collapse: collapse; font-size: 12px; }
+table.cci th, table.cci td { padding: 4px 6px; border: 1px solid var(--border); text-align: center; white-space: nowrap; }
+table.cci tbody th { text-align: left; font-weight: 400; }
+table.cci thead th { font-weight: 400; vertical-align: bottom; }

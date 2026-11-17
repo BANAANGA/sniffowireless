@@ -28,6 +28,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/alerts`, `/api/alert-rules` | Alert history and rules |
 | `GET /api/security` | Findings, my-network BSSIDs, security events |
 | `GET /api/channels?hours=24` | Channel survey and recommendations |
+| `GET /api/channels/cci?hours=24` | Where your access points overlap, which channels they share there, and a channel plan |
 | `GET /api/mynet?days=7` | Health of my networks |
 | `GET /api/map`, `/api/sensors` | Device rooms/positions, sensors |
 | `GET /api/reports/occupancy?days=7` | Occupancy report data |
