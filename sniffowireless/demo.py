@@ -408,6 +408,48 @@ class DemoGenerator:
             info["rnr"] = [{"bssid": mac[:-2] + "f1", "ch": 5, "oc": 131}]
         return info
 
+    def _joins(self, mac, aps, sched, base, t):
+        """The connection steps a sensor on the right channel would hear this minute: a first connection when the client arrives, a
+        roam when it moves to another access point (802.11r on the Ubiquiti ones, else a full 4-way handshake), and the trouble of a
+        few demo clients."""
+        rng = self.rng
+        ap_now = APS[aps[(_h(mac, int(t // 5400)) % len(aps))] if len(aps) > 1 else aps[0]][0]
+        before = t - 60
+        was_here = present(sched, mac, before)
+        ap_before = APS[aps[(_h(mac, int(before // 5400)) % len(aps))] if len(aps) > 1 else aps[0]][0]
+        at = t + rng.uniform(1, 50)
+        rssi = self._rssi(base)
+
+        def step(dt, step, from_ap=False, bssid=ap_now, **kw):
+            return {"t": "join", "ts": at + dt / 1000, "mac": mac, "bssid": bssid, "step": step, "from_ap": from_ap, "rssi": None if from_ap else rssi, **kw}
+
+        def handshake(t0, ok=True):
+            if not ok:   # the visitor typed the password wrong: message 2 never checks out, so message 3 never comes
+                return [step(t0, "m1", True), step(t0 + 4, "m2"), step(t0 + 1004, "m1", True), step(t0 + 1008, "m2"), step(t0 + 2008, "m1", True),
+                        step(t0 + 2012, "m2"), step(t0 + 3012, "deauth", True, code=15)]
+            return [step(t0, "m1", True), step(t0 + 3, "m2"), step(t0 + 7, "m3", True), step(t0 + 9, "m4")]
+
+        if mac == "da:4e:91:01:00:0b" and int(t // 60) % 20 == 3:   # a visitor with the wrong password, now and then
+            return [step(0, "auth", algo=0, seq=1, code=0), step(2, "auth", True, algo=0, seq=2, code=0), step(4, "assoc"),
+                    step(7, "assoc_resp", True, code=0)] + handshake(12, ok=False)
+        if mac == "3e:12:aa:01:00:0c" and int(t // 60) % 45 == 7:   # the neighbour's access point is full
+            return [step(0, "auth", algo=0, seq=1, code=0), step(3, "auth", True, algo=0, seq=2, code=0), step(5, "assoc"),
+                    step(9, "assoc_resp", True, code=17)]
+        if not was_here:
+            return [step(0, "auth", algo=0, seq=1, code=0), step(2, "auth", True, algo=0, seq=2, code=0), step(4, "assoc"),
+                    step(7, "assoc_resp", True, code=0)] + handshake(12)
+        if ap_before != ap_now:
+            ft = ap_now.startswith("24:a4:3c") and ap_before.startswith("24:a4:3c") and mac != "5c:0a:5b:01:00:03"
+            steer = [step(-1500, "btm_req", True, bssid=ap_before), step(-1490, "btm_resp", bssid=ap_before, code=0, detail=ap_now)] \
+                if _h(mac, int(t // 60)) % 3 == 0 else []
+            if ft:
+                return steer + [step(0, "auth", algo=2, seq=1, code=0), step(4, "auth", True, algo=2, seq=2, code=0),
+                                step(7, "reassoc", detail=ap_before), step(13, "reassoc_resp", True, code=0)]
+            slow = 60 + _h(mac, int(t // 60)) % 160
+            return steer + [step(0, "auth", algo=0, seq=1, code=0), step(3, "auth", True, algo=0, seq=2, code=0),
+                            step(6, "reassoc", detail=ap_before), step(10, "reassoc_resp", True, code=0)] + handshake(slow)
+        return []
+
     def observations(self, t):
         rng = self.rng
         out = []
@@ -425,6 +467,7 @@ class DemoGenerator:
             ap_i = aps[(_h(mac, int(t // 5400)) % len(aps))] if len(aps) > 1 else aps[0]
             bssid = APS[ap_i][0]
             fp = WIFI_FPS.get(mac)
+            out += self._joins(mac, aps, sched, base, t)
             for n in range(rng.randint(2, 6)):
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "bssid": bssid,
                             "frame": "data", "rssi": self._rssi(base), **_radio(APS[ap_i][2]), "vendor": vendor,
@@ -523,7 +566,7 @@ class DemoGenerator:
         seen = set()
         for o in out:
             mac = o.get("mac")
-            if o.get("rssi") is None or mac in seen or (mac not in FIXED_ROOMS and mac not in MOBILE):
+            if o.get("rssi") is None or o["t"] not in ("wifi_ap", "wifi_client", "bt") or mac in seen or (mac not in FIXED_ROOMS and mac not in MOBILE):
                 continue
             seen.add(mac)
             room = room_of(mac, t)

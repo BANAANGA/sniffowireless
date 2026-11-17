@@ -41,6 +41,7 @@
   - **sticky clients** (connected below −75 dBm while another of your APs is available)
   - clients capable of 5 GHz that sit on 2.4 GHz
   - disconnect reasons (timeouts vs. deauth reason codes)
+  - **connections & roaming:** failed connection attempts by cause, and every roam with its method and duration (see [Connections and roaming](#connections-and-roaming))
 - **Channels:** for each channel the sensor hops over:
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
@@ -48,6 +49,49 @@
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
+
+### Connections and roaming
+
+"Why can't this device connect?" Before a client can send data it goes through a fixed sequence of frames. All of them are sent
+before the keys are in place, so a sensor nearby can read them:
+
+1. **Authentication:** Open, SAE (WPA3) or Fast BSS Transition (802.11r)
+2. **(Re)association:** with a status code in the response
+3. **802.1X / EAP** on enterprise networks: the EAP method, then EAP-Success or EAP-Failure
+4. **4-way handshake:** EAPOL-Key messages 1 to 4
+
+Deauthentication and disassociation (with their reason codes), 802.11v BSS transition requests and responses, and 802.11k
+neighbour reports are read too. A Wi-Fi sensor picks these steps out of every frame it hears; only the step, the addresses, the
+codes and the time are kept, nothing of the keys. At most 60 steps per client per 10 seconds are kept, so a deauthentication
+flood does not fill the database.
+
+The server groups a client's steps into **attempts**: one connection to one access point, from the first step to the end of the
+4-way handshake, or to the step that failed. The step that failed is named and explained:
+
+| What is heard | Cause |
+|---|---|
+| Message 1 and 2 again and again, never message 3, then a deauthentication | **Wrong password**: the client's message 2 does not check out against the network's password |
+| Message 1 again and again, no answer | The client did not answer the handshake (out of range, or its supplicant gave up) |
+| Association response with status 17 | Access point full |
+| Status 31 / 30 | Management frame protection (PMF) settings do not match / try again later |
+| Status 13 / 43 | The client asked for an authentication or key management method the network does not offer (e.g. WPA3 on a WPA2 network) |
+| EAP-Failure | 802.1X login rejected: wrong credentials, an untrusted or expired certificate, or a RADIUS policy |
+| A deauthentication during the attempt | Its reason code, with an explanation |
+
+An attempt that was only partly heard is marked *incomplete*.
+
+A **roam** is a reassociation to another access point while the client was connected to another one less than an hour before.
+Its duration is the time from the first frame to the access point it moves to, until the connection is complete. Each roam shows
+its method (FT for 802.11r, else the 4-way handshake that follows the reassociation; 802.1X when a full EAP login was needed)
+and whether the access point steered it with an 802.11v BSS transition request. Under 50 ms is *fast*, up to 150 ms *ok*, and
+anything slower can be heard as a gap in a call.
+
+A client's device page lists its attempts step by step (with the time of each step), its roams and its disconnects for the last
+7 days. *My networks* sums them up for your access points: attempts, failures by cause, the roams and their median time.
+
+A sensor that hops channels hears only part of a connection, because it is on another channel most of the time. Set a sensor to
+the channel of the access point you are troubleshooting (Settings → Wi-Fi channels) to hear all of it. The same frame heard by two
+sensors within 0.25 s is kept once. Remote sensors need release 34 or newer.
 - **Settings:** grouped in the left-hand list, each page with an icon and a one-line description at the top. *Find a setting…* filters the list by name, description and related words (e.g. *email*, *2fa*, *home assistant*); Enter opens the first match. On a phone the list becomes a drop-down.
   - **You:** account (password, two-factor login, display on this browser)
   - **Monitoring:** my networks, investigations, ignore list, detection thresholds
