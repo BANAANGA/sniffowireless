@@ -114,6 +114,31 @@ privacy or the anonymised view is on.
 **Delete all…** (on the Frames page and under Settings → Frame recording) deletes every recording at once, except one that is
 being made right now.
 
+## Recording automatically
+
+**Settings → Frame recording → Record automatically** starts a recording by itself when an event happens, so you get the frames of a
+problem without being there when it happens. Choose:
+
+- **When:** the events. For example:
+  - a client failed to connect to your network
+  - a slow roam
+  - a deauthentication flood or a broadcast deauthentication
+  - a handshake-capture attack, a rogue or KARMA access point
+  - interference, radar
+  - an access point restart, a disconnect, a cloned address, a scanner
+- **On:** this server and remote sensors.
+- **The radios.**
+- **Seconds before** (up to 120), **seconds after** (10–600), and how long to **wait** before the next one (at least a minute).
+
+While it is on, the chosen sensors keep the last seconds of frames of those radios in memory (Wi-Fi data frames with their
+headers only, as in a recording). A remote sensor is told so with each reply to its uploads, and lets go a minute after the
+server stops saying so. When a chosen event happens, each sensor writes those seconds to a new recording and goes on recording
+for the seconds after. A remote sensor sends the file here when it is done, as for any recording. The recording is listed with
+the others, with the event that started it. *Recently* shows the last events that started one, and what was recorded or why not.
+
+Like any recording, nothing is kept or recorded while MAC address privacy is on, and nothing is started when there are 20
+recordings already. Remote sensors need release 35 for the seconds before. The Android app records the seconds after only.
+
 ## Wireshark: pcapng export and import
 
 **pcapng** (next to Download, on the Frames page and under Settings → Frame recording) saves a recording as a pcapng file that

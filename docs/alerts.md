@@ -31,6 +31,18 @@ LoRa and Zigbee have their own events, usable in rules with the target *any* (th
 
 Use **Send test** to check a channel. Secrets are never sent back to the browser.
 
+## Connections and roams on my networks
+
+Two events come from the connection steps a Wi-Fi sensor hears (see [Connections and roaming](ui.md#connections-and-roaming)),
+for the access points of your networks (Settings → My networks; all access points when none are set):
+
+| Event | Raised when |
+|---|---|
+| `connection_failed` | A client's connection failed: authentication or association refused (with the status), 802.1X rejected (EAP-Failure), or a deauthentication with reason 15 (4-way handshake timeout, often a wrong password), 23 (802.1X failed) or 14 (MIC failure) before it was complete. At most once per client per 5 minutes. |
+| `roam_slow` | A client roamed (a reassociation to another access point of yours, within an hour of the last connection) and it took 150 ms or longer until the connection was complete. |
+
+Both can start an alert rule, and a recording (see [Recording automatically](capture.md#recording-automatically)).
+
 ## Unusual activity (baseline)
 
 Once an hour the hour that just ended is compared with what is normal here, from the history that is already stored. Three events

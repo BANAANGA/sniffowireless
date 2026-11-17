@@ -74,7 +74,8 @@ class Recorder:
         self.frames, self.size = 0, 0
         self.counts = {}
 
-    def start(self, directory, seconds, radios=RADIOS):
+    def start(self, directory, seconds, radios=RADIOS, pre=()):
+        """Record for `seconds`; `pre`: frames heard before (from PREBUF) to start the file with."""
         seconds = max(1, min(int(seconds), MAX_SECONDS))
         os.makedirs(directory, exist_ok=True)
         with self.lock:
@@ -86,6 +87,13 @@ class Recorder:
             self.radios, self.started, self.until = set(radios) & set(RADIOS), now, now + seconds
             self.frames = self.size = 0
             self.counts = {}
+            for rec in pre:
+                if rec["radio"] in self.radios:
+                    line = json.dumps({**rec, "raw": bytes(rec["raw"]).hex()}, separators=(",", ":"))
+                    self.file.write(line + "\n")
+                    self.frames += 1
+                    self.counts[rec["radio"]] = self.counts.get(rec["radio"], 0) + 1
+                    self.size += len(line) + 1
             self.active = True
         threading.Thread(target=self._watch, daemon=True, name="capture").start()
         log.info("Recording %s to %s for %d s", ", ".join(sorted(self.radios)), self.path, seconds)
@@ -101,17 +109,19 @@ class Recorder:
         with self.lock:
             if not self.active:
                 return None
-            self.active = False
-            try:
+            try:   # close the file first: whoever sees `active` turn false may read it at once (a remote sensor uploads it)
                 self.file.close()
             finally:
                 self.file = None
+                self.active = False
         log.info("Recording stopped: %d frames in %s", self.frames, self.path)
         return self.path
 
     def record(self, radio, src, raw, **meta):
-        """Called by the sensors for every frame (when tapping() says something wants them): for a live view, and for a recording."""
+        """Called by the sensors for every frame (when tapping() says something wants them): for a live view, the buffer a
+        triggered recording starts with, and a recording."""
         LIVE.record(radio, src, raw, meta)
+        PREBUF.add(radio, src, raw, meta)
         if not self.active or radio not in self.radios:
             return
         if radio == "wifi":
@@ -181,9 +191,56 @@ class LiveTap:
 LIVE = LiveTap()
 
 
+class PreBuffer:
+    """While automatic recording is armed (triggers.py), the last `seconds` of frames of the chosen radios, so that a recording
+    a trigger starts also holds what led up to it. On a remote sensor the server arms it with its batch replies."""
+    MAX = 100_000
+
+    def __init__(self):
+        from collections import deque
+        self.lock = threading.Lock()
+        self.items = deque(maxlen=self.MAX)
+        self.radios, self.seconds, self.until = frozenset(), 0, 0.0
+
+    @property
+    def active(self):
+        return bool(self.radios) and time.time() < self.until
+
+    def arm(self, radios, seconds, hold=float("inf")):
+        with self.lock:
+            self.radios = frozenset(r for r in radios if r in RADIOS)
+            self.seconds = max(0, min(int(seconds), 120))
+            self.until = time.time() + hold
+            if not self.radios:
+                self.items.clear()
+
+    def disarm(self):
+        with self.lock:
+            self.radios, self.until = frozenset(), 0.0
+            self.items.clear()
+
+    def add(self, radio, src, raw, meta):
+        if radio not in self.radios or time.time() >= self.until:
+            return
+        now = time.time()
+        rec = {"ts": round(now, 6), "radio": radio, "src": src, "raw": bytes(trim_wifi(raw) if radio == "wifi" else raw)}
+        rec.update((k, v) for k, v in meta.items() if v is not None)
+        with self.lock:
+            self.items.append(rec)
+            while self.items and self.items[0]["ts"] < now - self.seconds:
+                self.items.popleft()
+
+    def since(self, t):
+        with self.lock:
+            return [r for r in self.items if r["ts"] >= t]
+
+
+PREBUF = PreBuffer()
+
+
 def tapping():
-    """Whether a recording or a live capture wants the frames (the radios ask before they hand any over)."""
-    return RECORDER.active or LIVE.active
+    """Whether a recording, a live capture or an armed trigger wants the frames (the radios ask before they hand any over)."""
+    return RECORDER.active or LIVE.active or PREBUF.active
 
 
 class LiveCapture:
@@ -292,12 +349,13 @@ def record_for_server(cmd, folder, upload):
     except (TypeError, ValueError):
         seconds = 60
     radios = [r for r in (cmd.get("radios") or RADIOS) if r in RADIOS] or list(RADIOS)
+    pre = cmd.get("pre") if isinstance(cmd.get("pre"), int) and 0 < cmd.get("pre") <= 120 else 0   # a trigger: the frames before it too
 
     def work():
         SENSOR_JOB.clear()
         SENSOR_JOB.update(id=rid, state="recording", frames=0, error=None)
         try:
-            RECORDER.start(folder, seconds, radios)
+            RECORDER.start(folder, seconds, radios, pre=PREBUF.since(time.time() - pre) if pre else ())
             path = RECORDER.path
             while RECORDER.active and RECORDER.path == path:
                 SENSOR_JOB["frames"] = RECORDER.frames
@@ -356,6 +414,32 @@ def remote_jobs():
             elif job["state"] in ("recording", "uploading") and now - job.get("started", job["requested"]) > job["seconds"] + REMOTE_UPLOAD_WAIT:
                 job.update(state="failed", error="The recording did not arrive from the sensor.")
         return {sid: dict(job) for sid, job in REMOTE.items()}
+
+
+def remote_name(requested, sid):
+    """The name a remote sensor's recording gets when it arrives (the time it was asked for, and the sensor)."""
+    return time.strftime("capture-%Y%m%d-%H%M%S", time.localtime(requested)) + f"-{sid}.jsonl.gz"
+
+
+def ask_remote(ctx, sid, seconds, radios, pre=0):
+    """Ask remote sensor `sid` to record (it hears of it with its next batch) and upload the file. Returns the name the file will
+    have. RuntimeError when it is recording already."""
+    from . import adapters
+    import secrets
+    busy = remote_jobs().get(sid)
+    if busy and busy["state"] in ("requested", "recording", "uploading"):
+        raise RuntimeError("recording already")
+    rid = secrets.token_hex(8)
+    now = time.time()
+    with REMOTE_LOCK:
+        REMOTE[sid] = {"id": rid, "state": "requested", "requested": now, "seconds": seconds, "radios": radios,
+                       "frames": 0, "error": None, "file": None}
+    if ctx.cfg.demo:   # the demo's sensors are simulated: act out what a real one does
+        from .demo import fake_remote_recording
+        fake_remote_recording(ctx.cfg, sid, rid, seconds)
+    else:
+        adapters.queue_capture(sid, rid, seconds, radios, pre)
+    return remote_name(now, sid)
 
 
 def clean_record(rec):
@@ -740,8 +824,12 @@ def routes(ctx):
         sensors = remote_sensors()
         names = {x["id"]: x["name"] for x in sensors}
         out = files()
+        from .triggers import read_index
+        started = read_index(ctx)
         for f in out:
             f["sensor_name"] = names.get(f["sensor"], "Imported file" if f["sensor"] == IMPORTED else f["sensor"]) if f["sensor"] else None
+            if f["name"] in started:   # started by an event (automatic recording)
+                f["trigger"] = started[f["name"]]
         remote = [{"sensor": sid, "sensor_name": names.get(sid, sid), **{k: v for k, v in job.items() if k != "id"}}
                   for sid, job in remote_jobs().items()]
         return {"active": RECORDER.state(), "files": out, "max_seconds": MAX_SECONDS, "max_files": MAX_FILES, "sensors": sensors, "remote": remote,
@@ -758,25 +846,15 @@ def routes(ctx):
         if len(files()) >= MAX_FILES:
             raise HTTPException(409, f"There are {MAX_FILES} recordings already. Delete some first.")
         if body.sensor != "local":   # a remote sensor: it hears of it with its next batch, records, and uploads the file
-            from . import adapters
             sensor = next((x for x in remote_sensors() if x["id"] == body.sensor), None)
             if not sensor:
                 raise HTTPException(404, "No such sensor")
             if not sensor["online"]:
                 raise HTTPException(409, f"{sensor['name']} is offline")
-            busy = remote_jobs().get(body.sensor)
-            if busy and busy["state"] in ("requested", "recording", "uploading"):
+            try:
+                ask_remote(ctx, body.sensor, body.seconds, radios)
+            except RuntimeError:
                 raise HTTPException(409, f"{sensor['name']} is recording already")
-            import secrets
-            rid = secrets.token_hex(8)
-            with REMOTE_LOCK:
-                REMOTE[body.sensor] = {"id": rid, "state": "requested", "requested": time.time(), "seconds": body.seconds, "radios": radios,
-                                       "frames": 0, "error": None, "file": None}
-            if ctx.cfg.demo:   # the demo's sensors are simulated: act out what a real one does
-                from .demo import fake_remote_recording
-                fake_remote_recording(ctx.cfg, body.sensor, rid, body.seconds)
-            else:
-                adapters.queue_capture(body.sensor, rid, body.seconds, radios)
             return {"queued": True, "sensor": body.sensor}
         try:
             return RECORDER.start(folder, body.seconds, radios)
@@ -798,7 +876,7 @@ def routes(ctx):
         data = await request.body()
         if len(data) > REMOTE_UPLOAD_MAX:
             raise HTTPException(413, "The recording is too large")
-        name = time.strftime("capture-%Y%m%d-%H%M%S", time.localtime(job["requested"])) + f"-{sid}.jsonl.gz"
+        name = remote_name(job["requested"], sid)
         os.makedirs(folder, exist_ok=True)
         try:
             from starlette.concurrency import run_in_threadpool

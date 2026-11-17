@@ -16,6 +16,7 @@ on another access point of the same network soon after an earlier one is a roam,
 
 A sensor that hops channels hears only part of a connection; one that stays on the channel of the access point hears all of it.
 """
+import logging
 import struct
 import threading
 import time
@@ -24,6 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .auth import current_user
 from .dissect import AUTH_ALGOS, REASONS, STATUSES
+
+log = logging.getLogger("sniffowireless.joins")
 
 EAP_TYPES = {1: "Identity", 4: "MD5", 13: "EAP-TLS", 17: "LEAP", 18: "EAP-SIM", 21: "EAP-TTLS", 23: "EAP-AKA", 25: "PEAP", 26: "MSCHAPv2",
              43: "EAP-FAST", 50: "EAP-AKA'", 52: "EAP-pwd", 55: "TEAP"}
@@ -186,6 +189,8 @@ class JoinCollector:
         self.ctx = ctx
         ctx.store.conn.executescript(SCHEMA)
         self.pending, self.recent = [], {}
+        self.attempt, self.last_ok, self.failed = {}, {}, {}
+        self._mine_set, self._mine_at = None, 0.0
 
     def observe(self, store, o, dev):
         if o["t"] != "join":
@@ -197,8 +202,62 @@ class JoinCollector:
         if len(self.recent) > 20000:
             self.recent.clear()
         self.recent[key] = o["ts"]
+        try:
+            self._events(store, o)
+        except Exception:
+            log.debug("Could not judge a connection step", exc_info=True)
         self.pending.append((o["ts"], o["mac"], o.get("bssid"), o["step"], o.get("code"), o.get("algo"), o.get("seq"), o.get("detail"),
                              1 if o.get("from_ap") else 0, o.get("rssi"), o.get("sensor") or "local"))
+
+    def _mine(self):
+        """My networks' BSSIDs (all access points when none are set), looked up at most once a minute."""
+        now = time.time()
+        if now - self._mine_at > 60:
+            n = self.ctx.settings.get("networks")
+            trusted = set(n["trusted_bssids"])
+            self._mine_set = {r["mac"] for r in self.ctx.rows(f"SELECT mac FROM devices WHERE kind='ap' AND ssid IN ({','.join('?' * len(n['ssids']))})",
+                                                               n["ssids"]) if not trusted or r["mac"] in trusted} if n["ssids"] else None
+            self._mine_at = now
+        return self._mine_set
+
+    def _events(self, store, o):
+        """Events while the steps arrive: a connection to my network that failed, and a slow roam on it (alerts and triggers.py
+        act on them). The full picture is worked out when it is asked for (attempts())."""
+        mac, bssid, st, code, ts = o["mac"], o.get("bssid"), o["step"], o.get("code"), o["ts"]
+        mine = self._mine()
+        if mine is not None and bssid not in mine:
+            return
+        a = self.attempt.get(mac)
+        if st in ("auth", "assoc", "reassoc") and not o.get("from_ap") and (not a or a["bssid"] != bssid or ts - a["last"] > GAP or a["done"]):
+            a = self.attempt[mac] = {"bssid": bssid, "start": ts, "last": ts, "reassoc": False, "ft": False, "done": False}
+            if len(self.attempt) > 20000:
+                self.attempt.clear()
+        if a and a["bssid"] == bssid:
+            a["last"] = ts
+            a["reassoc"] |= st == "reassoc"
+            a["ft"] |= st == "auth" and o.get("algo") == 2
+        why = None
+        if st in ("assoc_resp", "reassoc_resp", "auth") and o.get("from_ap") and code:
+            why = f"{'authentication' if st == 'auth' else 'association'} refused: {STATUSES.get(code, f'status {code}')}"
+        elif st == "eap_failure":
+            why = "802.1X login rejected"
+        elif st in ("deauth", "disassoc") and code in (14, 15, 23) and a and not a["done"]:
+            why = {15: "4-way handshake timed out (often a wrong password)", 23: "802.1X authentication failed", 14: "MIC failure"}[code]
+        if why:
+            if a:
+                a["done"] = True
+            if ts - self.failed.get(mac, 0) >= 300:   # one event per client per 5 minutes
+                self.failed[mac] = ts
+                store._event(ts, mac, "connection_failed", bssid, why, always=True)
+            return
+        ok = st == "m4" or (st == "reassoc_resp" and not code and a and a["ft"])
+        if ok and a and not a["done"]:
+            a["done"] = True
+            prev = self.last_ok.get(mac)
+            self.last_ok[mac] = (bssid, ts)
+            ms = (ts - a["start"]) * 1000
+            if prev and prev[0] != bssid and a["reassoc"] and ts - prev[1] <= ROAM_WITHIN and ms >= 150:
+                store._event(ts, mac, "roam_slow", bssid, f"{ms:.0f} ms from {prev[0]} to {bssid}" + (" (802.11r)" if a["ft"] else ""), always=True)
 
     def flush(self, store, c):
         if self.pending:

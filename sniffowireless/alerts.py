@@ -56,13 +56,16 @@ EVENT_TYPES = {
     "watched_silent": "Watched LoRa node / Zigbee radio went silent", "watched_back": "Watched LoRa node / Zigbee radio is back",
     "activity_unusual": "Far more devices than usual for this hour", "unusual_time": "A known device at an hour it is never here",
     "vendor_new": "First device ever from a maker",
+    "connection_failed": "A client failed to connect to my network (wrong password, AP full, ...)",
+    "roam_slow": "A roam on my network took longer than 150 ms",
 }
 SEVERITY = {"rogue_ap": "high", "ap_clock_conflict": "high", "deauth_flood": "high", "karma_ap": "high", "security_finding": "medium",
             "rogue_dhcp": "high", "arp_spoof": "high", "tracker_following": "high", "interference": "medium",
             "deauth_broadcast": "medium", "new_device": "low", "dfs_radar": "medium", "fingerprint_changed": "medium",
             "handshake_attack": "high", "ap_downgrade": "high", "probe_scan": "medium", "mac_duplicate": "medium",
             "lora_flood": "medium", "lora_join_flood": "medium", "lora_fcnt_reset": "medium", "zigbee_permit_join": "medium",
-            "watched_silent": "medium", "activity_unusual": "medium", "unusual_time": "medium", "vendor_new": "low"}
+            "watched_silent": "medium", "activity_unusual": "medium", "unusual_time": "medium", "vendor_new": "low",
+            "connection_failed": "medium", "roam_slow": "low"}
 NOTIFIER_TYPES = {
     "ntfy": ["url", "topic", "token", "priority"],
     "telegram": ["bot_token", "chat_id"],
@@ -206,6 +209,7 @@ def describe(ev, dev, meta, group, time_fmt="%H:%M:%S"):
         "moved": f"{name} moved", "rogue_ap": f"Rogue access point: {ev.get('detail') or name}", "ap_clock_conflict": f"Cloned access point address: {name}",
         "deauth_flood": "Deauthentication flood detected", "karma_ap": f"KARMA access point {ev['mac']}",
         "deauth_broadcast": f"Broadcast deauth from {name}", "security_finding": f"Security: {ev.get('detail')}",
+        "connection_failed": f"{name} could not connect: {ev.get('detail')}", "roam_slow": f"Slow roam of {name}: {ev.get('detail')}",
         "rogue_dhcp": f"Rogue DHCP server {ev['mac']}", "arp_spoof": f"ARP spoofing by {name}",
         "tracker_following": f"{ev.get('detail') or 'Unknown tracker following someone'}",
         "interference": f"Interference: {ev.get('detail')}",

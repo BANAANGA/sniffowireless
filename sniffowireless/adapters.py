@@ -163,12 +163,14 @@ def queue_probe(sid, name, mac, addr_type):
             {"action": "btprobe", "name": name, "mac": mac, "addr_type": addr_type, "at": time.time()}]
 
 
-def queue_capture(sid, rid, seconds, radios):
-    """Ask a remote sensor to record its radios for a while and upload the file (capture.record_for_server)."""
+def queue_capture(sid, rid, seconds, radios, pre=0):
+    """Ask a remote sensor to record its radios for a while and upload the file (capture.record_for_server); `pre`: seconds of
+    frames from before, out of the buffer an armed trigger keeps (triggers.py)."""
     with _lock:
         q = PENDING.setdefault(sid, [])
         q[:] = [c for c in q if c["action"] != "capture"][-9:] + [
-            {"action": "capture", "name": "capture", "id": rid, "seconds": seconds, "radios": list(radios), "at": time.time()}]
+            {"action": "capture", "name": "capture", "id": rid, "seconds": seconds, "radios": list(radios), "at": time.time(),
+             **({"pre": int(pre)} if pre else {})}]
 
 
 def take(sid):

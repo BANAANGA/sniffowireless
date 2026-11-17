@@ -78,6 +78,7 @@ class Forwarder:
             parsed = json.loads(reply)
             conf, cmds, lora = parsed.get("channel_config"), parsed.get("commands"), parsed.get("lora_config")
             self._live_config(parsed.get("live"))
+            self._arm_config(parsed.get("arm"))
             zigbee = parsed.get("zigbee_config")
         except (ValueError, AttributeError):
             return
@@ -125,6 +126,18 @@ class Forwarder:
         elif capture.LIVE.sink is not None:
             capture.LIVE.close()
             self.live.clear()
+
+    def _arm_config(self, arm):
+        """The server's reply says whether automatic recording is armed on this sensor: keep the last seconds of frames, so a
+        recording a trigger asks for holds what led up to it. Without a word from the server for a minute, it lets go."""
+        if isinstance(arm, dict) and isinstance(arm.get("radios"), list):
+            try:
+                seconds = max(1, min(int(arm.get("seconds") or 30), 120))
+            except (TypeError, ValueError):
+                seconds = 30
+            capture.PREBUF.arm(arm["radios"], seconds, hold=60)
+        elif capture.PREBUF.radios:
+            capture.PREBUF.disarm()
 
     def _live_batch(self):
         """The live frames for this batch (at most LIVE_SEND_MAX; the rest wait, and what didn't fit in the buffer is counted)."""
@@ -382,6 +395,10 @@ def routes(ctx):
         live = capture.live_request(sid)
         if live:   # the Frames page has a live capture of this sensor open: send its frames with the next batches
             reply["live"] = live
+        from . import triggers
+        arm = triggers.arm_request(ctx, sid)
+        if arm:    # automatic recording includes this sensor: keep the last seconds of frames
+            reply["arm"] = arm
         cmds = adapters.take(sid)
         if cmds:  # an admin asked for an adapter of this sensor to be reset
             reply["commands"] = cmds
