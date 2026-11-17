@@ -48,6 +48,7 @@
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
+  - **who uses the airtime:** per channel, the share each client and access point takes with its data frames, and the slow ones (see [Who uses the airtime](#who-uses-the-airtime))
   - **co-channel interference** between your own access points, and a channel plan for all of them (see [Co-channel interference](#co-channel-interference))
 
   - **Beacon overhead:** per channel, the share of the airtime beacons alone take, with the number of BSSIDs, SSIDs, radios and beacons per second; a row opens the access points behind it (see [Beacon overhead](#beacon-overhead))
@@ -278,3 +279,22 @@ The Channels page shows, for your networks (Settings → My networks):
 The BSSIDs of one radio (one per SSID, differing in the last digit) count as one radio. The channel widths an access point uses
 are not known from what is heard, which is why the same 80 MHz block counts as half a conflict. With one sensor, the overlaps
 are those at that one spot.
+
+## Who uses the airtime
+
+One slow device can take more of a channel than all the fast ones together: a frame sent at 1 Mb/s takes a hundred times
+as long as the same frame at 100 Mb/s. The Channels page shows, per channel, how much of the time a sensor listened there
+each device's data frames were on the air:
+
+- **Clients:** what they sent.
+- **Access points:** what they sent to their clients, plus their beacons.
+
+The time per frame comes from its size and the rate it went at (see [Link quality](#link-quality)), with the preamble of its
+kind of PHY. The share is that time divided by the time the sensors listened on the channel. A row opens the devices of that
+channel, the largest first. A device that takes 5 % or more at a median rate of 24 Mb/s or less is called **slow**, with what
+the same data would take at 100 Mb/s. For a client that means a weak signal or an old radio; for an access point, clients that
+are far away or old, or low basic rates.
+
+*All airtime* is everything the sensor measured on the channel (management frames and other networks included), so the
+devices' data is a part of it. Sensors before release 35 do not count frame sizes; 600 bytes per frame is assumed for their
+data, marked with a `?`.

@@ -240,6 +240,7 @@ def remote_observation(o, now):
         r = {"t": t, "ts": ts, "mac": mac, "bssid": bssid, "dir": o["dir"]}
         for k in ("frames", "retries", "rssi_n"):
             r[k] = clean_num(o.get(k), 0, 10 ** 9, True) or 0
+        r["bytes"] = clean_num(o.get("bytes"), 0, 10 ** 13, True) or 0
         r["rssi_sum"] = clean_num(o.get("rssi_sum"), -200 * 10 ** 9, 0, True) or 0
         for k, keep in (("rates", lambda x: clean_num(x, 0.1, 100000) is not None), ("mcs", lambda x: len(x) <= 24 and x.isprintable())):
             v = o.get(k)

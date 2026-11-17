@@ -223,3 +223,25 @@ async function loadCci(el) {
         : '<div class="small-text"><span class="tag on">ok</span> Your radios are on a good set of channels; no change would help enough to be worth it.</div>'}
     </div>`;
 }
+
+/* Who uses the airtime (linkstats.airtime): per channel, the share of the listening time each client's and access point's data
+   frames took, the largest first; a slow device that takes a lot is called out. A row opens the devices of that channel. */
+async function loadAirtime(el, hours) {
+  if (!el) return;
+  const r = await api(`/api/channels/airtime?hours=${hours}`);
+  if (!r.channels.length) return;
+  el.hidden = false;
+  const pct = x => x == null ? '—' : x < 0.1 ? (x * 100).toFixed(1) + '%' : Math.round(x * 100) + '%';
+  const who = d => `${d.kind === 'ap' ? '<span class="tag" title="Access point: what it sent to its clients, and its beacons">AP</span> ' : ''}${d.name ? esc(d.name) + ' ' : ''}<span class="mono faint">${esc(d.mac)}</span>${d.ssid ? ` <span class="faint">${esc(d.ssid)}</span>` : ''}`;
+  el.innerHTML = `<header><h2>Who uses the airtime</h2><span class="faint">per channel, the share of the time a sensor listened there that each device's data frames were on the air</span></header>
+    ${r.slow.length ? `<div class="body">${r.slow.slice(0, 6).map(d => `<div class="small-text" style="margin:3px 0"><span class="tag warn">slow</span> ${who(d)} takes <b>${pct(d.share)}</b> of channel ${d.channel} (${d.band} GHz) at a median ${d.median_rate} Mb/s. At 100 Mb/s the same data would take ${pct(d.at_100)}: ${d.kind === 'ap' ? 'its clients are far away or old, or its lowest rates are on' : 'a weak signal or an old radio'}.</div>`).join('')}</div>` : ''}
+    <div class="body flush">${tableHtml('<th>Channel</th><th class="num">Devices</th><th class="num">Their data</th><th class="num">All airtime</th><th>Largest</th>',
+      r.channels.map(c => `<tr class="link" data-at="${c.band}|${c.channel}"><td>${chText(c.channel, c.band)}</td><td class="num">${c.devices.length}</td>
+        <td class="num"><span class="meter"><i style="width:${Math.round(c.accounted * 100)}%"></i></span> ${pct(c.accounted)}</td><td class="num muted">${pct(c.utilization)}</td>
+        <td class="small-text">${c.devices[0] ? who(c.devices[0]) + ` <b>${pct(c.devices[0].share)}</b>` : ''}</td></tr>
+        <tr hidden data-at-list="${c.band}|${c.channel}"><td colspan="5" style="padding:0 0 8px 24px">${tableHtml('<th>Device</th><th class="num">Share</th><th class="num">Frames</th><th class="num">Median rate</th>',
+          c.devices.map(d => `<tr><td>${who(d)}${d.slow ? ' <span class="tag warn">slow</span>' : ''}</td><td class="num"><span class="meter"><i style="width:${Math.min(100, Math.round(d.share * 200))}%"></i></span> ${pct(d.share)}</td>
+            <td class="num muted">${num(d.frames)}</td><td class="num muted">${d.median_rate != null ? d.median_rate + ' Mb/s' : '—'}${d.assumed_size ? ' <span class="faint" title="The sensor did not count frame sizes (before release 35): 600 bytes assumed">?</span>' : ''}</td></tr>`).join(''))}</td></tr>`).join(''))}</div>
+    <div class="body"><p class="faint small-text" style="margin:0">From the data frames the sensors heard (see Link quality): their size and the rate they went at. <i>All airtime</i> is everything on the channel, management and other networks included. A device that takes ${Math.round(r.hog_share * 100)}% or more at ${r.slow_rate} Mb/s or less is called slow.</p></div>`;
+  el.querySelectorAll('tr[data-at]').forEach(tr => tr.onclick = () => { const d = el.querySelector(`tr[data-at-list="${tr.dataset.at}"]`); d.hidden = !d.hidden; });
+}
