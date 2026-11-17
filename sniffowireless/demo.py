@@ -406,6 +406,10 @@ class DemoGenerator:
         if mac in DEMO_AP_NAMES:  # the vendor "AP name" element Ubiquiti access points broadcast (default names are the model names)
             info["ap_name"], info["ap_name_src"] = DEMO_AP_NAMES[mac], "Ubiquiti"
         info["bsig"] = f"{_h(vendor or mac, 5) & 0xffffffffff:010x}ab"
+        ch = next((a[2] for a in APS if a[0] == mac), 1)
+        on_24 = isinstance(ch, int) and ch <= 14
+        info["basic_rate"] = (1.0 if h % 3 else 12.0) if on_24 else 6.0 if h % 2 else 24.0   # many 2.4 GHz networks still beacon at 1 Mb/s
+        info["beacon_len"] = 260 + h % 140
         if h % 3 == 0:
             info["bss_color"] = 1 + h % 60
         if h % 4 == 0:
