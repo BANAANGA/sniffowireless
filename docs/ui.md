@@ -49,32 +49,6 @@
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
-
-### Co-channel interference
-
-Two of your access points on the same channel share its airtime wherever a radio hears both at -82 dBm or stronger. That is the
-level at which Wi-Fi defers to another transmission, so a client there waits for either one. sniffowireless cannot hear what an
-access point hears, but it knows how loud each sensor hears each access point. When one sensor hears two of your radios both at
--82 dBm or stronger, they overlap there, by the weaker of the two signals. With sensors in several rooms that shows where your
-access points meet.
-
-The Channels page shows, for your networks (Settings → My networks):
-
-- **Where channels are shared:** at each sensor, a channel that two of your radios (or one of yours and neighbours' access
-  points) use.
-- **An overlap matrix per band:** how loud each pair of your radios is heard together. Red: the same channel. Amber: overlapping
-  channels (on 2.4 GHz, channels less than 5 apart; on 5 and 6 GHz, the same 80 MHz block). Hover a cell to see where.
-- **A channel plan** for all your radios together: 1/6/11 on 2.4 GHz, the non-DFS channels on 5 GHz (a radio already on a DFS
-  channel may stay there), and the preferred scanning channels on 6 GHz. It weighs:
-  - your own radios that are heard together, by how loud
-  - the neighbours' access points they hear
-  - the measured airtime per channel
-
-  Each change counts as a small cost (clients reconnect), so it only suggests changes that clearly help.
-
-The BSSIDs of one radio (one per SSID, differing in the last digit) count as one radio. The channel widths an access point uses
-are not known from what is heard, which is why the same 80 MHz block counts as half a conflict. With one sensor, the overlaps
-are those at that one spot.
 - **Settings:** grouped in the left-hand list, each page with an icon and a one-line description at the top. *Find a setting…* filters the list by name, description and related words (e.g. *email*, *2fa*, *home assistant*); Enter opens the first match. On a phone the list becomes a drop-down.
   - **You:** account (password, two-factor login, display on this browser)
   - **Monitoring:** my networks, investigations, ignore list, detection thresholds
@@ -178,3 +152,29 @@ On any device page an admin can set a **label** ("Sam's iPhone") and notes, and 
 - **watched:** included in arrive/leave alerts
 
 A device can also be put in a **group**. *Possibly the same physical device* lists other MACs with the same probe fingerprint (or name) that were never present at the same time, which is typical of MAC rotation. One click adds them to the group.
+
+## Co-channel interference
+
+Two of your access points on the same channel share its airtime wherever a radio hears both at -82 dBm or stronger. That is the
+level at which Wi-Fi defers to another transmission, so a client there waits for either one. sniffowireless cannot hear what an
+access point hears, but it knows how loud each sensor hears each access point. When one sensor hears two of your radios both at
+-82 dBm or stronger, they overlap there, by the weaker of the two signals. With sensors in several rooms that shows where your
+access points meet.
+
+The Channels page shows, for your networks (Settings → My networks):
+
+- **Where channels are shared:** at each sensor, a channel that two of your radios (or one of yours and neighbours' access
+  points) use.
+- **An overlap matrix per band:** how loud each pair of your radios is heard together. Red: the same channel. Amber: overlapping
+  channels (on 2.4 GHz, channels less than 5 apart; on 5 and 6 GHz, the same 80 MHz block). Hover a cell to see where.
+- **A channel plan** for all your radios together: 1/6/11 on 2.4 GHz, the non-DFS channels on 5 GHz (a radio already on a DFS
+  channel may stay there), and the preferred scanning channels on 6 GHz. It weighs:
+  - your own radios that are heard together, by how loud
+  - the neighbours' access points they hear
+  - the measured airtime per channel
+
+  Each change counts as a small cost (clients reconnect), so it only suggests changes that clearly help.
+
+The BSSIDs of one radio (one per SSID, differing in the last digit) count as one radio. The channel widths an access point uses
+are not known from what is heard, which is why the same 80 MHz block counts as half a conflict. With one sensor, the overlaps
+are those at that one spot.
