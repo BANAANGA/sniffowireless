@@ -245,3 +245,27 @@ async function loadAirtime(el, hours) {
     <div class="body"><p class="faint small-text" style="margin:0">From the data frames the sensors heard (see Link quality): their size and the rate they went at. <i>All airtime</i> is everything on the channel, management and other networks included. A device that takes ${Math.round(r.hog_share * 100)}% or more at ${r.slow_rate} Mb/s or less is called slow.</p></div>`;
   el.querySelectorAll('tr[data-at]').forEach(tr => tr.onclick = () => { const d = el.querySelector(`tr[data-at-list="${tr.dataset.at}"]`); d.hidden = !d.hidden; });
 }
+
+/* BSS colours and channel widths (bsscolour.py): Wi-Fi 6 networks with the same colour on one channel, and widths that do more
+   harm than good; with the colour and width of each of my access points. */
+async function loadColours(el) {
+  if (!el) return;
+  const r = await api('/api/channels/colours?hours=1');
+  if (!r.near) return;
+  el.hidden = false;
+  const ap = a => `${a.ssid ? esc(a.ssid) : '<span class="faint">hidden</span>'} ${devLink(a.mac)}${a.mine ? ' <span class="tag on">mine</span>' : ''}`;
+  const widthRow = Object.entries(r.widths).map(([b, w]) => `<span class="faint">${b} GHz:</span> ${Object.entries(w).sort((x, y) => +x[0] - +y[0]).map(([k, n]) => `${n}× ${k} MHz`).join(', ')}`).join(' &nbsp; ');
+  el.innerHTML = `<header><h2>BSS colours &amp; channel widths</h2><span class="faint">${r.wifi6} of the ${r.near} access points heard at ${r.cca} dBm or stronger announce a Wi-Fi 6 colour</span></header>
+    <div class="body">
+      <h3 class="subhead" style="margin-top:0">Colour collisions</h3>
+      ${r.collisions.length ? r.collisions.map(c => `<div class="small-text" style="margin:4px 0"><span class="tag ${c.mine ? 'bad' : 'warn'}">colour ${c.colour}</span> channel ${c.channel} (${c.band} GHz): ${c.aps.map(ap).join(', ')}.
+          ${c.mine ? 'Give your access point another colour (most let you choose, or restart its automatic choice) so the two networks can reuse the channel instead of taking each other\'s frames for their own.' : ''}</div>`).join('')
+        : '<div class="small-text"><span class="tag on">ok</span> No two networks on one channel use the same colour.</div>'}
+      <h3 class="subhead">Channel widths</h3>
+      ${r.warnings.length ? r.warnings.map(w => `<div class="small-text" style="margin:4px 0"><span class="tag ${w.level === 'warn' ? 'warn' : ''}">${w.level === 'warn' ? 'yours' : 'neighbour'}</span> ${w.ssid ? esc(w.ssid) : 'A hidden network'} ${devLink(w.mac)} on channel ${w.channel} ${esc(w.text)}</div>`).join('')
+        : '<div class="small-text"><span class="tag on">ok</span> No width that does more harm than good.</div>'}
+      <p class="faint small-text">Widths heard: ${widthRow || '—'}</p>
+      ${r.mine.length ? `<h3 class="subhead">Your access points</h3>${tableHtml('<th>Access point</th><th>Channel</th><th class="num">Width</th><th class="num">Colour</th>',
+        r.mine.map(a => `<tr><td>${ap(a)}</td><td>${chText(a.channel, a.band)}</td><td class="num">${a.width ? a.width + ' MHz' : '20 MHz'}</td><td class="num">${a.colour ?? '<span class="faint" title="No HE Operation element: not Wi-Fi 6, or colour disabled">—</span>'}</td></tr>`).join(''))}` : ''}
+    </div>`;
+}

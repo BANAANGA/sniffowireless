@@ -49,6 +49,7 @@
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
   - **who uses the airtime:** per channel, the share each client and access point takes with its data frames, and the slow ones (see [Who uses the airtime](#who-uses-the-airtime))
+  - **BSS colours and channel widths:** Wi-Fi 6 networks with the same colour on one channel, and widths that do more harm than good (see [BSS colours and channel widths](#bss-colours-and-channel-widths))
   - **co-channel interference** between your own access points, and a channel plan for all of them (see [Co-channel interference](#co-channel-interference))
 
   - **Beacon overhead:** per channel, the share of the airtime beacons alone take, with the number of BSSIDs, SSIDs, radios and beacons per second; a row opens the access points behind it (see [Beacon overhead](#beacon-overhead))
@@ -297,3 +298,23 @@ are far away or old, or low basic rates.
 *All airtime* is everything the sensor measured on the channel (management frames and other networks included), so the
 devices' data is a part of it. Sensors before release 35 do not count frame sizes; 600 bytes per frame is assumed for their
 data, marked with a `?`.
+
+## BSS colours and channel widths
+
+**Colours.** A Wi-Fi 6 access point gives its network a colour (1–63), announced in its beacons. A radio that hears a weak frame
+of another colour on its channel may ignore it and transmit anyway (spatial reuse), so neighbouring networks on one channel share
+it better. Two networks with the same colour on the same channel lose that: each takes the other's frames for its own. Access
+points are meant to notice this and change colour, but many do not. The Channels page lists every colour that two networks
+heard at -82 dBm or stronger share on one channel; the BSSIDs of one radio share its colour and do not count. When one of them
+is yours, give it another colour.
+
+**Widths.** The width each access point announces comes from its HT, VHT, HE (6 GHz) and EHT operation elements. Two cases are
+flagged, as *yours* for your own networks and as *neighbour* for the others:
+
+- **40 MHz on 2.4 GHz.** That takes two of the three channels that do not overlap there, and most clients fall back to 20 MHz
+  anyway when anything else is around.
+- **A wide channel on a busy 5 GHz band.** 160 MHz while two or more other networks are heard in the same 160 MHz, or 80 MHz
+  with four or more in the same 80 MHz. A narrower channel to itself is often faster.
+
+Below that: how many access points use each width per band, and the colour and width of each of yours. Remote sensors need
+release 35 to report widths.
