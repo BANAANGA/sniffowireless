@@ -165,7 +165,7 @@ can decode it. On 2.4 GHz that is often still 1 Mb/s, where one beacon of 300 by
 SSID, per access point. Many SSIDs on many access points sharing a channel leave less airtime for traffic.
 
 The Channels page adds this up per channel from the access points heard in the last hour. Each beacon's interval, lowest basic rate
-and size come from the beacons themselves. A sensor older than release 34 does not report rate and size; then 1 Mb/s (2.4 GHz)
+and size come from the beacons themselves. A sensor older than release 34 (or the Android app before 1.5.0) does not report rate and size; then 1 Mb/s (2.4 GHz)
 or 6 Mb/s (5 / 6 GHz) and 300 bytes are assumed, marked with a `?`. Access points weaker than -82 dBm are not counted: below that
 level a radio does not detect their preamble and does not wait for them. The figure is the time the frames are on the air,
 without the gaps and backoff around them, so the real overhead is a little higher.
@@ -207,7 +207,7 @@ verdict:
 
 Fewer than 50 data frames is too little to judge. A sensor hears a client only while it is tuned to that channel, so the
 figures are a sample. Frames the sensor did not hear (too weak where it stands) are not counted. Remote sensors need release
-34 or newer. The Android app does not report link quality yet.
+34 or newer; the Android app reports it from an MT7921U adapter from 1.5.0 on (not from the phone's own Wi-Fi).
 
 ## Connections and roaming
 
@@ -250,7 +250,8 @@ A client's device page lists its attempts step by step (with the time of each st
 
 A sensor that hops channels hears only part of a connection, because it is on another channel most of the time. Set a sensor to
 the channel of the access point you are troubleshooting (Settings → Wi-Fi channels) to hear all of it. The same frame heard by two
-sensors within 0.25 s is kept once. Remote sensors need release 34 or newer.
+sensors within 0.25 s is kept once. Remote sensors need release 34 or newer; the Android app sends the steps from an
+MT7921U adapter from 1.5.0 on.
 
 ## Co-channel interference
 
