@@ -162,3 +162,26 @@ SETTINGS_VIEWS.backup = async function (el) {
     chooseRestore(f.name, 'upload', info);
   };
 };
+
+/* Beacon overhead per channel (Channels page): the share of the airtime that beacons alone take, from the access points heard in
+   the last hour. A row opens the access points behind it. */
+async function loadBeacons(el) {
+  if (!el) return;
+  const r = await api('/api/channels/beacons?hours=1');
+  const pct = x => x < 0.1 ? (x * 100).toFixed(1) + '%' : Math.round(x * 100) + '%';
+  const tag = l => l === 'bad' ? 'bad' : l === 'high' ? 'warn' : 'on';
+  const bar = (x, l) => `<span class="meter"><i style="width:${Math.min(100, Math.round(x * 100 / 0.4))}%;background:var(--${l === 'bad' ? 'bad' : l === 'high' ? 'warn' : 'good'})"></i></span>`;
+  const apRows = (band, ch) => r.aps.filter(a => a.band === band && a.channel === ch).map(a => `<tr class="${a.counts ? '' : 'faint'}">
+      <td>${a.ssid ? esc(a.ssid) : '<span class="faint">hidden</span>'}${a.mine ? ' <span class="tag on">mine</span>' : ''}</td><td>${devLink(a.mac)}</td>
+      <td class="num">${a.rssi != null ? a.rssi + ' dBm' : '—'}</td><td class="num">${a.rate} Mb/s${a.known ? '' : ' <span class="faint" title="Not reported by the sensor (an older version): assumed">?</span>'}</td>
+      <td class="num">${a.interval} TU</td><td class="num">${a.length} B</td><td class="num">${a.counts ? pct(a.airtime) : '<span title="Weaker than ' + r.cca + ' dBm: not deferred to">—</span>'}</td></tr>`).join('');
+  el.innerHTML = `<header><h2>Beacon overhead</h2><span class="faint">the airtime beacons alone take, from the access points heard in the last hour (at ${r.cca} dBm or stronger) · under ${Math.round(r.thresholds.high * 100)}% is fine, over ${Math.round(r.thresholds.bad * 100)}% is a problem</span></header>
+    ${r.advice.length ? `<div class="body">${r.advice.map(a => `<div class="small-text" style="margin:4px 0"><span class="tag ${a.level === 'bad' ? 'bad' : a.level === 'high' ? 'warn' : ''}">${a.level === 'info' ? 'tip' : a.level === 'bad' ? 'problem' : 'high'}</span> ${esc(a.text)}</div>`).join('')}</div>` : ''}
+    <div class="body flush">${tableHtml('<th>Channel</th><th class="num">BSSIDs</th><th class="num">SSIDs</th><th class="num">Radios</th><th class="num">Beacons/s</th><th class="num">Beacon airtime</th><th class="num">Yours</th>',
+      r.channels.map(c => `<tr class="link" data-bo="${c.band}|${c.channel}"><td>${chText(c.channel, c.band)}${c.weak ? ` <span class="faint" title="Access points weaker than ${r.cca} dBm, not counted">+${c.weak} weak</span>` : ''}</td>
+        <td class="num">${c.aps}</td><td class="num">${c.ssids}</td><td class="num">${c.radios}</td><td class="num">${c.beacons_per_s}</td>
+        <td class="num">${bar(c.airtime, c.level)} <span class="tag ${tag(c.level)}">${pct(c.airtime)}</span></td><td class="num muted">${c.mine ? pct(c.mine) : '—'}</td></tr>
+        <tr hidden data-bo-aps="${c.band}|${c.channel}"><td colspan="7" style="padding:0 0 8px 24px">${tableHtml('<th>SSID</th><th>BSSID</th><th class="num">Signal</th><th class="num">Beacon rate</th><th class="num">Interval</th><th class="num">Size</th><th class="num">Airtime</th>', apRows(c.band, c.channel))}</td></tr>`).join(''),
+      'No access points heard in the last hour')}</div>`;
+  el.querySelectorAll('tr[data-bo]').forEach(tr => tr.onclick = () => { const d = el.querySelector(`tr[data-bo-aps="${tr.dataset.bo}"]`); d.hidden = !d.hidden; });
+}

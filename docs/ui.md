@@ -45,6 +45,7 @@
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
+  - **Beacon overhead:** per channel, the share of the airtime beacons alone take, with the number of BSSIDs, SSIDs, radios and beacons per second; a row opens the access points behind it (see [Beacon overhead](#beacon-overhead))
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
@@ -151,3 +152,24 @@ On any device page an admin can set a **label** ("Sam's iPhone") and notes, and 
 - **watched:** included in arrive/leave alerts
 
 A device can also be put in a **group**. *Possibly the same physical device* lists other MACs with the same probe fingerprint (or name) that were never present at the same time, which is typical of MAC rotation. One click adds them to the group.
+
+## Beacon overhead
+
+Every access point sends a beacon for each SSID it offers, about ten times a second, at its lowest basic rate so that every client
+can decode it. On 2.4 GHz that is often still 1 Mb/s, where one beacon of 300 bytes takes 2.6 ms: about 2.5 % of the channel, per
+SSID, per access point. Many SSIDs on many access points sharing a channel leave less airtime for traffic.
+
+The Channels page adds this up per channel from the access points heard in the last hour. Each beacon's interval, lowest basic rate
+and size come from the beacons themselves. A sensor older than release 34 does not report rate and size; then 1 Mb/s (2.4 GHz)
+or 6 Mb/s (5 / 6 GHz) and 300 bytes are assumed, marked with a `?`. Access points weaker than -82 dBm are not counted: below that
+level a radio does not detect their preamble and does not wait for them. The figure is the time the frames are on the air,
+without the gaps and backoff around them, so the real overhead is a little higher.
+
+Under 10 % is fine, 10–20 % is high, and over 20 % is a problem. Above the table, tips for your own networks (those under
+*My networks*):
+
+- **A beacon rate of 1 or 2 Mb/s on 2.4 GHz.** It shows what the beacons would take with 12 Mb/s as the lowest basic rate.
+  Only clients that can do nothing but 802.11b would no longer join.
+- **One radio with four SSIDs or more.** BSSIDs that differ only in the last digit count as one radio. It shows what each SSID
+  costs.
+- **A beacon interval below 100 TU.**
