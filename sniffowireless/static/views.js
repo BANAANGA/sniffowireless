@@ -323,6 +323,7 @@ addRoute('/channels', async (_, params) => {
         c.channels.map(x => `<tr class="link" data-freq="${x.freq}"><td>${chText(x.channel, x.band)} <span class="faint">${x.freq} MHz</span>${x.band === '5' && x.channel >= 52 && x.channel <= 144 ? ' <span class="tag" title="DFS channel: shared with radar">DFS</span>' : ''}</td><td class="num">${x.aps}</td><td class="num">${x.strongest != null ? x.strongest + ' dBm' : '—'}</td>
           <td class="num"><span class="meter"><i style="width:${Math.round((x.utilization || 0) * 100)}%"></i></span> ${x.utilization != null ? Math.round(x.utilization * 100) + '%' : '—'}</td>
           <td class="num">${x.retry_rate != null ? (x.retry_rate * 100).toFixed(1) + '%' : '—'}</td><td class="num muted">${x.noise != null ? x.noise + ' dBm' : '—'}</td><td class="num muted">${x.fps ?? '—'}</td></tr>`).join(''), 'No measurements')}</div></section>
+      <section class="panel span-3" id="beacons"></section>
       <section class="panel span-3" id="dfs"></section>
       <section class="panel span-3" id="intf"></section>
       <section class="panel span-3" id="ch-hist" hidden><header><h2 id="ch-hist-title">History</h2></header><div class="body"><div class="chart-box short"><canvas id="ch-tl"></canvas></div></div></section>
@@ -330,6 +331,7 @@ addRoute('/channels', async (_, params) => {
   onSeg(app, 'hours', v => { location.hash = hrefWith('/channels', { hours: v }); });
   loadInterference(document.getElementById('intf'), Math.max(1, Math.min(30, hours / 24)));
   loadDfs(document.getElementById('dfs'), Math.max(1, Math.min(30, hours / 24)));
+  loadBeacons(document.getElementById('beacons'));
   ['2.4', '5', '6'].forEach(b => {
     const rows = c.channels.filter(x => x.band === b);
     const el = document.getElementById(`ch-${b.replace('.', '')}`);
