@@ -30,6 +30,9 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/channels?hours=24` | Channel survey and recommendations |
 | `GET /api/joins?hours=24&mine_only=true` | Connection attempts, failures by cause and roams of every client (of your access points) |
 | `GET /api/joins/{mac}?hours=24` | One client's connection attempts step by step, its roams and its disconnects |
+| `GET /api/link?hours=24&bssid=` | Link quality of every client (of one access point), the worst first |
+| `GET /api/link/{mac}?hours=24` | One client's rates, MCS and retries per direction, with a verdict |
+| `GET /api/channels/beacons?hours=1` | Beacon airtime per channel and per access point, with tips for your own networks |
 | `GET /api/mynet?days=7` | Health of my networks |
 | `GET /api/map`, `/api/sensors` | Device rooms/positions, sensors |
 | `GET /api/reports/occupancy?days=7` | Occupancy report data |

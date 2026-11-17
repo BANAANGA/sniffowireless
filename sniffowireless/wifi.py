@@ -16,6 +16,7 @@ from .config import band_of, chan_label, freq_to_channel
 from .handshake import eapol_message
 from .identify import wifi_fingerprint
 from .joins import JoinWatcher
+from .linkstats import LinkCounter
 from .wifiattrs import ap_attributes, radio_quality, seq_number
 from .survey import frame_airtime_us, rate_from_radiotap
 
@@ -411,6 +412,7 @@ class WifiSensor:
         self.eapol_errors = 0  # frames that raised while checking for a handshake (see _handle)
         self.acc = {}  # freq -> [frames, bytes, airtime_us, retries, noise_sum, noise_cnt] for the channel survey
         self.joins = JoinWatcher()   # the steps of every client's connections (joins.py)
+        self.links = LinkCounter()   # rates, MCS and retries of every client's data frames
         self.stop = None
         self.hop_interval = cfg.wifi_hop_interval
         self._changed = threading.Event()  # set when the channel list / hop interval changes, to wake the hopper
@@ -480,6 +482,10 @@ class WifiSensor:
                     self.store.put(o)
             except Exception:
                 log.debug("Could not read the connection steps of a frame", exc_info=True)
+            try:
+                self.links.feed(raw)
+            except Exception:
+                pass
         try:
             self._measure(pkt)
         except Exception:
@@ -609,3 +615,6 @@ class WifiSensor:
             status.update(self.name, packets=self.packets, pps=round((self.packets - last) / (now - last_t), 1),
                           band_frames=dict(self.band_frames), relabelled=self.relabelled)
             last, last_t = self.packets, now
+            if self.links.due(now):
+                for o in self.links.drain(now):
+                    self.store.put(o)

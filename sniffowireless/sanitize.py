@@ -233,6 +233,19 @@ def remote_observation(o, now):
         if isinstance(d, str):
             r["detail"] = clean_mac(d) or clean_str(d, 32)
         return r
+    if t == "link":   # one client's data frames in one direction over a minute (linkstats.py)
+        mac, bssid = clean_mac(o.get("mac")), clean_mac(o.get("bssid"))
+        if mac is None or o.get("dir") not in ("up", "down"):
+            return None
+        r = {"t": t, "ts": ts, "mac": mac, "bssid": bssid, "dir": o["dir"]}
+        for k in ("frames", "retries", "rssi_n"):
+            r[k] = clean_num(o.get(k), 0, 10 ** 9, True) or 0
+        r["rssi_sum"] = clean_num(o.get("rssi_sum"), -200 * 10 ** 9, 0, True) or 0
+        for k, keep in (("rates", lambda x: clean_num(x, 0.1, 100000) is not None), ("mcs", lambda x: len(x) <= 24 and x.isprintable())):
+            v = o.get(k)
+            r[k] = {str(a)[:24]: n for a, n in list(v.items())[:96] if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 10 ** 9
+                    and keep(str(a)[:24])} if isinstance(v, dict) else {}
+        return r
     if t == "lan_traffic":
         items = []
         for it in (o.get("items") or [])[:50_000]:

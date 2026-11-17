@@ -134,8 +134,12 @@ def beacon_signature(elts, capability=None, beacon_tu=None):
 def ap_attributes(elts, beacon_tu=None, capability=None):
     """What a beacon / probe response says about the access point itself. Empty values are left out."""
     out = {"bsig": beacon_signature(elts, capability, beacon_tu)}
-    roaming = []
+    roaming, basic = [], []
+    size = 24 + 12 + 4   # MAC header, timestamp + interval + capabilities, FCS
     for eid, info in elts:
+        size += 2 + len(info)
+        if eid in (1, 50):  # (Extended) Supported Rates: the basic rates have their top bit set
+            basic += [(b & 0x7F) / 2 for b in info if b & 0x80 and 0 < (b & 0x7F) <= 108]   # above 54 Mb/s: a BSS membership selector
         if eid == 7 and len(info) >= 3:  # Country
             cc = bytes(info[:2]).decode("ascii", "replace")
             if cc.isalpha() and cc.isupper():
@@ -205,6 +209,9 @@ def ap_attributes(elts, beacon_tu=None, capability=None):
         out["roaming"] = sorted(set(roaming))
     if beacon_tu:
         out["beacon_tu"] = int(beacon_tu)
+    if basic:
+        out["basic_rate"] = min(basic)   # the rate beacons are sent at: the lowest basic rate
+    out["beacon_len"] = size
     return out
 
 

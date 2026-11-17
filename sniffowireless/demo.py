@@ -6,6 +6,7 @@ import time
 
 from .config import band_of, ch_to_freq, freq_to_channel
 from .identify import wifi_fingerprint
+from .linkstats import HE_20, HT_VHT_20, WIDTH_HE, WIDTH_HT
 from .oui import bt_company
 
 log = logging.getLogger("sniffowireless.demo")
@@ -162,6 +163,9 @@ CLIENTS = [
     ("a0:a8:cd:01:00:0e", "Intel", "neighbour", (4,), -80, ["Ziggo5G-Neighbour"]),
     ("5c:0a:5b:01:00:0f", "Samsung", "evening", (2,), -62, []),
 ]
+
+# Link quality of a few demo clients (the others are fine): a phone near a microwave, a far-away sensor, an old printer-like radio.
+LINK_PROFILES = {"5c:0a:5b:01:00:03": "noisy", "24:0a:c4:01:00:07": "weak", "fc:65:de:01:00:08": "legacy"}
 
 BLE = [
     ("4c:11:aa:02:00:01", "AirPods Pro", 0x004C, "with:a4:83:e7:01:00:01", -60, "random-static", "audio sink"),
@@ -402,6 +406,10 @@ class DemoGenerator:
         if mac in DEMO_AP_NAMES:  # the vendor "AP name" element Ubiquiti access points broadcast (default names are the model names)
             info["ap_name"], info["ap_name_src"] = DEMO_AP_NAMES[mac], "Ubiquiti"
         info["bsig"] = f"{_h(vendor or mac, 5) & 0xffffffffff:010x}ab"
+        ch = next((a[2] for a in APS if a[0] == mac), 1)
+        on_24 = isinstance(ch, int) and ch <= 14
+        info["basic_rate"] = (1.0 if h % 3 else 12.0) if on_24 else 6.0 if h % 2 else 24.0   # many 2.4 GHz networks still beacon at 1 Mb/s
+        info["beacon_len"] = 260 + h % 140
         if h % 3 == 0:
             info["bss_color"] = 1 + h % 60
         if h % 4 == 0:
@@ -450,6 +458,36 @@ class DemoGenerator:
                             step(6, "reassoc", detail=ap_before), step(10, "reassoc_resp", True, code=0)] + handshake(slow)
         return []
 
+    def _links(self, mac, bssid, base, ch, t):
+        """A minute of a client's data frames each way, as a sensor's LinkCounter would count them. A few clients have a problem."""
+        rng = self.rng
+        band24 = isinstance(ch, int) and ch <= 14
+        kind = LINK_PROFILES.get(mac, "ok")
+        out = []
+        for way in ("up", "down"):
+            n = rng.randint(200, 3000) if way == "down" else rng.randint(80, 1200)
+            if kind == "legacy":
+                rates = {f"{r:g}": n // 4 for r in (1, 2, 5.5, 11)}
+                mcs, retry = {}, 0.12
+            else:
+                phy, nss, width = ("HT", 1, 20) if band24 or kind == "weak" else ("HE", 2, 80)
+                lo, hi = {"ok": (6, 11 if phy == "HE" else 7), "weak": (0, 3), "noisy": (6, 9)}[kind]
+                hi = min(hi, 7 if phy == "HT" else 11)
+                lo = min(lo, hi)
+                mcs, rates = {}, {}
+                for _ in range(8):
+                    m = rng.randint(lo, hi)
+                    k = n // 8
+                    mcs[f"{phy} MCS {m} {nss}SS {width}"] = mcs.get(f"{phy} MCS {m} {nss}SS {width}", 0) + k
+                    rate = round((HE_20[m] * WIDTH_HE[width] if phy == "HE" else HT_VHT_20[m] * WIDTH_HT[width]) * nss, 1)
+                    rates[f"{rate:g}"] = rates.get(f"{rate:g}", 0) + k
+                retry = {"ok": 0.04, "weak": 0.07, "noisy": 0.33}[kind]
+            frames = sum(rates.values())
+            out.append({"t": "link", "ts": t + 59, "mac": mac, "bssid": bssid, "dir": way, "frames": frames,
+                        "retries": int(frames * retry * rng.uniform(0.7, 1.3)), "rates": rates, "mcs": mcs,
+                        "rssi_sum": self._rssi(base - (14 if kind == "weak" else 0)) * 50 if way == "up" else 0, "rssi_n": 50 if way == "up" else 0})
+        return out
+
     def observations(self, t):
         rng = self.rng
         out = []
@@ -478,6 +516,8 @@ class DemoGenerator:
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",
                             "probe": rng.choice(probes), "rssi": self._rssi(base), "vendor": vendor,
                             "fp": {"wifi": fp, "src": "probe"} if fp else None})
+            if base > -78:   # its data frames over the minute: rates, MCS and retries (linkstats.py)
+                out += self._links(mac, bssid, base, APS[ap_i][2], t)
         for i, mac in enumerate(self.passers):
             if _h(mac, int(t // 900)) % 25 == 0 and (self.ctx is None or int(t // 60) % 15 == i % 15):
                 out.append({"t": "wifi_client", "ts": t + rng.random() * 55, "mac": mac, "frame": "probe",

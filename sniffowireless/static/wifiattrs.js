@@ -78,3 +78,54 @@ function wifiFeaturesHtml(ci) {
   if (!t.length) return '';
   return `<div style="margin-top:10px"><span class="faint small-text">What it says it can do: </span>${t.map(x => tagWithHelp(x, capHelp(x), 'margin:0 6px 6px 0')).join('')}</div>`;
 }
+
+/* Link quality (linkstats.py): the rates, MCS and retries of a client's data frames, each way, and what they point to. On a
+   client's page its own link; on an access point's page its clients'; on My networks every client with a problem. */
+const LINK_TAG = { ok: 'on', warn: 'warn', bad: 'bad', none: '' };
+const linkVerdict = v => `<span class="tag ${LINK_TAG[v.level]}" title="${esc(v.text)}">${esc(v.short)}</span>`;
+const linkPct = x => x == null ? '—' : (x * 100).toFixed(x < 0.1 ? 1 : 0) + '%';
+const linkPhy = s => s.phy ? `${esc(s.phy === 'legacy' ? 'legacy (a/b/g)' : s.phy === 'HE' ? 'HE (Wi-Fi 6)' : s.phy === 'VHT' ? 'VHT (Wi-Fi 5)' : 'HT (Wi-Fi 4)')}${s.nss ? ` · ${s.nss} stream${s.nss > 1 ? 's' : ''}` : ''}${s.width ? ` · ${s.width} MHz` : ''}` : '—';
+
+async function loadLinkQuality(el, mac, isAp) {
+  if (!el) return;
+  const hours = 24;
+  if (isAp) {
+    const r = await api(`/api/link?hours=${hours}&bssid=${enc(mac)}`);
+    if (!r.clients.length) return;
+    el.hidden = false;
+    el.innerHTML = `<header><h2>Clients' link quality</h2><span class="faint">their data frames in the last 24 hours, the worst first</span></header>
+      <div class="body flush">${linkTable(r.clients)}</div>`;
+    linkRows(el);
+    return;
+  }
+  const r = await api(`/api/link/${enc(mac)}?hours=${hours}`);
+  if (!r.up && !r.down) return;
+  el.hidden = false;
+  const side = (s, label) => !s ? `<div><h3 class="subhead">${label}</h3><div class="faint">No data frames heard this way.</div></div>` : `<div>
+      <h3 class="subhead">${label} ${linkVerdict(s.verdict)}</h3>
+      <p class="small-text" style="margin:4px 0 8px">${esc(s.verdict.text)}</p>
+      <div class="kv">${[['Data frames', num(s.frames)], ['Sent again (retries)', linkPct(s.retry_rate)], ['Median rate', s.median_rate != null ? s.median_rate + ' Mb/s' : '—'],
+        ['Median MCS', s.mcs_median ?? '—'], ['PHY', linkPhy(s)], ...(s.rssi != null ? [['Signal', s.rssi + ' dBm']] : [])].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div></div>`;
+  const useMcs = (r.up && r.up.mcs.length) || (r.down && r.down.mcs.length);
+  el.innerHTML = `<header><h2>Link quality</h2><span class="faint">its data frames in the last 24 hours: at which rate they went, and how many had to be sent again</span></header>
+    <div class="body"><div class="grid cols-2">${side(r.up, 'Sent by this device ↑')}${side(r.down, 'Sent to this device ↓')}</div>
+    <h3 class="subhead">${useMcs ? 'Frames per MCS' : 'Frames per rate'}</h3><div class="chart-box short"><canvas id="linkq-chart"></canvas></div>
+    <p class="faint small-text">Low MCS with few retries: a weak signal, the link slowed down to what the distance allows. High MCS with many retries: the signal is fine but frames get lost (interference, a busy channel). Legacy rates only: an old radio.</p></div>`;
+  const keys = useMcs ? [...new Set([...(r.up?.mcs || []), ...(r.down?.mcs || [])].map(x => x.mcs))].sort((a, b) => a - b)
+    : [...new Set([...(r.up?.rates || []), ...(r.down?.rates || [])].map(x => x.rate))].sort((a, b) => a - b);
+  const series = (s, color, label) => s ? { label, backgroundColor: color, borderRadius: 2, maxBarThickness: 22,
+    data: keys.map(k => { const t = s.frames || 1; const hit = (useMcs ? s.mcs : s.rates).find(x => (useMcs ? x.mcs : x.rate) === k); return hit ? +(hit.frames * 100 / t).toFixed(1) : 0; }) } : null;
+  chart(document.getElementById('linkq-chart'), { type: 'bar', data: { labels: keys.map(k => useMcs ? 'MCS ' + k : k + ' Mb/s'),
+    datasets: [series(r.up, KINDS.wifi_client.color + 'cc', '↑ sent'), series(r.down, KINDS.ap.color + 'cc', '↓ received')].filter(Boolean) },
+    options: { maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { color: FAINT } }, y: yScale({ ticks: { color: FAINT, callback: v => v + '%' } }) },
+      plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, color: MUTED } } } } });
+}
+
+function linkTable(clients) {
+  const dir = (s, signal) => !s ? '<td class="num faint">—</td><td class="num faint">—</td>' + (signal ? '<td class="num faint">—</td>' : '')
+    : `<td class="num">${linkPct(s.retry_rate)}</td><td class="num muted">${s.mcs_median != null ? 'MCS ' + s.mcs_median : s.median_rate != null ? s.median_rate + ' Mb/s' : '—'}</td>${signal ? `<td class="num muted">${s.rssi != null ? s.rssi + ' dBm' : '—'}</td>` : ''}`;
+  return tableHtml('<th>Client</th><th>Link</th><th class="num">Frames</th><th class="num">↑ retries</th><th class="num">↑ median</th><th class="num">↑ signal</th><th class="num">↓ retries</th><th class="num">↓ median</th><th>PHY</th>',
+    clients.map(c => `<tr class="link" data-href="#/device/${enc(c.mac)}"><td>${c.name ? esc(c.name) + ' ' : ''}<span class="mono faint">${esc(c.mac)}</span></td>
+      <td>${linkVerdict(c.verdict)}</td><td class="num muted">${num(c.frames)}</td>${dir(c.up, true)}${dir(c.down, false)}
+      <td class="muted small-text">${linkPhy(c)}</td></tr>`).join(''));
+}
