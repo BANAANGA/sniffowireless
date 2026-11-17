@@ -45,6 +45,7 @@
   - **connections & roaming:** failed connection attempts by cause, and every roam with its method and duration (see [Connections and roaming](#connections-and-roaming))
 
   - **link quality:** the clients of your access points whose data frames point to a problem (see [Link quality](#link-quality))
+- **Audit report:** everything about your networks on one page to hand over, findings first (see [Audit report](#audit-report))
 - **Channels:** for each channel the sensor hops over:
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
@@ -338,3 +339,36 @@ shows for the clients that connected to your networks (in the period chosen, at 
 Each card opens the list of clients it would leave behind. Below: generations, streams, widths and 802.11k/v/r support, and a
 table of every client. A client that never sent the element a question needs is *not known* (`?`), not a yes or a no.
 Remote sensors need release 35 for the key management and PMF of a client.
+
+## Audit report
+
+**Audit report** (under Wi-Fi) puts together what sniffowireless found about your networks (Settings → My networks) over the
+last 7, 14 or 30 days: the report a Wi-Fi consultant hands over. **Print / PDF** prints it on a light background without the
+menus.
+
+It starts with **findings**, in order of how much they matter (high, medium, low, info), each with what was found and what to
+do about it:
+
+- **Security of your networks, from their beacons:**
+  - an open network, WEP, TKIP / WPA 1
+  - WPS on
+  - no management frame protection
+  - no WPA3, or WPA3 in transition mode
+- **The open findings and attacks of the Security page:** rogue and KARMA access points, deauthentication floods,
+  handshake-capture attempts, a downgraded access point, rogue DHCP, ARP spoofing. Bluetooth trackers are left out.
+- **Your channels:**
+  - busy (on the air half of the time or more)
+  - many retransmissions
+  - beacon overhead and beacon settings
+  - your radios sharing a channel where both are heard
+  - BSS colour collisions, unsuitable widths
+- **Clients:**
+  - devices that take much of a channel at low rates
+  - clients with a poor link
+  - why connections failed
+  - slow roams
+- **Interference and radar.**
+
+Then the details: every access point of your networks (channel, width, security, PMF, roaming, WPS, beacon rate, colour), how
+busy their channels were, the suggested channel plan, the clients' links, connection failures and roams, client readiness,
+interference and radar, and how it was measured (which sensors, where).
