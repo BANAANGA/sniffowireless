@@ -49,7 +49,6 @@
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
-
 - **Settings:** grouped in the left-hand list, each page with an icon and a one-line description at the top. *Find a setting…* filters the list by name, description and related words (e.g. *email*, *2fa*, *home assistant*); Enter opens the first match. On a phone the list becomes a drop-down.
   - **You:** account (password, two-factor login, display on this browser)
   - **Monitoring:** my networks, investigations, ignore list, detection thresholds
