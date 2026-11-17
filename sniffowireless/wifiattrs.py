@@ -134,7 +134,7 @@ def beacon_signature(elts, capability=None, beacon_tu=None):
 def ap_attributes(elts, beacon_tu=None, capability=None):
     """What a beacon / probe response says about the access point itself. Empty values are left out."""
     out = {"bsig": beacon_signature(elts, capability, beacon_tu)}
-    roaming, basic = [], []
+    roaming, basic, widths = [], [], []
     size = 24 + 12 + 4   # MAC header, timestamp + interval + capabilities, FCS
     for eid, info in elts:
         size += 2 + len(info)
@@ -197,12 +197,26 @@ def ap_attributes(elts, beacon_tu=None, capability=None):
                     out["wps_configured"] = state
                 if locked:
                     out["wps_locked"] = True
+        elif eid == 61 and len(info) >= 2:  # HT Operation: a secondary channel and "any width" = 40 MHz
+            if info[1] & 0x03 in (1, 3) and info[1] & 0x04:
+                widths.append(40)
+        elif eid == 192 and len(info) >= 3:  # VHT Operation: 80 MHz, or 160 when the second centre is 8 channels from the first
+            cw, c0, c1 = info[0], info[1], info[2]
+            if cw == 1:
+                widths.append(160 if c1 and abs(c1 - c0) == 8 else 160 if c1 and abs(c1 - c0) > 16 else 80)
+            elif cw in (2, 3):
+                widths.append(160)
         elif eid == 255 and info:
             ext = info[0]
             if ext == 36 and len(info) >= 5:  # HE Operation: BSS colour is bits 24-29 of the 4-byte parameters, bit 31 disables it
                 params = int.from_bytes(info[1:5], "little")
                 if not params & 0x80000000:
                     out["bss_color"] = (params >> 24) & 0x3F
+                at = 7 + (3 if params & (1 << 14) else 0) + (1 if params & (1 << 15) else 0)
+                if params & (1 << 17) and len(info) >= at + 2:   # 6 GHz Operation Information: the width is in its control field
+                    widths.append((20, 40, 80, 160)[info[at + 1] & 0x03])
+            elif ext == 106 and len(info) >= 7 and info[1] & 0x01:  # EHT Operation with its information: up to 320 MHz
+                widths.append((20, 40, 80, 160, 320, 20, 20, 20)[info[6] & 0x07])
             elif ext == 107:  # Multi-Link element: a Wi-Fi 7 multi-link-operation AP
                 out["mlo"] = True
     if roaming:
@@ -210,7 +224,9 @@ def ap_attributes(elts, beacon_tu=None, capability=None):
     if beacon_tu:
         out["beacon_tu"] = int(beacon_tu)
     if basic:
-        out["basic_rate"] = min(basic)   # the rate beacons are sent at: the lowest basic rate
+        out["basic_rate"] = min(basic)
+    if widths:
+        out["width"] = max(widths)   # the widest the access point announces; 20 MHz is left out (it says nothing)   # the rate beacons are sent at: the lowest basic rate
     out["beacon_len"] = size
     return out
 

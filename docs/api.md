@@ -29,6 +29,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/security` | Findings, my-network BSSIDs, security events |
 | `GET /api/channels?hours=24` | Channel survey and recommendations |
 | `GET /api/channels/airtime?hours=24` | Per channel, the share of the airtime each client's and access point's data frames took, and the slow ones |
+| `GET /api/channels/colours?hours=1` | BSS colour collisions and channel widths |
 | `GET /api/channels/cci?hours=24` | Where your access points overlap, which channels they share there, and a channel plan |
 | `GET /api/joins?hours=24&mine_only=true` | Connection attempts, failures by cause and roams of every client (of your access points) |
 | `GET /api/joins/{mac}?hours=24` | One client's connection attempts step by step, its roams and its disconnects |

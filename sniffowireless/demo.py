@@ -164,6 +164,10 @@ CLIENTS = [
     ("5c:0a:5b:01:00:0f", "Samsung", "evening", (2,), -62, []),
 ]
 
+DEMO_RADIO = {"50:c7:bf:20:00:03": {"bss_color": 21, "width": None}, "9c:7b:ef:60:00:0a": {"bss_color": 21, "width": None},
+              "a0:40:a0:30:00:04": {"width": 40}, "24:a4:3c:10:00:02": {"bss_color": 7, "width": 80},
+              "a0:40:a0:30:00:05": {"bss_color": 33, "width": 160}, "e0:63:da:70:00:0b": {"width": 80}, "24:a4:3c:10:00:09": {"bss_color": 7, "width": 160}}
+
 # Link quality of a few demo clients (the others are fine): a phone near a microwave, a far-away sensor, an old printer-like radio.
 LINK_PROFILES = {"5c:0a:5b:01:00:03": "noisy", "24:0a:c4:01:00:07": "weak", "fc:65:de:01:00:08": "legacy"}
 
@@ -412,6 +416,8 @@ class DemoGenerator:
         info["beacon_len"] = 260 + h % 140
         if h % 3 == 0:
             info["bss_color"] = 1 + h % 60
+        if mac in DEMO_RADIO:   # Wi-Fi 6 colour and channel width (the printer's network on channel 6 picked the same colour as HomeNet-IoT)
+            info.update({k: v for k, v in DEMO_RADIO[mac].items() if v is not None})
         if h % 4 == 0:
             info["rnr"] = [{"bssid": mac[:-2] + "f1", "ch": 5, "oc": 131}]
         return info
