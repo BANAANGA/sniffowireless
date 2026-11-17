@@ -749,3 +749,9 @@ table.cci thead th { font-weight: 400; vertical-align: bottom; }
 /* automatic recording: the events and sensors to choose (views.js capture) */
 .trig-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 14px; margin: 4px 0 10px; }
 .trig-list .check { justify-content: flex-start; text-align: left; align-items: flex-start; }
+
+/* the audit report (audit.js) */
+.audit-f { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.audit-f:last-child { border-bottom: 0; }
+@media (max-width: 700px) { .audit-f { grid-template-columns: 1fr; gap: 2px; } }
+@media print { .audit-sec { break-inside: auto; } .audit-f { break-inside: avoid; } }
