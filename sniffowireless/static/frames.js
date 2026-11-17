@@ -24,10 +24,14 @@
       Record under <a href="#/settings?tab=capture">Settings → Frame recording</a>.</div></div>
       <div class="row">${seg('mode', [['', 'Recordings'], ['live', 'Live']], live ? 'live' : '')}
       ${!live && files.length ? `<select id="fx-file" title="Recording">${files.map(f => `<option value="${esc(f.name)}" ${f.name === file ? 'selected' : ''}>${esc(f.name)}${f.sensor_name ? ' · ' + esc(f.sensor_name) : ''} · ${bytes(f.size)}</option>`).join('')}</select>
-        <a class="btn ghost" href="/api/captures/${enc(file)}" download>Download</a><button class="btn ghost" id="fx-delall" type="button">Delete all…</button>` : ''}</div></div>
+        <a class="btn ghost" href="/api/captures/${enc(file)}/pcap${filter ? '?filter=' + enc(filter) : ''}" download title="${filter ? 'The frames that pass the filter' : 'The whole recording'}, as pcapng for Wireshark">pcapng${filter ? ' (filtered)' : ''}</a>
+        <a class="btn ghost" href="/api/captures/${enc(file)}" download title="The recording as it is stored (gzipped JSON lines), for replay">Download</a><button class="btn ghost" id="fx-delall" type="button">Delete all…</button>` : ''}
+      ${!live ? '<button class="btn ghost" id="fx-import" type="button" title="Open a pcap or pcapng file made elsewhere (Wireshark, tcpdump, airodump-ng, ...)">Import pcap…</button>' : ''}</div></div>
       <div id="fx-root"></div>`;
     onSeg(app, 'mode', v => { location.hash = hrefWith('/frames', { mode: v || undefined, f: filter }); });
     const root = app.querySelector('#fx-root');
+    const imp = app.querySelector('#fx-import');
+    if (imp) imp.onclick = () => importCapture(name => { location.hash = hrefWith('/frames', { file: name }); });
     if (live) { await liveView(root, list, params); return; }
     if (!files.length) {
       root.innerHTML = `<div class="callout">There are no recordings yet. ${list.blocked ? esc(list.blocked) + '.' : 'Make one under <a href="#/settings?tab=capture">Settings → Frame recording</a>, or watch the radios <a href="#/frames?mode=live">live</a>.'}</div>`;
@@ -43,7 +47,30 @@
     if (!confirm(`Delete all ${n} recording${n === 1 ? '' : 's'}? This can't be undone.`)) return;
     try { const r = await send('DELETE', '/api/captures'); toast(`Deleted ${r.deleted} recording${r.deleted === 1 ? '' : 's'}`); done(); } catch (e) { toast(e.message, true); }
   }
-  window.deleteAllRecordings = deleteAll;   // Settings -> Frame recording has the same button
+  window.deleteAllRecordings = deleteAll;
+
+  /* Choose a pcap / pcapng file (gzipped or not) and keep it as a recording; done(name) once it is there. */
+  function importCapture(done) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pcap,.pcapng,.cap,.gz,application/vnd.tcpdump.pcap';
+    input.onchange = async () => {
+      const f = input.files[0];
+      if (!f) return;
+      if (f.size > 64 * 1024 * 1024) { toast('The file is larger than 64 MB', true); return; }
+      toast(`Importing ${f.name}…`);
+      try {
+        const r = await fetch('/api/captures/import', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Sniffowireless': '1' }, body: f });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `${r.status} ${r.statusText}`);
+        const left = Object.entries(d.skipped || {}).map(([k, v]) => `${num(v)} ${k}`).join(', ');
+        toast(`Imported ${num(d.frames)} frames${left ? ` (left out: ${left})` : ''}`);
+        done(d.name);
+      } catch (e) { toast(e.message, true); }
+    };
+    input.click();
+  }
+  window.importCapture = importCapture;   // Settings -> Frame recording has the same button
 
   async function getJson(path) {
     const r = await fetch(path, { headers: { 'X-Sniffowireless': '1' } });
@@ -166,6 +193,7 @@
         <label class="field">For<select name="seconds">${DURATIONS.map(([v, l]) => `<option value="${v}" ${v === 60 ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <button class="btn primary" id="fx-start">Start</button><button class="btn" type="button" id="fx-stop" hidden>Stop</button>
         <button class="btn ghost" type="button" id="fx-save" ${state && state.total ? '' : 'disabled'} title="Keep what was heard as a recording">Save as recording</button>
+        <button class="btn ghost" type="button" id="fx-pcap" ${state && state.total ? '' : 'disabled'} title="What is kept here (that passes the filter), as pcapng for Wireshark">pcapng</button>
         <label class="check"><input type="checkbox" id="fx-follow" checked> Follow the newest</label>
       </form>
       <div class="small-text" id="fx-live-state"></div></div></div>`;
@@ -190,6 +218,7 @@
       root.querySelector('#fx-stop').hidden = !d.open;
       root.querySelector('#fx-start').textContent = d.open ? 'Start again' : 'Start';
       root.querySelector('#fx-save').disabled = !d.total;
+      root.querySelector('#fx-pcap').disabled = !d.total;
       const quiet = d.open && d.now - (d.last_frame || d.started) > 10;
       stateEl.innerHTML = d.open
         ? `<span class="tag on">Live</span> ${num(d.total)} frames · stops in ${dur(Math.max(0, Math.round(d.until - d.now)))}${d.dropped ? ` · <span class="warn-text">${num(d.dropped)} frames were too many to send live</span>` : ''}
@@ -239,6 +268,12 @@
     root.querySelector('#fx-stop').onclick = async () => { await send('DELETE', `/api/frames/live?source=${enc(source)}`); poll(); };
     root.querySelector('#fx-save').onclick = async () => {
       try { const r = await send('POST', `/api/frames/live/save?source=${enc(source)}`); toast(`Saved ${num(r.frames)} frames as ${r.name}`); } catch (e) { toast(e.message, true); }
+    };
+    root.querySelector('#fx-pcap').onclick = () => {   // a plain link: the browser saves what the server streams
+      const a = document.createElement('a');
+      a.href = `/api/frames/live/pcap?source=${enc(source)}${st.filter ? '&filter=' + enc(st.filter) : ''}`;
+      a.download = '';
+      a.click();
     };
     if (state) poll();
     every(1000, () => { if (st.open) poll(); });

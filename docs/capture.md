@@ -114,6 +114,29 @@ privacy or the anonymised view is on.
 **Delete all…** (on the Frames page and under Settings → Frame recording) deletes every recording at once, except one that is
 being made right now.
 
+## Wireshark: pcapng export and import
+
+**pcapng** (next to Download, on the Frames page and under Settings → Frame recording) saves a recording as a pcapng file that
+Wireshark, tshark and other pcap tools open. On the Frames page, with a display filter applied, it saves only the frames that
+pass the filter. In Live mode it saves what the page holds (the newest 20,000 frames, filtered the same way).
+
+Each radio gets the link type Wireshark decodes, and each interface a frame came from becomes an interface in the file, under
+its own name (`wifi:wlan0mon`, `bt:hci0`, ...):
+
+| Radio | Link type | What is in it |
+|---|---|---|
+| Wi-Fi | 127 `IEEE802_11_RADIOTAP` | The frame with its radiotap header, as recorded (data frames: headers only) |
+| Bluetooth | 201 `BLUETOOTH_HCI_H4_WITH_PHDR` | The HCI event, marked as received |
+| Zigbee / Thread | 283 `IEEE802_15_4_TAP` | The 802.15.4 frame, with channel, signal and LQI in the TAP header |
+| LoRa | 270 `LORATAP` | The LoRa payload, with frequency, bandwidth, spreading factor, RSSI, SNR and sync word in the LoRaTap header. Wireshark decodes LoRaWAN (sync word 0x34); Meshtastic and MeshCore show as data |
+
+**Import pcap…** works the other way round: it takes a pcap or pcapng file made elsewhere (Wireshark, tcpdump, airodump-ng,
+Kismet's pcapng export, an nRF or Zigbee sniffer), gzipped or not and up to 64 MB, and keeps it as a recording. It shows up as
+*Imported file* and opens in the inspector like any other. Besides the four link types above it reads 105 `IEEE802_11` (no
+radiotap), 187 `BLUETOOTH_HCI_H4`, 195 `IEEE802_15_4_WITHFCS` and 230 `IEEE802_15_4_NOFCS`. Other packets (Ethernet, USB,
+Bluetooth ACL data, ...) are left out, and the message after the import says how many and why. Wi-Fi data frames are cut to their
+headers, as in a recording. A file exported here comes back with its interface names.
+
 ## Replaying
 
 ```bash
