@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import struct
 import sys
 import tempfile
 import threading
@@ -27,7 +28,7 @@ import time
 import zlib
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .auth import require_admin
@@ -41,6 +42,8 @@ MAX_SECONDS = 3600
 MAX_BYTES = 64 * 1024 * 1024      # of frames written (before compression)
 MAX_FILES = 20
 NAME = re.compile(r"^capture-\d{8}-\d{6}(?:-([a-z0-9][a-z0-9-]{0,31}))?\.jsonl\.gz$")  # the suffix: a remote sensor's id
+IMPORT_MAX = 64 * 1024 * 1024     # a pcap / pcapng file to import; httpsec.BODY_LIMITS has the same
+IMPORTED = "import"                # the name suffix of an imported file (in the place of a remote sensor's id)
 REMOTE_UPLOAD_MAX = 48 * 1024 * 1024   # a remote sensor's recording as it arrives (gzip); httpsec.BODY_LIMITS has the same
 REMOTE_START_WAIT = 90     # seconds for a sensor to say it started (it hears of the request with its next batch, every 2 s)
 REMOTE_UPLOAD_WAIT = 600   # and after the recording should have ended, to deliver the file
@@ -506,6 +509,49 @@ class Views:
 VIEWS = Views()
 
 
+def import_file(data, folder):
+    """Write a pcap / pcapng file as a recording. {"name", "frames", "skipped": {why: count}}; ValueError when nothing in it can be used."""
+    from . import pcap
+    os.makedirs(folder, exist_ok=True)
+    now = time.time()
+    while True:   # two imports in the same second get names a second apart
+        name = time.strftime("capture-%Y%m%d-%H%M%S", time.localtime(now)) + f"-{IMPORTED}.jsonl.gz"
+        if not os.path.exists(os.path.join(folder, name)):
+            break
+        now += 1
+    path = os.path.join(folder, name)
+    n = size = 0
+    skipped, kinds = {}, set()
+    try:
+        with gzip.open(path + ".part", "wt", encoding="ascii") as out:
+            for lt, ts, p, iface in pcap.packets(data):
+                try:
+                    rec, why = pcap.to_record(lt, ts, p, iface)
+                except (struct.error, IndexError):
+                    rec, why = None, "malformed"
+                if rec is None or len(rec["raw"]) > RAW_MAX:
+                    why = why or "longer than a recorded frame can be"
+                    skipped[why] = skipped.get(why, 0) + 1
+                    continue
+                line = json.dumps({**rec, "raw": bytes(rec["raw"]).hex()}, separators=(",", ":"))
+                size += len(line) + 1
+                if size > MAX_BYTES:
+                    skipped["beyond the size of a recording"] = skipped.get("beyond the size of a recording", 0) + 1
+                    continue
+                out.write(line + "\n")
+                kinds.add(rec["radio"])
+                n += 1
+        if not n:
+            raise ValueError("Nothing in it is a Wi-Fi, Bluetooth, Zigbee or LoRa frame"
+                             + (f" ({', '.join(f'{k}: {v}' for k, v in sorted(skipped.items()))})" if skipped else ""))
+        os.replace(path + ".part", path)
+    finally:
+        if os.path.exists(path + ".part"):
+            os.remove(path + ".part")
+    log.info("Imported a capture file as %s: %d frames, %d left out", name, n, sum(skipped.values()))
+    return {"name": name, "frames": n, "radios": sorted(kinds), "skipped": skipped}
+
+
 def directory(cfg):
     return os.path.join(cfg.data_dir, "captures")
 
@@ -695,7 +741,7 @@ def routes(ctx):
         names = {x["id"]: x["name"] for x in sensors}
         out = files()
         for f in out:
-            f["sensor_name"] = names.get(f["sensor"], f["sensor"]) if f["sensor"] else None
+            f["sensor_name"] = names.get(f["sensor"], "Imported file" if f["sensor"] == IMPORTED else f["sensor"]) if f["sensor"] else None
         remote = [{"sensor": sid, "sensor_name": names.get(sid, sid), **{k: v for k, v in job.items() if k != "id"}}
                   for sid, job in remote_jobs().items()]
         return {"active": RECORDER.state(), "files": out, "max_seconds": MAX_SECONDS, "max_files": MAX_FILES, "sensors": sensors, "remote": remote,
@@ -774,6 +820,41 @@ def routes(ctx):
     @r.get("/api/captures/{name}")
     def download(name: str, _=Depends(require_admin)):
         return FileResponse(path_of(name), media_type="application/gzip", filename=name)
+
+    def pcap_response(records, name):
+        from . import pcap
+        return StreamingResponse(pcap.export(records), media_type="application/vnd.tcpdump.pcap",
+                                 headers={"content-disposition": f'attachment; filename="{name}"'})
+
+    @r.get("/api/captures/{name}/pcap")
+    def download_pcap(name: str, filter: str = "", _=Depends(require_admin)):
+        """The recording as pcapng for Wireshark: all of it, or (with `filter`) the frames that pass the display filter."""
+        path = path_of(name)
+        out = name.replace(".jsonl.gz", ".pcapng")
+        if not filter.strip():
+            return pcap_response(read(path), out)
+        try:
+            loaded = VIEWS.load(path, vendor)
+            matched = VIEWS.matching(loaded, filter)
+        except FilterError as e:
+            raise HTTPException(400, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return pcap_response((loaded.frames[i] for i in matched), out.replace(".pcapng", "-filtered.pcapng"))
+
+    @r.post("/api/captures/import")
+    async def import_pcap(request: Request, _=Depends(require_admin)):
+        """A pcap or pcapng file (gzipped or not) made elsewhere, kept as a recording so the inspector can open it."""
+        data = await request.body()
+        if len(data) > IMPORT_MAX:
+            raise HTTPException(413, "The file is too large")
+        if len(files()) >= MAX_FILES:
+            raise HTTPException(409, f"There are {MAX_FILES} recordings already. Delete some first.")
+        from starlette.concurrency import run_in_threadpool
+        try:
+            return await run_in_threadpool(import_file, data, folder)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     # ------------------------------------------------------------ frame inspector
     def view_blocked():
@@ -880,6 +961,22 @@ def routes(ctx):
         items, last = cap.after(max(0, after), pred, max(1, min(limit, 1000)), vendor)
         return {"items": items, "last": last, "open": cap.open, "started": cap.started, "until": cap.until, "kept": len(cap.items),
                 "total": cap.seq, "dropped": cap.dropped, "last_frame": cap.last_frame, "radios": cap.radios, "now": now}
+
+    @r.get("/api/frames/live/pcap")   # before /{number}, which would take "pcap" for a number
+    def live_pcap(source: str = "local", filter: str = "", _=Depends(require_admin)):
+        """What the live capture holds (that passes the filter) as pcapng."""
+        view_blocked()
+        cap = live_of(source)
+        try:
+            pred = compile_filter(filter)
+        except FilterError as e:
+            raise HTTPException(400, str(e))
+        with cap.lock:
+            entries = list(cap.items)
+        if pred is not None:
+            entries = [e for e in entries if pred(cap.summary(e, vendor))]
+        name = time.strftime("live-%Y%m%d-%H%M%S", time.localtime(cap.started)) + ("" if source == "local" else f"-{source}") + ".pcapng"
+        return pcap_response([e[1] for e in entries], name)
 
     @r.get("/api/frames/live/{number}")
     def live_frame(number: int, source: str = "local", _=Depends(require_admin)):

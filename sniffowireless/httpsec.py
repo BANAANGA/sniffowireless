@@ -28,7 +28,7 @@ DOCS_CSP = ("default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr
 TRUSTED_PEER = "sniffowireless.trusted_peer"  # scope key: the connection came from one of TRUSTED_PROXIES (set by behind_proxies)
 
 MB = 1024 * 1024
-BODY_LIMITS = [("/api/ingest/capture", 48 * MB), ("/api/backup/restore", 4096 * MB), ("/api/backup/inspect", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB), ("/api/appearance/icon", 1 * MB),
+BODY_LIMITS = [("/api/ingest/capture", 48 * MB), ("/api/captures/import", 64 * MB), ("/api/backup/restore", 4096 * MB), ("/api/backup/inspect", 4096 * MB), ("/api/ingest", 32 * MB), ("/api/floorplan", 8 * MB), ("/api/appearance/icon", 1 * MB),
                ("/api/backup/config", 16 * MB)]
 DEFAULT_BODY_LIMIT = 1 * MB
 # Query parameters that size work on the server: (min, max)

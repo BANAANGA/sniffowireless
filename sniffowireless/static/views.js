@@ -873,10 +873,10 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
           <button class="btn primary" ${c.blocked ? 'disabled' : ''}>Start recording</button>
           <p class="faint small-text">It stops by itself after that time, or at 64 MB. A remote sensor starts within a few seconds and sends the file here when it is done (it needs version 33.2 or newer).</p></form>
         </div></section>
-        <section class="panel" style="margin-top:16px"><header><h2>Recordings</h2><div class="row"><span class="faint">${c.files.length} of at most ${c.max_files}</span>${c.files.length ? '<button class="btn small ghost" id="cap-delall" type="button">Delete all…</button>' : ''}</div></header><div class="body flush">${tableHtml(
+        <section class="panel" style="margin-top:16px"><header><h2>Recordings</h2><div class="row"><span class="faint">${c.files.length} of at most ${c.max_files}</span><button class="btn small ghost" id="cap-import" type="button" title="Open a pcap or pcapng file made elsewhere (Wireshark, tcpdump, airodump-ng, ...)">Import pcap…</button>${c.files.length ? '<button class="btn small ghost" id="cap-delall" type="button">Delete all…</button>' : ''}</div></header><div class="body flush">${tableHtml(
           '<th>File</th><th>From</th><th class="num">Size</th><th class="num">Made</th><th></th>',
           c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.sensor_name || 'This server')}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
-            <td class="num"><a class="btn small" href="#/frames?file=${enc(f.name)}">Open</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
+            <td class="num"><a class="btn small" href="#/frames?file=${enc(f.name)}">Open</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}/pcap" download title="As pcapng, for Wireshark">pcapng</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
       const f = el.querySelector('#capf');
       f.onsubmit = async e => { e.preventDefault();
         const sensor = f.sensor ? f.sensor.value : 'local';
@@ -890,6 +890,7 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
       el.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => { if (!confirm(`Delete ${b.dataset.del}?`)) return; await send('DELETE', `/api/captures/${enc(b.dataset.del)}`); draw(); });
       const delAll = el.querySelector('#cap-delall');
       if (delAll) delAll.onclick = () => window.deleteAllRecordings(c.files.length, draw);
+      el.querySelector('#cap-import').onclick = () => window.importCapture(draw);
       if (a || busy.length) setTimeout(() => { if (el.isConnected && el.querySelector('#capf')) draw(); }, 2000);
     };
     await draw();
