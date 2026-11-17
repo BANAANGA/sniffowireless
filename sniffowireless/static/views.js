@@ -391,6 +391,7 @@ addRoute('/mynet', async (_, params) => {
           <td class="num ${c.kicked ? '' : 'muted'}">${c.kicked}</td><td>${c.sticky ? '<span class="tag warn">sticky</span>' : ''}${c.connected_band === '2.4' && c.wifi_gen >= 5 ? ' <span class="tag" title="Supports 5 GHz but is on 2.4 GHz">on 2.4G</span>' : ''}
             ${c.weak_choice_sessions ? ` <span class="tag warn" title="${c.weak_choice_sessions} of ${c.choice_sessions} sessions on a sibling AP connected weak while this client was in range of a stronger one">weak AP ${c.weak_choice_sessions}/${c.choice_sessions}</span>` : ''}</td></tr>`).join(''))}</div></section>
       <section class="panel span-3" id="mn-joins" hidden></section>
+      <section class="panel span-3" id="mn-ready" hidden></section>
       <section class="panel span-3" id="mn-link" hidden></section>
       <section class="panel span-3"><header><h2>Network changes</h2><span class="faint">channel moves and security findings on my networks</span></header><div class="body flush" id="mn-changes"><div class="empty">Loading…</div></div></section>
     </div>`;
@@ -406,6 +407,7 @@ addRoute('/mynet', async (_, params) => {
       : '<div class="empty">No changes recorded in this period</div>';
   }).catch(() => {});
   loadSiteJoins(document.getElementById('mn-joins'), days).catch(() => {});
+  loadReadiness(document.getElementById('mn-ready'), Math.max(days, 7)).catch(() => {});
   const mine = new Set(n.aps.map(a => a.mac));
   api(`/api/link?hours=${days * 24}`).then(r => {   // the clients of my access points whose link has a problem
     const el = document.getElementById('mn-link');

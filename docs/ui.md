@@ -41,6 +41,7 @@
   - **sticky clients** (connected below −75 dBm while another of your APs is available)
   - clients capable of 5 GHz that sit on 2.4 GHz
   - disconnect reasons (timeouts vs. deauth reason codes)
+  - **client readiness:** what your clients can do, and who switching to WPA3 only, dropping 2.4 GHz, requiring PMF or dropping 802.11b rates would leave behind (see [Client readiness](#client-readiness))
   - **connections & roaming:** failed connection attempts by cause, and every roam with its method and duration (see [Connections and roaming](#connections-and-roaming))
 
   - **link quality:** the clients of your access points whose data frames point to a problem (see [Link quality](#link-quality))
@@ -318,3 +319,22 @@ flagged, as *yours* for your own networks and as *neighbour* for the others:
 
 Below that: how many access points use each width per band, and the colour and width of each of yours. Remote sensors need
 release 35 to report widths.
+
+## Client readiness
+
+Before you change a network you want to know who it would leave behind. Every client says what it can do in its probe and
+association requests: Wi-Fi generation, spatial streams, channel width, the bands it does (its operating classes), 802.11k/v/r,
+and, in an association request, the key management it chose and whether it does management frame protection (PMF). *My networks*
+shows for the clients that connected to your networks (in the period chosen, at least the last 7 days):
+
+| Change | Who it leaves behind |
+|---|---|
+| **WPA3 only** | Clients that chose WPA2 where WPA3 was offered too (a network in WPA3 + WPA2 transition mode). Clients that used SAE are ready. Where your networks don't offer WPA3 yet, choosing WPA2 says nothing, so turn on transition mode first to find out. |
+| **No more 2.4 GHz** | Clients with no sign of 5 GHz: not Wi-Fi 5 or newer, no 5 GHz operating class, never heard on 5 or 6 GHz |
+| **6 GHz** | How many could use it: Wi-Fi 6E or 7, a 6 GHz operating class, or heard on 6 GHz |
+| **PMF required** (WPA3 needs it) | Clients without PMF |
+| **No 802.11b rates** (12 Mb/s as the lowest basic rate) | Clients that offer nothing but 802.11b rates |
+
+Each card opens the list of clients it would leave behind. Below: generations, streams, widths and 802.11k/v/r support, and a
+table of every client. A client that never sent the element a question needs is *not known* (`?`), not a yes or a no.
+Remote sensors need release 35 for the key management and PMF of a client.

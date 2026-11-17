@@ -269,3 +269,32 @@ async function loadColours(el) {
         r.mine.map(a => `<tr><td>${ap(a)}</td><td>${chText(a.channel, a.band)}</td><td class="num">${a.width ? a.width + ' MHz' : '20 MHz'}</td><td class="num">${a.colour ?? '<span class="faint" title="No HE Operation element: not Wi-Fi 6, or colour disabled">—</span>'}</td></tr>`).join(''))}` : ''}
     </div>`;
 }
+
+/* Client readiness (readiness.py): what the clients of my networks can do, and for each change (WPA3 only, no 2.4 GHz, 6 GHz,
+   PMF required, no 802.11b rates) who it would leave behind. */
+async function loadReadiness(el, days) {
+  if (!el) return;
+  const r = await api(`/api/readiness?days=${days}`);
+  if (!r.clients.length) return;
+  el.hidden = false;
+  const yn = v => v === true ? '<span class="tag on">yes</span>' : v === false ? '<span class="tag warn">no</span>' : '<span class="faint">?</span>';
+  const bars = o => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="tag">${esc(k)}: ${n}</span>`).join(' ');
+  el.innerHTML = `<header><h2>Client readiness</h2><span class="faint">what the ${r.clients.length} clients ${r.scope === 'mine' ? 'of your networks' : 'that connected anywhere'} in the last ${days} days can do, and who a change would leave behind</span></header>
+    <div class="body">
+      <div class="grid cols-5">${r.questions.map(q => `<div class="card" title="${esc(q.explain)}"><div class="label">${esc(q.title)}</div>
+        <div class="value">${q.key === 'six' ? `${q.ready}` : q.drop ? `<span class="warn-text">${q.drop}</span>` : '<span style="color:var(--good)">0</span>'}</div>
+        <div class="meta">${q.key === 'six' ? `can use it · ${q.drop} can't` : 'would drop off'}${q.unknown ? ` · ${q.unknown} not known` : ''}</div></div>`).join('')}</div>
+      ${r.questions.filter(q => q.drop && q.key !== 'six').map(q => `<details style="margin-top:8px"><summary class="small-text"><b>${esc(q.title)}</b>: ${q.drop} would drop off</summary>
+        <div class="faint small-text" style="margin:4px 0">${esc(q.explain)}</div>
+        <div class="small-text">${q.drop_clients.map(c => `<a href="#/device/${enc(c.mac)}">${esc(c.name || c.mac)}</a>${c.gen_label ? ` <span class="faint">${esc(c.gen_label)}</span>` : ''}`).join(' · ')}</div></details>`).join('')}
+      <div class="small-text" style="margin-top:12px"><b>Generations</b> ${bars(r.summary.generations)}</div>
+      <div class="small-text" style="margin-top:4px"><b>Streams</b> ${bars(r.summary.streams)} &nbsp; <b>Widths</b> ${bars(r.summary.widths)}</div>
+      <div class="small-text" style="margin-top:4px"><b>Roaming support</b> ${Object.entries(r.summary.roaming).map(([k, n]) => `<span class="tag">${k}: ${n} of ${r.clients.length}</span>`).join(' ')}</div>
+      <details style="margin-top:10px"><summary class="small-text">Every client</summary>${tableHtml('<th>Client</th><th>Wi-Fi</th><th class="num">Streams</th><th class="num">Width</th><th>5 GHz</th><th>6 GHz</th><th>WPA3</th><th>PMF</th><th>11k/v/r</th>',
+        r.clients.map(c => `<tr class="link" data-href="#/device/${enc(c.mac)}"><td>${c.name ? esc(c.name) + ' ' : ''}<span class="mono faint">${esc(c.mac)}</span></td><td>${esc(c.gen_label || '?')}</td>
+          <td class="num">${c.ss ?? '?'}</td><td class="num">${c.width ? c.width + ' MHz' : '?'}</td><td>${yn(c.five)}</td><td>${yn(c.six)}</td><td>${yn(c.wpa3)}</td><td>${yn(c.pmf)}</td>
+          <td class="small-text">${['k', 'v', 'r'].filter(x => c[x]).join('/') || '—'}</td></tr>`).join(''))}</details>
+      <p class="faint small-text">From what each client says in its probe and association requests. "?" and "not known": it never sent the element that would tell.</p>
+    </div>`;
+  linkRows(el);
+}
