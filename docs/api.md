@@ -28,6 +28,8 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/alerts`, `/api/alert-rules` | Alert history and rules |
 | `GET /api/security` | Findings, my-network BSSIDs, security events |
 | `GET /api/channels?hours=24` | Channel survey and recommendations |
+| `GET /api/link?hours=24&bssid=` | Link quality of every client (of one access point), the worst first |
+| `GET /api/link/{mac}?hours=24` | One client's rates, MCS and retries per direction, with a verdict |
 | `GET /api/mynet?days=7` | Health of my networks |
 | `GET /api/map`, `/api/sensors` | Device rooms/positions, sensors |
 | `GET /api/reports/occupancy?days=7` | Occupancy report data |
