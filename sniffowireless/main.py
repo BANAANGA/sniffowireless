@@ -129,6 +129,9 @@ def build(cfg):
     ctx.lora = LoraMonitor(ctx)
     from .radiowatch import RadioWatch
     ctx.radiowatch = RadioWatch(ctx)
+    from .walk import WalkCollector
+    ctx.walk = WalkCollector(ctx)
+    store.hooks.append(ctx.walk)
     from .triggers import TriggerWatcher
     ctx.triggers = TriggerWatcher(ctx)
     from .baseline import BaselineMonitor

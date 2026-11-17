@@ -45,6 +45,7 @@
   - **connections & roaming:** failed connection attempts by cause, and every roam with its method and duration (see [Connections and roaming](#connections-and-roaming))
 
   - **link quality:** the clients of your access points whose data frames point to a problem (see [Link quality](#link-quality))
+- **Walk survey:** walk around with a sensor, tap where you stand on the floor plan, and get heatmaps of your coverage (see [Walk survey](#walk-survey))
 - **Audit report:** everything about your networks on one page to hand over, findings first (see [Audit report](#audit-report))
 - **Channels:** for each channel the sensor hops over:
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
@@ -373,3 +374,33 @@ do about it:
 Then the details: every access point of your networks (channel, width, security, PMF, roaming, WPS, beacon rate, colour), how
 busy their channels were, the suggested channel plan, the clients' links, connection failures and roams, client readiness,
 interference and radar, and how it was measured (which sensors, where).
+
+## Walk survey
+
+**Walk survey** (under Wi-Fi) maps your coverage on the floor plan (Map → Edit layout). Carry a sensor while you walk:
+
+- the phone with its USB adapter (the Android app as a remote sensor)
+- a laptop running sniffowireless
+- any remote sensor on a trolley
+
+Then:
+
+1. **New survey…**, and choose the sensor you carry. While the survey is open, that sensor notes every access point it hears with
+   its signal.
+2. Open the page on a phone (or any browser), walk to a spot, **stand still for 10 seconds**, and tap where you are on the floor
+   plan. The line above the buttons says how many access points the sensor heard in those seconds, and the strongest of yours. A
+   sensor that hops channels needs those seconds to have been round them all.
+3. The readings of those seconds become a point: per access point, the median signal. **Undo last point** takes a point back.
+   **Finish** closes the survey; **Go on with this survey** opens it again, for example on another day.
+
+The heatmap is drawn between the points (inverse-distance weighting; nothing is drawn far from any point). Layers:
+
+- **My networks:** the strongest of your access points at each spot, in steps: −60 dBm strong, −67 dBm good for calls and
+  video (the usual target), −75 fair, −82 weak, weaker. The legend says which share of the points is covered at −67 dBm or
+  better.
+- **2.4 / 5 / 6 GHz:** the same per band.
+- **One access point:** its own coverage.
+- **Overlap:** how many of your access points are heard at −67 dBm or better. Two or more lets clients roam; on one channel they
+  share the air.
+
+Each point shows its value. Surveys are kept until you delete them.
