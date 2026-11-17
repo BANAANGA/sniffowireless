@@ -897,9 +897,10 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
           <button class="btn primary" ${c.blocked ? 'disabled' : ''}>Start recording</button>
           <p class="faint small-text">It stops by itself after that time, or at 64 MB. A remote sensor starts within a few seconds and sends the file here when it is done (it needs version 33.2 or newer).</p></form>
         </div></section>
+        <section class="panel" style="margin-top:16px" id="cap-trig"></section>
         <section class="panel" style="margin-top:16px"><header><h2>Recordings</h2><div class="row"><span class="faint">${c.files.length} of at most ${c.max_files}</span><button class="btn small ghost" id="cap-import" type="button" title="Open a pcap or pcapng file made elsewhere (Wireshark, tcpdump, airodump-ng, ...)">Import pcap…</button>${c.files.length ? '<button class="btn small ghost" id="cap-delall" type="button">Delete all…</button>' : ''}</div></header><div class="body flush">${tableHtml(
           '<th>File</th><th>From</th><th class="num">Size</th><th class="num">Made</th><th></th>',
-          c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.sensor_name || 'This server')}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
+          c.files.map(f => `<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.sensor_name || 'This server')}${f.trigger ? `<div class="small-text"><span class="tag" title="${esc(f.trigger.detail || '')}">started by: ${esc(f.trigger.type.replace(/_/g, ' '))}</span></div>` : ''}</td><td class="num">${bytes(f.size)}</td><td class="num">${dt(f.created)}</td>
             <td class="num"><a class="btn small" href="#/frames?file=${enc(f.name)}">Open</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}/pcap" download title="As pcapng, for Wireshark">pcapng</a> <a class="btn small ghost" href="/api/captures/${enc(f.name)}" download>Download</a> <button class="btn small ghost" data-del="${esc(f.name)}">Delete</button></td></tr>`).join(''), 'No recordings yet')}</div></section>`;
       const f = el.querySelector('#capf');
       f.onsubmit = async e => { e.preventDefault();
@@ -916,6 +917,36 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
       if (delAll) delAll.onclick = () => window.deleteAllRecordings(c.files.length, draw);
       el.querySelector('#cap-import').onclick = () => window.importCapture(draw);
       if (a || busy.length) setTimeout(() => { if (el.isConnected && el.querySelector('#capf')) draw(); }, 2000);
+      triggers(el.querySelector('#cap-trig'));
+    };
+    // Record automatically when an event happens, with the seconds before it (triggers.py)
+    const triggers = async box => {
+      const t = await api('/api/captures/triggers');
+      const c = t.settings;
+      box.innerHTML = `<header><h2>Record automatically</h2>${c.enabled ? `<span class="tag on">on${t.armed && t.buffered ? ` · ${num(t.buffered)} frames kept` : ''}</span>` : '<span class="tag">off</span>'}</header><div class="body">
+        <p class="muted" style="margin-top:0">Starts a recording by itself when one of these events happens. The chosen sensors keep the last seconds of frames in memory, so the recording also holds what led up to it.</p>
+        ${t.blocked ? `<div class="callout"><span class="err">${esc(t.blocked)}.</span></div>` : ''}
+        <form id="trigf" class="form-narrow">
+          <label class="check"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}> Record automatically</label>
+          <div class="muted small-text">When</div><div class="trig-list">${Object.entries(t.events).map(([k, l]) => `<label class="check"><input type="checkbox" name="e-${k}" ${c.events.includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>
+          <div class="muted small-text">On</div><div class="trig-list">${t.sensors.map(x => `<label class="check"><input type="checkbox" name="s-${esc(x.id)}" ${c.sensors.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('')}</div>
+          <div class="row">${Object.entries(RADIO_NAMES).map(([k, l]) => `<label class="check"><input type="checkbox" name="r-${k}" ${c.radios.includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+          <div class="row"><label class="field">Seconds before<input type="number" name="pre" min="0" max="120" value="${c.pre}"></label>
+            <label class="field">Seconds after<input type="number" name="post" min="10" max="600" value="${c.post}"></label>
+            <label class="field">Then wait (minutes)<input type="number" name="cooldown" min="1" max="1440" value="${Math.round(c.cooldown / 60)}"></label></div>
+          <button class="btn primary">Save</button>
+          <p class="faint small-text">Keeping the seconds before costs memory while it is on (Wi-Fi data frames only with their headers). Remote sensors need release 35; the Android app records without the seconds before.</p></form>
+        ${t.fired.length ? `<h3 class="subhead">Recently</h3>${t.fired.slice(0, 8).map(x => `<div class="small-text">${dt(x.ts)} · <b>${esc(t.events[x.type] || x.type)}</b>${x.detail ? ` <span class="faint">${esc(x.detail)}</span>` : ''} → ${x.recordings.length ? x.recordings.map(esc).join(', ') : '<span class="faint">nothing recorded</span>'}${x.skipped.length ? ` <span class="warn-text">(${esc(x.skipped.join('; '))})</span>` : ''}</div>`).join('')}` : ''}
+      </div>`;
+      const f = box.querySelector('#trigf');
+      f.onsubmit = async e => { e.preventDefault();
+        try {
+          await send('PUT', '/api/captures/triggers', { enabled: f.enabled.checked, events: Object.keys(t.events).filter(k => f[`e-${k}`].checked),
+            sensors: t.sensors.map(x => x.id).filter(id => f[`s-${id}`].checked), radios: Object.keys(RADIO_NAMES).filter(k => f[`r-${k}`].checked),
+            pre: +f.pre.value, post: +f.post.value, cooldown: +f.cooldown.value * 60 });
+          toast('Saved');
+        } catch (err) { toast(err.message, true); }
+        triggers(box); };
     };
     await draw();
   },

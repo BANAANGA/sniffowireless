@@ -9,6 +9,9 @@ DEFAULTS = {
     "ignore": {"macs": [], "prefixes": [], "ssids": []},  # ssids: [{"ssid": str, "clients": bool}]
     # "My networks": enables network-health views and evil-twin detection.
     "networks": {"ssids": [], "trusted_bssids": []},
+    # automatic recording when an event happens (triggers.py): which events, on which sensors, how much before and after
+    "triggers": {"enabled": False, "events": ["connection_failed", "roam_slow", "deauth_flood"], "sensors": ["local"], "radios": ["wifi"],
+                 "pre": 30, "post": 60, "cooldown": 600},
     # 4-way-handshake capture, for auditing your own password strength. Only ever takes effect for SSIDs
     # also present in "networks" above (see sniffowireless/handshake.py) — removing one from "My networks" stops it.
     "handshake": {"ssids": []},

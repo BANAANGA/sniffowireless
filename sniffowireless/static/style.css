@@ -745,3 +745,7 @@ table.cci { border-collapse: collapse; font-size: 12px; }
 table.cci th, table.cci td { padding: 4px 6px; border: 1px solid var(--border); text-align: center; white-space: nowrap; }
 table.cci tbody th { text-align: left; font-weight: 400; }
 table.cci thead th { font-weight: 400; vertical-align: bottom; }
+
+/* automatic recording: the events and sensors to choose (views.js capture) */
+.trig-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 14px; margin: 4px 0 10px; }
+.trig-list .check { justify-content: flex-start; text-align: left; align-items: flex-start; }
