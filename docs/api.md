@@ -28,6 +28,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/alerts`, `/api/alert-rules` | Alert history and rules |
 | `GET /api/security` | Findings, my-network BSSIDs, security events |
 | `GET /api/channels?hours=24` | Channel survey and recommendations |
+| `GET /api/channels/cci?hours=24` | Where your access points overlap, which channels they share there, and a channel plan |
 | `GET /api/joins?hours=24&mine_only=true` | Connection attempts, failures by cause and roams of every client (of your access points) |
 | `GET /api/joins/{mac}?hours=24` | One client's connection attempts step by step, its roams and its disconnects |
 | `GET /api/link?hours=24&bssid=` | Link quality of every client (of one access point), the worst first |

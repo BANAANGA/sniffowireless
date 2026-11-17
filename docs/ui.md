@@ -48,6 +48,8 @@
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
+  - **co-channel interference** between your own access points, and a channel plan for all of them (see [Co-channel interference](#co-channel-interference))
+
   - **Beacon overhead:** per channel, the share of the airtime beacons alone take, with the number of BSSIDs, SSIDs, radios and beacons per second; a row opens the access points behind it (see [Beacon overhead](#beacon-overhead))
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
@@ -156,6 +158,57 @@ On any device page an admin can set a **label** ("Sam's iPhone") and notes, and 
 
 A device can also be put in a **group**. *Possibly the same physical device* lists other MACs with the same probe fingerprint (or name) that were never present at the same time, which is typical of MAC rotation. One click adds them to the group.
 
+## Beacon overhead
+
+Every access point sends a beacon for each SSID it offers, about ten times a second, at its lowest basic rate so that every client
+can decode it. On 2.4 GHz that is often still 1 Mb/s, where one beacon of 300 bytes takes 2.6 ms: about 2.5 % of the channel, per
+SSID, per access point. Many SSIDs on many access points sharing a channel leave less airtime for traffic.
+
+The Channels page adds this up per channel from the access points heard in the last hour. Each beacon's interval, lowest basic rate
+and size come from the beacons themselves. A sensor older than release 34 does not report rate and size; then 1 Mb/s (2.4 GHz)
+or 6 Mb/s (5 / 6 GHz) and 300 bytes are assumed, marked with a `?`. Access points weaker than -82 dBm are not counted: below that
+level a radio does not detect their preamble and does not wait for them. The figure is the time the frames are on the air,
+without the gaps and backoff around them, so the real overhead is a little higher.
+
+Under 10 % is fine, 10–20 % is high, and over 20 % is a problem. Above the table, tips for your own networks (those under
+*My networks*):
+
+- **A beacon rate of 1 or 2 Mb/s on 2.4 GHz.** It shows what the beacons would take with 12 Mb/s as the lowest basic rate.
+  Only clients that can do nothing but 802.11b would no longer join.
+- **One radio with four SSIDs or more.** BSSIDs that differ only in the last digit count as one radio. It shows what each SSID
+  costs.
+- **A beacon interval below 100 TU.**
+
+## Link quality
+
+A Wi-Fi sensor reads the radiotap header and frame control of every data frame between a client and its access point, in
+both directions. Once a minute it reports per client and direction:
+
+- how many data frames it heard (null frames left out)
+- how many of them had the retry bit set: sent before and not acknowledged
+- how many went at each PHY rate and at each MCS, with the number of spatial streams and the channel width
+- for the client's own frames, the average signal
+
+HT, VHT and HE rates are worked out from MCS, streams, width and guard interval. The server adds the minutes up per hour.
+
+A **client's** device page shows its *Link quality* for the last 24 hours, each way: data frames, retries, median rate and MCS,
+PHY (Wi-Fi 4/5/6, streams, width) and signal, with a bar chart of the frames per MCS. An **access point's** page lists its
+clients, the worst first, and *My networks* lists the clients of your access points that have a problem. Each direction gets a
+verdict:
+
+| Verdict | What it looks like | What it usually means |
+|---|---|---|
+| *interference* | 25 % retries or more while the median MCS stays at 5 or higher | The signal is fine but frames get lost: interference, a hidden node, a busy channel |
+| *weak and lossy* | 25 % retries or more at a low MCS | Too far away, with losses on top |
+| *weak signal* | median MCS 3 or lower, few retries | The link slowed down to what the distance allows; a closer access point would help |
+| *legacy rates* | no MCS, only 802.11a/b/g rates | An old radio, or a driver that reports no MCS. 802.11b rates (1–11 Mb/s) only: a very old radio or a very weak link |
+| *some retries* | 10–25 % retries | More than the usual few percent |
+| *healthy* | a good rate, few retries | |
+
+Fewer than 50 data frames is too little to judge. A sensor hears a client only while it is tuned to that channel, so the
+figures are a sample. Frames the sensor did not hear (too weak where it stands) are not counted. Remote sensors need release
+34 or newer. The Android app does not report link quality yet.
+
 ## Connections and roaming
 
 "Why can't this device connect?" Before a client can send data it goes through a fixed sequence of frames. All of them are sent
@@ -199,53 +252,28 @@ A sensor that hops channels hears only part of a connection, because it is on an
 the channel of the access point you are troubleshooting (Settings → Wi-Fi channels) to hear all of it. The same frame heard by two
 sensors within 0.25 s is kept once. Remote sensors need release 34 or newer.
 
-## Link quality
+## Co-channel interference
 
-A Wi-Fi sensor reads the radiotap header and frame control of every data frame between a client and its access point, in
-both directions. Once a minute it reports per client and direction:
+Two of your access points on the same channel share its airtime wherever a radio hears both at -82 dBm or stronger. That is the
+level at which Wi-Fi defers to another transmission, so a client there waits for either one. sniffowireless cannot hear what an
+access point hears, but it knows how loud each sensor hears each access point. When one sensor hears two of your radios both at
+-82 dBm or stronger, they overlap there, by the weaker of the two signals. With sensors in several rooms that shows where your
+access points meet.
 
-- how many data frames it heard (null frames left out)
-- how many of them had the retry bit set: sent before and not acknowledged
-- how many went at each PHY rate and at each MCS, with the number of spatial streams and the channel width
-- for the client's own frames, the average signal
+The Channels page shows, for your networks (Settings → My networks):
 
-HT, VHT and HE rates are worked out from MCS, streams, width and guard interval. The server adds the minutes up per hour.
+- **Where channels are shared:** at each sensor, a channel that two of your radios (or one of yours and neighbours' access
+  points) use.
+- **An overlap matrix per band:** how loud each pair of your radios is heard together. Red: the same channel. Amber: overlapping
+  channels (on 2.4 GHz, channels less than 5 apart; on 5 and 6 GHz, the same 80 MHz block). Hover a cell to see where.
+- **A channel plan** for all your radios together: 1/6/11 on 2.4 GHz, the non-DFS channels on 5 GHz (a radio already on a DFS
+  channel may stay there), and the preferred scanning channels on 6 GHz. It weighs:
+  - your own radios that are heard together, by how loud
+  - the neighbours' access points they hear
+  - the measured airtime per channel
 
-A **client's** device page shows its *Link quality* for the last 24 hours, each way: data frames, retries, median rate and MCS,
-PHY (Wi-Fi 4/5/6, streams, width) and signal, with a bar chart of the frames per MCS. An **access point's** page lists its
-clients, the worst first, and *My networks* lists the clients of your access points that have a problem. Each direction gets a
-verdict:
+  Each change counts as a small cost (clients reconnect), so it only suggests changes that clearly help.
 
-| Verdict | What it looks like | What it usually means |
-|---|---|---|
-| *interference* | 25 % retries or more while the median MCS stays at 5 or higher | The signal is fine but frames get lost: interference, a hidden node, a busy channel |
-| *weak and lossy* | 25 % retries or more at a low MCS | Too far away, with losses on top |
-| *weak signal* | median MCS 3 or lower, few retries | The link slowed down to what the distance allows; a closer access point would help |
-| *legacy rates* | no MCS, only 802.11a/b/g rates | An old radio, or a driver that reports no MCS. 802.11b rates (1–11 Mb/s) only: a very old radio or a very weak link |
-| *some retries* | 10–25 % retries | More than the usual few percent |
-| *healthy* | a good rate, few retries | |
-
-Fewer than 50 data frames is too little to judge. A sensor hears a client only while it is tuned to that channel, so the
-figures are a sample. Frames the sensor did not hear (too weak where it stands) are not counted. Remote sensors need release
-34 or newer. The Android app does not report link quality yet.
-
-## Beacon overhead
-
-Every access point sends a beacon for each SSID it offers, about ten times a second, at its lowest basic rate so that every client
-can decode it. On 2.4 GHz that is often still 1 Mb/s, where one beacon of 300 bytes takes 2.6 ms: about 2.5 % of the channel, per
-SSID, per access point. Many SSIDs on many access points sharing a channel leave less airtime for traffic.
-
-The Channels page adds this up per channel from the access points heard in the last hour. Each beacon's interval, lowest basic rate
-and size come from the beacons themselves. A sensor older than release 34 does not report rate and size; then 1 Mb/s (2.4 GHz)
-or 6 Mb/s (5 / 6 GHz) and 300 bytes are assumed, marked with a `?`. Access points weaker than -82 dBm are not counted: below that
-level a radio does not detect their preamble and does not wait for them. The figure is the time the frames are on the air,
-without the gaps and backoff around them, so the real overhead is a little higher.
-
-Under 10 % is fine, 10–20 % is high, and over 20 % is a problem. Above the table, tips for your own networks (those under
-*My networks*):
-
-- **A beacon rate of 1 or 2 Mb/s on 2.4 GHz.** It shows what the beacons would take with 12 Mb/s as the lowest basic rate.
-  Only clients that can do nothing but 802.11b would no longer join.
-- **One radio with four SSIDs or more.** BSSIDs that differ only in the last digit count as one radio. It shows what each SSID
-  costs.
-- **A beacon interval below 100 TU.**
+The BSSIDs of one radio (one per SSID, differing in the last digit) count as one radio. The channel widths an access point uses
+are not known from what is heard, which is why the same 80 MHz block counts as half a conflict. With one sensor, the overlaps
+are those at that one spot.
