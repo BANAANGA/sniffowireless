@@ -92,6 +92,11 @@ for _fp in WIFI_FPS.values():  # example capability details (the real ones come 
     _fp["capinfo"] = ({"caps": ["802.11v BSS transition", "802.11k radio measurement", "LDPC", "MU-MIMO beamformee"], "dsss": False,
                        "chan_count": 25, "txp": [0, 17]} if _fp.get("gen", 0) >= 5 else
                       {"caps": ["LDPC"], "dsss": True, "chan_count": 11, "txp": [0, 20]})
+    # what an association request says: the key management chosen (where WPA3 was offered too), PMF, and the bands
+    g = _fp.get("gen", 0)
+    _fp["capinfo"].update({"akm": ["SAE"] if g >= 6 else ["PSK"], "pmf": "optional" if g >= 5 else "off",
+                           "opcls": [81, 115, 128, 131] if g >= 6 else [81, 115, 128] if g == 5 else [81, 83, 84]})
+WIFI_FPS["5c:aa:fd:01:00:09"]["capinfo"]["akm"] = ["PSK"]   # a speaker that does Wi-Fi 5 but not WPA3
 # random-MAC passers-by fall into three device families, showing probe-fingerprint grouping
 PASSER_FPS = [WIFI_FPS["a4:83:e7:01:00:01"], WIFI_FPS["3e:12:aa:01:00:0c"], wifi_fp(**WINDOWS_PC)]
 

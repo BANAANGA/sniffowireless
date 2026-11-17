@@ -272,8 +272,15 @@ def client_caps(elts):
             out["txp"] = [lo, hi]
         elif eid == 59 and info:
             out["opcls"] = list(info[:16])
+        elif eid == 48:  # RSN in an association request: the key management the client chose, and whether it does PMF
+            r = parse_rsn(info)
+            if r:
+                out["akm"] = r["akm"][:4]
+                out["pmf"] = r["pmf"]
     if rates:
         out["dsss"] = bool(rates & LEGACY_RATES)  # False: no 802.11b rates, so a modern device
+        if not rates - LEGACY_RATES:
+            out["b_only"] = True                  # nothing but 802.11b rates
     seen = []
     for c in caps:
         if c not in seen:
