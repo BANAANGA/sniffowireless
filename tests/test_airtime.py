@@ -1,4 +1,4 @@
-"""Who uses the airtime (release 35): per channel, the share of the listening time each device's data frames were on the air."""
+"""Who uses the airtime (release 34.1): per channel, the share of the listening time each device's data frames were on the air."""
 import json
 import sqlite3
 import time

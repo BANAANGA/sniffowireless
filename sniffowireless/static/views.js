@@ -935,7 +935,7 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
             <label class="field">Seconds after<input type="number" name="post" min="10" max="600" value="${c.post}"></label>
             <label class="field">Then wait (minutes)<input type="number" name="cooldown" min="1" max="1440" value="${Math.round(c.cooldown / 60)}"></label></div>
           <button class="btn primary">Save</button>
-          <p class="faint small-text">Keeping the seconds before costs memory while it is on (Wi-Fi data frames only with their headers). Remote sensors need release 35; the Android app records without the seconds before.</p></form>
+          <p class="faint small-text">Keeping the seconds before costs memory while it is on (Wi-Fi data frames only with their headers). Remote sensors need release 34.1, the Android app 1.6.0.</p></form>
         ${t.fired.length ? `<h3 class="subhead">Recently</h3>${t.fired.slice(0, 8).map(x => `<div class="small-text">${dt(x.ts)} · <b>${esc(t.events[x.type] || x.type)}</b>${x.detail ? ` <span class="faint">${esc(x.detail)}</span>` : ''} → ${x.recordings.length ? x.recordings.map(esc).join(', ') : '<span class="faint">nothing recorded</span>'}${x.skipped.length ? ` <span class="warn-text">(${esc(x.skipped.join('; '))})</span>` : ''}</div>`).join('')}` : ''}
       </div>`;
       const f = box.querySelector('#trigf');

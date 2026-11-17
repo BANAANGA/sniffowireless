@@ -300,7 +300,7 @@ the same data would take at 100 Mb/s. For a client that means a weak signal or a
 are far away or old, or low basic rates.
 
 *All airtime* is everything the sensor measured on the channel (management frames and other networks included), so the
-devices' data is a part of it. Sensors before release 35 do not count frame sizes; 600 bytes per frame is assumed for their
+devices' data is a part of it. Sensors before release 34.1 do not count frame sizes; 600 bytes per frame is assumed for their
 data, marked with a `?`.
 
 ## BSS colours and channel widths
@@ -321,7 +321,7 @@ flagged, as *yours* for your own networks and as *neighbour* for the others:
   with four or more in the same 80 MHz. A narrower channel to itself is often faster.
 
 Below that: how many access points use each width per band, and the colour and width of each of yours. Remote sensors need
-release 35 to report widths.
+release 34.1 to report widths.
 
 ## Client readiness
 
@@ -340,7 +340,7 @@ shows for the clients that connected to your networks (in the period chosen, at 
 
 Each card opens the list of clients it would leave behind. Below: generations, streams, widths and 802.11k/v/r support, and a
 table of every client. A client that never sent the element a question needs is *not known* (`?`), not a yes or a no.
-Remote sensors need release 35 for the key management and PMF of a client.
+Remote sensors need release 34.1 for the key management and PMF of a client.
 
 ## Audit report
 

@@ -1,4 +1,4 @@
-"""Client readiness (release 35): what the clients of my networks can do, and who a change would leave behind."""
+"""Client readiness (release 34.1): what the clients of my networks can do, and who a change would leave behind."""
 import json
 import time
 

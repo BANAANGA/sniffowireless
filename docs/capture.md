@@ -137,7 +137,7 @@ for the seconds after. A remote sensor sends the file here when it is done, as f
 the others, with the event that started it. *Recently* shows the last events that started one, and what was recorded or why not.
 
 Like any recording, nothing is kept or recorded while MAC address privacy is on, and nothing is started when there are 20
-recordings already. Remote sensors need release 35 for the seconds before. The Android app records the seconds after only.
+recordings already. Remote sensors need release 34.1 for the seconds before, the Android app 1.6.0.
 
 ## Wireshark: pcapng export and import
 

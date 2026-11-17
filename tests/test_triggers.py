@@ -1,4 +1,4 @@
-"""Automatic recording (release 35): a recording that starts by itself when an event happens, with the seconds before it."""
+"""Automatic recording (release 34.1): a recording that starts by itself when an event happens, with the seconds before it."""
 import gzip
 import json
 import os

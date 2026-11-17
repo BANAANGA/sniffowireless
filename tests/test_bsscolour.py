@@ -1,4 +1,4 @@
-"""BSS colour collisions and channel widths (release 35)."""
+"""BSS colour collisions and channel widths (release 34.1)."""
 import json
 import struct
 import time

@@ -1,4 +1,4 @@
-"""Walk survey (release 35): tap where you stand, and the readings of the sensor you carry become a point of the heatmap."""
+"""Walk survey (release 34.1): tap where you stand, and the readings of the sensor you carry become a point of the heatmap."""
 import time
 
 from test_hardening import client, ctx  # noqa: F401  (ctx is a fixture)
