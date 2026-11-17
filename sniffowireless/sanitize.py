@@ -219,6 +219,20 @@ def remote_observation(o, now):
             r[k] = clean_num(o.get(k), 0, 10 ** 12, True) or 0
         r["noise_sum"] = clean_num(o.get("noise_sum"), -10 ** 9, 0, True) or 0
         return r
+    if t == "join":   # one step of a client's connection (joins.py)
+        from .joins import STEPS
+        mac, bssid = clean_mac(o.get("mac")), clean_mac(o.get("bssid"))
+        if mac is None or o.get("step") not in STEPS:
+            return None
+        r = {"t": t, "ts": ts, "mac": mac, "bssid": bssid, "step": o["step"], "from_ap": bool(o.get("from_ap"))}
+        for k, lo, hi in (("code", 0, 65535), ("algo", 0, 65535), ("seq", 0, 65535), ("rssi", -120, 0)):
+            v = clean_num(o.get(k), lo, hi, True)
+            if v is not None:
+                r[k] = v
+        d = o.get("detail")
+        if isinstance(d, str):
+            r["detail"] = clean_mac(d) or clean_str(d, 32)
+        return r
     if t == "link":   # one client's data frames in one direction over a minute (linkstats.py)
         mac, bssid = clean_mac(o.get("mac")), clean_mac(o.get("bssid"))
         if mac is None or o.get("dir") not in ("up", "down"):

@@ -575,7 +575,7 @@ class Store:
         if t == "_cmd":
             o["fn"](self)
             return
-        if t in ("chan", "link", "lan_traffic", "dhcp_server", "zb_network", "zb_energy", "zb_frames", "lora_frame"):  # aggregate observations, handled by plugins
+        if t in ("chan", "link", "join", "lan_traffic", "dhcp_server", "zb_network", "zb_energy", "zb_frames", "lora_frame"):  # aggregate observations, handled by plugins
             if self.macpriv is not None:
                 o = self.macpriv.scrub(o)
             for h in self.hooks:
