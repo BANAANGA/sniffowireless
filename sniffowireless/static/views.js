@@ -323,6 +323,7 @@ addRoute('/channels', async (_, params) => {
         c.channels.map(x => `<tr class="link" data-freq="${x.freq}"><td>${chText(x.channel, x.band)} <span class="faint">${x.freq} MHz</span>${x.band === '5' && x.channel >= 52 && x.channel <= 144 ? ' <span class="tag" title="DFS channel: shared with radar">DFS</span>' : ''}</td><td class="num">${x.aps}</td><td class="num">${x.strongest != null ? x.strongest + ' dBm' : '—'}</td>
           <td class="num"><span class="meter"><i style="width:${Math.round((x.utilization || 0) * 100)}%"></i></span> ${x.utilization != null ? Math.round(x.utilization * 100) + '%' : '—'}</td>
           <td class="num">${x.retry_rate != null ? (x.retry_rate * 100).toFixed(1) + '%' : '—'}</td><td class="num muted">${x.noise != null ? x.noise + ' dBm' : '—'}</td><td class="num muted">${x.fps ?? '—'}</td></tr>`).join(''), 'No measurements')}</div></section>
+      <section class="panel span-3" id="beacons"></section>
       <section class="panel span-3" id="cci" hidden></section>
       <section class="panel span-3" id="dfs"></section>
       <section class="panel span-3" id="intf"></section>
@@ -331,6 +332,7 @@ addRoute('/channels', async (_, params) => {
   onSeg(app, 'hours', v => { location.hash = hrefWith('/channels', { hours: v }); });
   loadInterference(document.getElementById('intf'), Math.max(1, Math.min(30, hours / 24)));
   loadDfs(document.getElementById('dfs'), Math.max(1, Math.min(30, hours / 24)));
+  loadBeacons(document.getElementById('beacons'));
   loadCci(document.getElementById('cci')).catch(() => {});
   ['2.4', '5', '6'].forEach(b => {
     const rows = c.channels.filter(x => x.band === b);
@@ -384,6 +386,8 @@ addRoute('/mynet', async (_, params) => {
           <td class="num muted">${c.sessions}</td><td class="num muted">${c.aps}</td><td class="num">${c.roams}${c.pingpong ? ` <span class="tag warn" title="A→B→A within 2 minutes">${c.pingpong} ping-pong</span>` : ''}</td>
           <td class="num ${c.kicked ? '' : 'muted'}">${c.kicked}</td><td>${c.sticky ? '<span class="tag warn">sticky</span>' : ''}${c.connected_band === '2.4' && c.wifi_gen >= 5 ? ' <span class="tag" title="Supports 5 GHz but is on 2.4 GHz">on 2.4G</span>' : ''}
             ${c.weak_choice_sessions ? ` <span class="tag warn" title="${c.weak_choice_sessions} of ${c.choice_sessions} sessions on a sibling AP connected weak while this client was in range of a stronger one">weak AP ${c.weak_choice_sessions}/${c.choice_sessions}</span>` : ''}</td></tr>`).join(''))}</div></section>
+      <section class="panel span-3" id="mn-joins" hidden></section>
+      <section class="panel span-3" id="mn-link" hidden></section>
       <section class="panel span-3"><header><h2>Network changes</h2><span class="faint">channel moves and security findings on my networks</span></header><div class="body flush" id="mn-changes"><div class="empty">Loading…</div></div></section>
     </div>`;
   linkRows(app);
@@ -396,6 +400,18 @@ addRoute('/mynet', async (_, params) => {
         <span>${devLink(x.mac)} <b>${esc(x.title)}</b>${x.detail ? ` <span class="faint">${esc(x.detail)}</span>` : ''}
           ${x.severity ? sevTag(x.severity) : ''}${x.status === 'resolved' ? ' <span class="tag on">resolved</span>' : ''}</span></li>`).join('')}</ul>`
       : '<div class="empty">No changes recorded in this period</div>';
+  }).catch(() => {});
+  loadSiteJoins(document.getElementById('mn-joins'), days).catch(() => {});
+  const mine = new Set(n.aps.map(a => a.mac));
+  api(`/api/link?hours=${days * 24}`).then(r => {   // the clients of my access points whose link has a problem
+    const el = document.getElementById('mn-link');
+    const bad = r.clients.filter(c => mine.has(c.bssid) && ['bad', 'warn'].includes(c.verdict.level));
+    const all = r.clients.filter(c => mine.has(c.bssid));
+    if (!all.length) return;
+    el.hidden = false;
+    el.innerHTML = `<header><h2>Link quality</h2><span class="faint">${bad.length} of ${all.length} clients with a problem in their data frames (rates, MCS, retries)</span></header>
+      <div class="body flush">${bad.length ? linkTable(bad) : '<div class="empty">Every client with enough data frames has a healthy link.</div>'}</div>`;
+    linkRows(el);
   }).catch(() => {});
   const colors = [KINDS.wifi_client.color, KINDS.ap.color, KINDS.ble.color, KINDS.bt_classic.color];
   const tl = n.timeline;

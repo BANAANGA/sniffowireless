@@ -41,11 +41,16 @@
   - **sticky clients** (connected below −75 dBm while another of your APs is available)
   - clients capable of 5 GHz that sit on 2.4 GHz
   - disconnect reasons (timeouts vs. deauth reason codes)
+  - **connections & roaming:** failed connection attempts by cause, and every roam with its method and duration (see [Connections and roaming](#connections-and-roaming))
+
+  - **link quality:** the clients of your access points whose data frames point to a problem (see [Link quality](#link-quality))
 - **Channels:** for each channel the sensor hops over:
   - estimated airtime use, retransmission rate, noise floor, frames/s and neighbouring APs
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
   - **co-channel interference** between your own access points, and a channel plan for all of them (see [Co-channel interference](#co-channel-interference))
+
+  - **Beacon overhead:** per channel, the share of the airtime beacons alone take, with the number of BSSIDs, SSIDs, radios and beacons per second; a row opens the access points behind it (see [Beacon overhead](#beacon-overhead))
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
@@ -152,6 +157,100 @@ On any device page an admin can set a **label** ("Sam's iPhone") and notes, and 
 - **watched:** included in arrive/leave alerts
 
 A device can also be put in a **group**. *Possibly the same physical device* lists other MACs with the same probe fingerprint (or name) that were never present at the same time, which is typical of MAC rotation. One click adds them to the group.
+
+## Beacon overhead
+
+Every access point sends a beacon for each SSID it offers, about ten times a second, at its lowest basic rate so that every client
+can decode it. On 2.4 GHz that is often still 1 Mb/s, where one beacon of 300 bytes takes 2.6 ms: about 2.5 % of the channel, per
+SSID, per access point. Many SSIDs on many access points sharing a channel leave less airtime for traffic.
+
+The Channels page adds this up per channel from the access points heard in the last hour. Each beacon's interval, lowest basic rate
+and size come from the beacons themselves. A sensor older than release 34 does not report rate and size; then 1 Mb/s (2.4 GHz)
+or 6 Mb/s (5 / 6 GHz) and 300 bytes are assumed, marked with a `?`. Access points weaker than -82 dBm are not counted: below that
+level a radio does not detect their preamble and does not wait for them. The figure is the time the frames are on the air,
+without the gaps and backoff around them, so the real overhead is a little higher.
+
+Under 10 % is fine, 10–20 % is high, and over 20 % is a problem. Above the table, tips for your own networks (those under
+*My networks*):
+
+- **A beacon rate of 1 or 2 Mb/s on 2.4 GHz.** It shows what the beacons would take with 12 Mb/s as the lowest basic rate.
+  Only clients that can do nothing but 802.11b would no longer join.
+- **One radio with four SSIDs or more.** BSSIDs that differ only in the last digit count as one radio. It shows what each SSID
+  costs.
+- **A beacon interval below 100 TU.**
+
+## Link quality
+
+A Wi-Fi sensor reads the radiotap header and frame control of every data frame between a client and its access point, in
+both directions. Once a minute it reports per client and direction:
+
+- how many data frames it heard (null frames left out)
+- how many of them had the retry bit set: sent before and not acknowledged
+- how many went at each PHY rate and at each MCS, with the number of spatial streams and the channel width
+- for the client's own frames, the average signal
+
+HT, VHT and HE rates are worked out from MCS, streams, width and guard interval. The server adds the minutes up per hour.
+
+A **client's** device page shows its *Link quality* for the last 24 hours, each way: data frames, retries, median rate and MCS,
+PHY (Wi-Fi 4/5/6, streams, width) and signal, with a bar chart of the frames per MCS. An **access point's** page lists its
+clients, the worst first, and *My networks* lists the clients of your access points that have a problem. Each direction gets a
+verdict:
+
+| Verdict | What it looks like | What it usually means |
+|---|---|---|
+| *interference* | 25 % retries or more while the median MCS stays at 5 or higher | The signal is fine but frames get lost: interference, a hidden node, a busy channel |
+| *weak and lossy* | 25 % retries or more at a low MCS | Too far away, with losses on top |
+| *weak signal* | median MCS 3 or lower, few retries | The link slowed down to what the distance allows; a closer access point would help |
+| *legacy rates* | no MCS, only 802.11a/b/g rates | An old radio, or a driver that reports no MCS. 802.11b rates (1–11 Mb/s) only: a very old radio or a very weak link |
+| *some retries* | 10–25 % retries | More than the usual few percent |
+| *healthy* | a good rate, few retries | |
+
+Fewer than 50 data frames is too little to judge. A sensor hears a client only while it is tuned to that channel, so the
+figures are a sample. Frames the sensor did not hear (too weak where it stands) are not counted. Remote sensors need release
+34 or newer. The Android app does not report link quality yet.
+
+## Connections and roaming
+
+"Why can't this device connect?" Before a client can send data it goes through a fixed sequence of frames. All of them are sent
+before the keys are in place, so a sensor nearby can read them:
+
+1. **Authentication:** Open, SAE (WPA3) or Fast BSS Transition (802.11r)
+2. **(Re)association:** with a status code in the response
+3. **802.1X / EAP** on enterprise networks: the EAP method, then EAP-Success or EAP-Failure
+4. **4-way handshake:** EAPOL-Key messages 1 to 4
+
+Deauthentication and disassociation (with their reason codes), 802.11v BSS transition requests and responses, and 802.11k
+neighbour reports are read too. A Wi-Fi sensor picks these steps out of every frame it hears; only the step, the addresses, the
+codes and the time are kept, nothing of the keys. At most 60 steps per client per 10 seconds are kept, so a deauthentication
+flood does not fill the database.
+
+The server groups a client's steps into **attempts**: one connection to one access point, from the first step to the end of the
+4-way handshake, or to the step that failed. The step that failed is named and explained:
+
+| What is heard | Cause |
+|---|---|
+| Message 1 and 2 again and again, never message 3, then a deauthentication | **Wrong password**: the client's message 2 does not check out against the network's password |
+| Message 1 again and again, no answer | The client did not answer the handshake (out of range, or its supplicant gave up) |
+| Association response with status 17 | Access point full |
+| Status 31 / 30 | Management frame protection (PMF) settings do not match / try again later |
+| Status 13 / 43 | The client asked for an authentication or key management method the network does not offer (e.g. WPA3 on a WPA2 network) |
+| EAP-Failure | 802.1X login rejected: wrong credentials, an untrusted or expired certificate, or a RADIUS policy |
+| A deauthentication during the attempt | Its reason code, with an explanation |
+
+An attempt that was only partly heard is marked *incomplete*.
+
+A **roam** is a reassociation to another access point while the client was connected to another one less than an hour before.
+Its duration is the time from the first frame to the access point it moves to, until the connection is complete. Each roam shows
+its method (FT for 802.11r, else the 4-way handshake that follows the reassociation; 802.1X when a full EAP login was needed)
+and whether the access point steered it with an 802.11v BSS transition request. Under 50 ms is *fast*, up to 150 ms *ok*, and
+anything slower can be heard as a gap in a call.
+
+A client's device page lists its attempts step by step (with the time of each step), its roams and its disconnects for the last
+7 days. *My networks* sums them up for your access points: attempts, failures by cause, the roams and their median time.
+
+A sensor that hops channels hears only part of a connection, because it is on another channel most of the time. Set a sensor to
+the channel of the access point you are troubleshooting (Settings → Wi-Fi channels) to hear all of it. The same frame heard by two
+sensors within 0.25 s is kept once. Remote sensors need release 34 or newer.
 
 ## Co-channel interference
 

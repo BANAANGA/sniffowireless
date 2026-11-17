@@ -984,6 +984,8 @@ async function viewDevice(mac, params) {
       <section class="panel"><header><h2>Weekly pattern</h2><span class="faint">minutes present, last 4 weeks</span></header><div class="body" id="heat"></div></section>
       <section class="panel span-3"><header><h2>Presence &amp; connectivity timeline</h2><span class="faint" id="gantt-sub"></span></header><div class="body" id="gantt"></div></section>
       ${isAp ? `<section class="panel span-3"><header><h2>Connected clients over time</h2></header><div class="body"><div class="chart-box short"><canvas id="clients"></canvas></div></div></section>` : ''}
+      ${d.kind === 'wifi_client' ? '<section class="panel span-3" id="joins" hidden></section>' : ''}
+      ${isAp || d.kind === 'wifi_client' ? '<section class="panel span-3" id="linkq" hidden></section>' : ''}
       <section class="panel span-2"><header><h2>${isAp ? 'Clients' : 'Connected to'}</h2><span class="faint">${d.peers.length} total</span></header><div class="body flush table-wrap" id="peers"></div></section>
       <section class="panel"><header><h2>${isAp ? 'Same SSID' : 'Probed networks'}</h2></header><div class="body flush table-wrap" id="side"></div></section>
       <section class="panel span-2"><header><h2>Sessions</h2>${seg('stype', [['assoc', 'Connections'], ['presence', 'Visits']], isAp ? 'presence' : 'assoc')}</header><div class="body flush table-wrap" id="sessions"></div></section>
@@ -1046,6 +1048,8 @@ async function viewDevice(mac, params) {
       <td class="num muted">${dt(p.first)}</td><td class="num muted">${p.connected ? '<span class="tag on">now</span>' : ago(p.last)}</td></tr>`).join('')}
     </tbody></table>` : `<div class="empty">${isAp ? 'No clients observed' : 'No connections observed'}</div>`;
   linkRows(peers);
+  loadJoins(document.getElementById('joins'), d.mac).catch(() => {});
+  loadLinkQuality(document.getElementById('linkq'), d.mac, isAp).catch(() => {});
 
   const side = document.getElementById('side');
   if (isAp) {

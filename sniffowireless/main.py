@@ -109,6 +109,10 @@ def build(cfg):
     ctx.alerts = AlertEngine(ctx)
     ctx.security = SecurityMonitor(ctx)
     ctx.survey = SurveyCollector(ctx)
+    from .joins import JoinCollector
+    ctx.joins = JoinCollector(ctx)
+    from .linkstats import LinkCollector
+    ctx.links = LinkCollector(ctx)
     ctx.location = LocationTracker(ctx)
     ctx.reports = ReportScheduler(ctx)
     ctx.lan = LanMonitor(ctx)
@@ -127,7 +131,7 @@ def build(cfg):
     ctx.radiowatch = RadioWatch(ctx)
     from .baseline import BaselineMonitor
     ctx.baseline = BaselineMonitor(ctx)
-    store.hooks += [ctx.security, ctx.survey, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
+    store.hooks += [ctx.security, ctx.survey, ctx.links, ctx.joins, ctx.location, ctx.lan, ctx.interference, ctx.trackers, ctx.investigate, ctx.dfs,
                     ctx.zigbee, ctx.lora, ctx.radiowatch, ctx.baseline]
     store.listeners += [ctx.alerts.on_events, ctx.mqtt.on_events]
     store.set_retention(ctx.settings.get("retention"))

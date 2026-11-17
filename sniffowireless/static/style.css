@@ -728,6 +728,18 @@ header:has(> .radio-filter) { flex-wrap: wrap; row-gap: 8px; }
 .fx-live .field { margin: 0; }
 #fx-live-state { margin-top: 8px; color: var(--muted); }
 
+/* connection attempts (joins.js) */
+.join-list { display: flex; flex-direction: column; gap: 8px; }
+.join { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.join.failed { border-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+.join-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.join-step { display: inline-flex; gap: 4px; align-items: baseline; font-size: 11.5px; padding: 2px 6px; border-radius: 4px; background: var(--panel-2); white-space: nowrap; }
+.join-step i { font-style: normal; color: var(--faint); }
+.join-step b { font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
+.join-step.ap { box-shadow: inset 2px 0 0 var(--ap); }
+.join-step.cl { box-shadow: inset 2px 0 0 var(--wifi_client); }
+.join-step.bad { background: color-mix(in srgb, var(--bad) 18%, var(--panel-2)); }
+
 /* co-channel interference matrix (extras.js loadCci) */
 table.cci { border-collapse: collapse; font-size: 12px; }
 table.cci th, table.cci td { padding: 4px 6px; border: 1px solid var(--border); text-align: center; white-space: nowrap; }
