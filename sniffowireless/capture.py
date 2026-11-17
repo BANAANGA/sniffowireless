@@ -109,11 +109,11 @@ class Recorder:
         with self.lock:
             if not self.active:
                 return None
-            self.active = False
-            try:
+            try:   # close the file first: whoever sees `active` turn false may read it at once (a remote sensor uploads it)
                 self.file.close()
             finally:
                 self.file = None
+                self.active = False
         log.info("Recording stopped: %d frames in %s", self.frames, self.path)
         return self.path
 
