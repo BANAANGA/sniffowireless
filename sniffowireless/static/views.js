@@ -324,6 +324,7 @@ addRoute('/channels', async (_, params) => {
           <td class="num"><span class="meter"><i style="width:${Math.round((x.utilization || 0) * 100)}%"></i></span> ${x.utilization != null ? Math.round(x.utilization * 100) + '%' : '—'}</td>
           <td class="num">${x.retry_rate != null ? (x.retry_rate * 100).toFixed(1) + '%' : '—'}</td><td class="num muted">${x.noise != null ? x.noise + ' dBm' : '—'}</td><td class="num muted">${x.fps ?? '—'}</td></tr>`).join(''), 'No measurements')}</div></section>
       <section class="panel span-3" id="beacons"></section>
+      <section class="panel span-3" id="airtime" hidden></section>
       <section class="panel span-3" id="cci" hidden></section>
       <section class="panel span-3" id="dfs"></section>
       <section class="panel span-3" id="intf"></section>
@@ -333,6 +334,7 @@ addRoute('/channels', async (_, params) => {
   loadInterference(document.getElementById('intf'), Math.max(1, Math.min(30, hours / 24)));
   loadDfs(document.getElementById('dfs'), Math.max(1, Math.min(30, hours / 24)));
   loadBeacons(document.getElementById('beacons'));
+  loadAirtime(document.getElementById('airtime'), Math.min(hours, 168)).catch(() => {});
   loadCci(document.getElementById('cci')).catch(() => {});
   ['2.4', '5', '6'].forEach(b => {
     const rows = c.channels.filter(x => x.band === b);

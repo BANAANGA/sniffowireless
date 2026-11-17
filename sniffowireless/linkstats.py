@@ -150,8 +150,10 @@ class LinkCounter:
             if e is None:
                 if len(self.links) >= MAX_LINKS:
                     return
-                e = self.links[key] = {"bssid": _mac(bssid), "frames": 0, "retries": 0, "rates": {}, "mcs": {}, "rssi_sum": 0, "rssi_n": 0}
+                e = self.links[key] = {"bssid": _mac(bssid), "frames": 0, "retries": 0, "bytes": 0, "rates": {}, "mcs": {}, "rssi_sum": 0,
+                                       "rssi_n": 0}
             e["frames"] += 1
+            e["bytes"] += len(raw) - o   # the frame without its radiotap header: for the airtime it took
             if fc1 & 0x08:
                 e["retries"] += 1
             if p["rate"]:
@@ -179,7 +181,7 @@ class LinkCounter:
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS link_stats(
   hour INTEGER NOT NULL, mac TEXT NOT NULL, dir TEXT NOT NULL, bssid TEXT, frames INTEGER DEFAULT 0, retries INTEGER DEFAULT 0,
-  rssi_sum INTEGER DEFAULT 0, rssi_n INTEGER DEFAULT 0, rates TEXT, mcs TEXT, PRIMARY KEY(hour, mac, dir)) WITHOUT ROWID;
+  rssi_sum INTEGER DEFAULT 0, rssi_n INTEGER DEFAULT 0, rates TEXT, mcs TEXT, bytes INTEGER DEFAULT 0, PRIMARY KEY(hour, mac, dir)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_link_mac ON link_stats(mac, hour);
 """
 MIN_FRAMES = 50        # fewer data frames than this say too little to judge a link
@@ -198,22 +200,25 @@ class LinkCollector:
     def __init__(self, ctx):
         self.ctx = ctx
         ctx.store.conn.executescript(SCHEMA)
+        cols = {r[1] for r in ctx.store.conn.execute("PRAGMA table_info(link_stats)")}
+        if "bytes" not in cols:   # release 34 had no byte count
+            ctx.store.conn.execute("ALTER TABLE link_stats ADD COLUMN bytes INTEGER DEFAULT 0")
         self.pending = {}
 
     def observe(self, store, o, dev):
         if o["t"] != "link":
             return
         k = (int(o["ts"] // 3600) * 3600, o["mac"], o["dir"])
-        p = self.pending.setdefault(k, {"bssid": None, "frames": 0, "retries": 0, "rssi_sum": 0, "rssi_n": 0, "rates": {}, "mcs": {}})
+        p = self.pending.setdefault(k, {"bssid": None, "frames": 0, "retries": 0, "bytes": 0, "rssi_sum": 0, "rssi_n": 0, "rates": {}, "mcs": {}})
         p["bssid"] = o.get("bssid") or p["bssid"]
-        for f in ("frames", "retries", "rssi_sum", "rssi_n"):
+        for f in ("frames", "retries", "bytes", "rssi_sum", "rssi_n"):
             p[f] += int(o.get(f) or 0)
         _merge(p["rates"], o.get("rates"))
         _merge(p["mcs"], o.get("mcs"))
 
     def flush(self, store, c):
         for (hour, mac, way), p in self.pending.items():
-            row = c.execute("SELECT frames, retries, rssi_sum, rssi_n, rates, mcs FROM link_stats WHERE hour=? AND mac=? AND dir=?",
+            row = c.execute("SELECT frames, retries, rssi_sum, rssi_n, rates, mcs, bytes FROM link_stats WHERE hour=? AND mac=? AND dir=?",
                             (hour, mac, way)).fetchone()
             if row:
                 p["frames"] += row[0]
@@ -222,8 +227,11 @@ class LinkCollector:
                 p["rssi_n"] += row[3]
                 p["rates"] = _merge(json.loads(row[4] or "{}"), p["rates"])
                 p["mcs"] = _merge(json.loads(row[5] or "{}"), p["mcs"])
-            c.execute("INSERT OR REPLACE INTO link_stats VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (hour, mac, way, p["bssid"], p["frames"], p["retries"], p["rssi_sum"], p["rssi_n"], json.dumps(p["rates"]), json.dumps(p["mcs"])))
+                p["bytes"] += row[6] or 0
+            c.execute("INSERT OR REPLACE INTO link_stats(hour, mac, dir, bssid, frames, retries, rssi_sum, rssi_n, rates, mcs, bytes) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (hour, mac, way, p["bssid"], p["frames"], p["retries"], p["rssi_sum"], p["rssi_n"], json.dumps(p["rates"]), json.dumps(p["mcs"]),
+                       p["bytes"]))
         self.pending.clear()
 
     def prune(self, store, c, cutoff):
@@ -354,6 +362,100 @@ def clients(ctx, since, bssid=None):
     return out
 
 
+# ------------------------------------------------------------------ who uses the airtime
+LEGACY_DSSS = {1.0, 2.0, 5.5, 11.0}
+LEGACY_OFDM = {6.0, 9.0, 12.0, 18.0, 24.0, 36.0, 48.0, 54.0}
+ASSUMED_LEN = 600     # bytes per frame when a sensor (before release 35) did not count them
+HOG_SHARE, SLOW_RATE = 0.05, 24.0
+
+
+def frame_us(rate, length):
+    """Time on the air of one frame: preamble (DSSS long, OFDM, or HT/VHT/HE with its training fields) and the payload."""
+    pre = 192 if rate in LEGACY_DSSS else 20 if rate in LEGACY_OFDM else 40
+    return pre + length * 8 / rate
+
+
+def airtime_us(row):
+    """(µs on the air, median rate) of one hourly link_stats row; frames whose rate is not known go at the median rate."""
+    rates = sorted(((float(k), v) for k, v in json.loads(row["rates"] or "{}").items() if float(k) > 0), key=lambda x: x[0])
+    frames = row["frames"] or 0
+    if not frames or not rates:
+        return 0.0, None
+    length = (row["bytes"] or 0) / frames if row["bytes"] else ASSUMED_LEN
+    known = sum(v for _, v in rates)
+    acc, median = 0, rates[-1][0]
+    for k, v in rates:
+        acc += v
+        if acc >= known / 2:
+            median = k
+            break
+    us = sum(v * frame_us(k, length) for k, v in rates) + max(0, frames - known) * frame_us(median, length)
+    return us, median
+
+
+def airtime(ctx, since):
+    """Per channel: how much of the time a sensor listened there each client's and each access point's data frames were on the
+    air (clients: what they sent; access points: what they sent to their clients, plus their beacons)."""
+    from . import beacons
+    from .config import ch_to_freq
+    hour0 = int(since // 3600) * 3600
+    aps = {r["mac"]: r for r in ctx.rows("SELECT mac, ssid, channel, band, name, vendor, extra FROM devices WHERE kind='ap'")}
+    dwell = {r["freq"]: (r["dwell"] or 0) / 1000 for r in ctx.rows(
+        "SELECT freq, SUM(dwell_ms) dwell FROM channel_stats WHERE minute >= ? GROUP BY freq", (hour0,))}
+    util = {r["freq"]: r for r in ctx.rows(
+        "SELECT freq, SUM(airtime_us) air, SUM(dwell_ms) dwell FROM channel_stats WHERE minute >= ? GROUP BY freq", (hour0,))}
+    per = {}   # (band, channel) -> mac -> {"us", "frames", "rates"...}
+    for r in ctx.rows("SELECT * FROM link_stats WHERE hour >= ?", (hour0,)):
+        ap = aps.get(r["bssid"])
+        if not ap or not ap["channel"] or ap["band"] not in ("2.4", "5", "6"):
+            continue
+        us, median = airtime_us(r)
+        who = r["mac"] if r["dir"] == "up" else r["bssid"]
+        d = per.setdefault((ap["band"], ap["channel"]), {}).setdefault(who, {"us": 0.0, "frames": 0, "kind": "client" if r["dir"] == "up" else "ap",
+                                                                             "medians": [], "assumed": False})
+        d["us"] += us
+        d["frames"] += r["frames"] or 0
+        if median:
+            d["medians"].append((median, r["frames"] or 0))
+        d["assumed"] |= not r["bytes"]
+    names = {}
+    macs = {m for v in per.values() for m in v}
+    if macs:
+        names = {x["mac"]: x for x in ctx.rows(f"SELECT mac, kind, name, vendor, brand, model, ssid FROM devices WHERE mac IN ({','.join('?' * len(macs))})",
+                                               list(macs))}
+    out = []
+    for (band, ch), devs in per.items():
+        freq = ch_to_freq(ch, band)
+        seconds = dwell.get(freq) or 0
+        if not seconds:
+            continue
+        rows = []
+        for mac, d in devs.items():
+            share = d["us"] / (seconds * 1e6)
+            if d["kind"] == "ap":   # and its beacons, about ten a second whether anyone listens or not
+                try:
+                    info = (json.loads(aps[mac]["extra"] or "{}").get("ap") or {})
+                except ValueError:
+                    info = {}
+                share += beacons.airtime(info.get("beacon_len") or beacons.DEFAULT_LEN, info.get("basic_rate") or beacons.DEFAULT_RATE[band],
+                                         info.get("beacon_tu") or beacons.DEFAULT_TU, band)
+            med = max(d["medians"], key=lambda x: x[1])[0] if d["medians"] else None
+            n = names.get(mac) or {}
+            slow = share >= HOG_SHARE and med is not None and med <= SLOW_RATE
+            rows.append({"mac": mac, "kind": d["kind"], "name": n.get("name") or " ".join(v for v in (n.get("brand"), n.get("model")) if v) or n.get("vendor"),
+                         "ssid": n.get("ssid") if d["kind"] == "ap" else (aps.get(mac) or {}).get("ssid"), "share": round(min(share, 1.0), 4),
+                         "frames": d["frames"], "median_rate": med, "assumed_size": d["assumed"], "slow": slow,
+                         "at_100": round(share * med / 100, 4) if slow else None})
+        rows.sort(key=lambda x: -x["share"])
+        u = util.get(freq)
+        out.append({"band": band, "channel": ch, "freq": freq, "listened_s": round(seconds), "devices": rows[:30],
+                    "accounted": round(min(1.0, sum(x["share"] for x in rows)), 4),
+                    "utilization": round(min(1.0, u["air"] / (u["dwell"] * 1000)), 4) if u and u["dwell"] else None})
+    out.sort(key=lambda c: -c["accounted"])
+    hogs = [{"band": c["band"], "channel": c["channel"], **d} for c in out for d in c["devices"] if d["slow"]]
+    return {"channels": out, "slow": sorted(hogs, key=lambda x: -x["share"]), "hog_share": HOG_SHARE, "slow_rate": SLOW_RATE}
+
+
 def routes(ctx):
     r = APIRouter()
 
@@ -361,6 +463,11 @@ def routes(ctx):
     def link_clients(hours: float = 24, bssid: str = None, limit: int = 200, _=Depends(current_user)):
         """Every client's link quality in the last `hours` (of one access point with `bssid`), the worst first."""
         return {"clients": clients(ctx, time.time() - hours * 3600, bssid and bssid.lower())[:max(1, min(limit, 1000))], "min_frames": MIN_FRAMES}
+
+    @r.get("/api/channels/airtime")
+    def airtime_by_device(hours: float = 24, _=Depends(current_user)):
+        """Per channel, the share of the listening time each client's and access point's data frames took, and the slow ones."""
+        return airtime(ctx, time.time() - hours * 3600)
 
     @r.get("/api/link/{mac}")
     def link_client(mac: str, hours: float = 24, _=Depends(current_user)):

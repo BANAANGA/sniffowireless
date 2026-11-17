@@ -466,6 +466,8 @@ class DemoGenerator:
         out = []
         for way in ("up", "down"):
             n = rng.randint(200, 3000) if way == "down" else rng.randint(80, 1200)
+            if kind in ("legacy", "weak"):   # slow links: fewer frames get through in the time the sensor listens
+                n = rng.randint(80, 150) if kind == "legacy" else rng.randint(20, 70)
             if kind == "legacy":
                 rates = {f"{r:g}": n // 4 for r in (1, 2, 5.5, 11)}
                 mcs, retry = {}, 0.12
@@ -483,7 +485,7 @@ class DemoGenerator:
                     rates[f"{rate:g}"] = rates.get(f"{rate:g}", 0) + k
                 retry = {"ok": 0.04, "weak": 0.07, "noisy": 0.33}[kind]
             frames = sum(rates.values())
-            out.append({"t": "link", "ts": t + 59, "mac": mac, "bssid": bssid, "dir": way, "frames": frames,
+            out.append({"t": "link", "ts": t + 59, "mac": mac, "bssid": bssid, "dir": way, "frames": frames, "bytes": frames * (1500 if kind == "legacy" or way == "down" else 300),
                         "retries": int(frames * retry * rng.uniform(0.7, 1.3)), "rates": rates, "mcs": mcs,
                         "rssi_sum": self._rssi(base - (14 if kind == "weak" else 0)) * 50 if way == "up" else 0, "rssi_n": 50 if way == "up" else 0})
         return out
