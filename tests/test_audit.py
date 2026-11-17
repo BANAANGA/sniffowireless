@@ -1,4 +1,4 @@
-"""The audit report (release 35): what sniffowireless found about my networks, as findings in order of how much they matter."""
+"""The audit report (release 34.1): what sniffowireless found about my networks, as findings in order of how much they matter."""
 import json
 import time
 

@@ -365,7 +365,7 @@ def clients(ctx, since, bssid=None):
 # ------------------------------------------------------------------ who uses the airtime
 LEGACY_DSSS = {1.0, 2.0, 5.5, 11.0}
 LEGACY_OFDM = {6.0, 9.0, 12.0, 18.0, 24.0, 36.0, 48.0, 54.0}
-ASSUMED_LEN = 600     # bytes per frame when a sensor (before release 35) did not count them
+ASSUMED_LEN = 600     # bytes per frame when a sensor (before release 34.1) did not count them
 HOG_SHARE, SLOW_RATE = 0.05, 24.0
 
 
