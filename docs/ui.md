@@ -49,36 +49,6 @@
   - **DFS / radar:** radar hits per DFS channel, channels closed right now, every channel switch seen and the access points currently on DFS channels (see [DFS / radar](security.md#dfs--radar))
 
   Airtime is estimated from frame lengths and PHY rates, so treat it as relative.
-
-### Link quality
-
-A Wi-Fi sensor reads the radiotap header and frame control of every data frame between a client and its access point, in
-both directions. Once a minute it reports per client and direction:
-
-- how many data frames it heard (null frames left out)
-- how many of them had the retry bit set: sent before and not acknowledged
-- how many went at each PHY rate and at each MCS, with the number of spatial streams and the channel width
-- for the client's own frames, the average signal
-
-HT, VHT and HE rates are worked out from MCS, streams, width and guard interval. The server adds the minutes up per hour.
-
-A **client's** device page shows its *Link quality* for the last 24 hours, each way: data frames, retries, median rate and MCS,
-PHY (Wi-Fi 4/5/6, streams, width) and signal, with a bar chart of the frames per MCS. An **access point's** page lists its
-clients, the worst first, and *My networks* lists the clients of your access points that have a problem. Each direction gets a
-verdict:
-
-| Verdict | What it looks like | What it usually means |
-|---|---|---|
-| *interference* | 25 % retries or more while the median MCS stays at 5 or higher | The signal is fine but frames get lost: interference, a hidden node, a busy channel |
-| *weak and lossy* | 25 % retries or more at a low MCS | Too far away, with losses on top |
-| *weak signal* | median MCS 3 or lower, few retries | The link slowed down to what the distance allows; a closer access point would help |
-| *legacy rates* | no MCS, only 802.11a/b/g rates | An old radio, or a driver that reports no MCS. 802.11b rates (1–11 Mb/s) only: a very old radio or a very weak link |
-| *some retries* | 10–25 % retries | More than the usual few percent |
-| *healthy* | a good rate, few retries | |
-
-Fewer than 50 data frames is too little to judge. A sensor hears a client only while it is tuned to that channel, so the
-figures are a sample. Frames the sensor did not hear (too weak where it stands) are not counted. Remote sensors need release
-34 or newer. The Android app does not report link quality yet.
 - **Settings:** grouped in the left-hand list, each page with an icon and a one-line description at the top. *Find a setting…* filters the list by name, description and related words (e.g. *email*, *2fa*, *home assistant*); Enter opens the first match. On a phone the list becomes a drop-down.
   - **You:** account (password, two-factor login, display on this browser)
   - **Monitoring:** my networks, investigations, ignore list, detection thresholds
@@ -182,3 +152,33 @@ On any device page an admin can set a **label** ("Sam's iPhone") and notes, and 
 - **watched:** included in arrive/leave alerts
 
 A device can also be put in a **group**. *Possibly the same physical device* lists other MACs with the same probe fingerprint (or name) that were never present at the same time, which is typical of MAC rotation. One click adds them to the group.
+
+## Link quality
+
+A Wi-Fi sensor reads the radiotap header and frame control of every data frame between a client and its access point, in
+both directions. Once a minute it reports per client and direction:
+
+- how many data frames it heard (null frames left out)
+- how many of them had the retry bit set: sent before and not acknowledged
+- how many went at each PHY rate and at each MCS, with the number of spatial streams and the channel width
+- for the client's own frames, the average signal
+
+HT, VHT and HE rates are worked out from MCS, streams, width and guard interval. The server adds the minutes up per hour.
+
+A **client's** device page shows its *Link quality* for the last 24 hours, each way: data frames, retries, median rate and MCS,
+PHY (Wi-Fi 4/5/6, streams, width) and signal, with a bar chart of the frames per MCS. An **access point's** page lists its
+clients, the worst first, and *My networks* lists the clients of your access points that have a problem. Each direction gets a
+verdict:
+
+| Verdict | What it looks like | What it usually means |
+|---|---|---|
+| *interference* | 25 % retries or more while the median MCS stays at 5 or higher | The signal is fine but frames get lost: interference, a hidden node, a busy channel |
+| *weak and lossy* | 25 % retries or more at a low MCS | Too far away, with losses on top |
+| *weak signal* | median MCS 3 or lower, few retries | The link slowed down to what the distance allows; a closer access point would help |
+| *legacy rates* | no MCS, only 802.11a/b/g rates | An old radio, or a driver that reports no MCS. 802.11b rates (1–11 Mb/s) only: a very old radio or a very weak link |
+| *some retries* | 10–25 % retries | More than the usual few percent |
+| *healthy* | a good rate, few retries | |
+
+Fewer than 50 data frames is too little to judge. A sensor hears a client only while it is tuned to that channel, so the
+figures are a sample. Frames the sensor did not hear (too weak where it stands) are not counted. Remote sensors need release
+34 or newer. The Android app does not report link quality yet.
