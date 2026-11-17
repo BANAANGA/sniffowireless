@@ -184,6 +184,7 @@ async function loadBeacons(el) {
         <tr hidden data-bo-aps="${c.band}|${c.channel}"><td colspan="7" style="padding:0 0 8px 24px">${tableHtml('<th>SSID</th><th>BSSID</th><th class="num">Signal</th><th class="num">Beacon rate</th><th class="num">Interval</th><th class="num">Size</th><th class="num">Airtime</th>', apRows(c.band, c.channel))}</td></tr>`).join(''),
       'No access points heard in the last hour')}</div>`;
   el.querySelectorAll('tr[data-bo]').forEach(tr => tr.onclick = () => { const d = el.querySelector(`tr[data-bo-aps="${tr.dataset.bo}"]`); d.hidden = !d.hidden; });
+}
 
 /* Co-channel interference between my own access points (cci.py): per band, a matrix of how loud two of my radios are heard together
    (the weaker of the two, at the sensor that hears both best), where they share a channel, and a channel plan for all of them. */
