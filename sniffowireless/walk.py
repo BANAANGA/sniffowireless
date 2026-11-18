@@ -21,10 +21,12 @@ import threading
 import time
 from collections import deque
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .auth import current_user, require_admin
+from .sensors import floorplan_file
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS walk_sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, sensor TEXT, created REAL, closed REAL);
@@ -380,6 +382,85 @@ def routes(ctx):
         with ctx.wdb() as w:
             w.execute("UPDATE walk_sessions SET closed=? WHERE id=? AND closed IS NULL", (time.time(), sid))
         return {"ok": True}
+
+    # ---- the sensor's own side (release 34.2): the Android app carried around walks its own survey with its sensor token. A
+    # token can only see, start, add to and close surveys of its own sensor, and read the floor plan they are drawn on.
+
+    def own_sensor(request: Request):
+        u = request.state.user
+        if not u or getattr(u, "scope", None) != "sensor" or not u.sensor_id:
+            raise HTTPException(401, "sensor token required")
+        return u.sensor_id
+
+    def own(sid, sensor):
+        s = session(sid)
+        if s["sensor"] != sensor:
+            raise HTTPException(404, "No such survey")
+        return s
+
+    @r.get("/api/ingest/walk")
+    def sensor_state(survey: int = 0, sensor: str = Depends(own_sensor)):
+        """This sensor's surveys, the open one (or `survey`) with its points coloured by the strongest of my access points, the
+        analysis, and what a point here would hold now."""
+        mine_list = ctx.rows("SELECT s.id, s.name, s.created, s.closed, (SELECT COUNT(*) FROM walk_points p WHERE p.session = s.id) points "
+                             "FROM walk_sessions s WHERE s.sensor=? ORDER BY created DESC LIMIT 50", (sensor,))
+        sid = survey or col.open.get(sensor) or 0
+        out = {"surveys": mine_list, "open": col.open.get(sensor), "window": WINDOW, "good": GOOD, "weak": WEAK, "survey": None,
+               "floorplan": {k: (ctx.settings.get("floorplan") or {}).get(k) for k in ("width", "height", "updated")}}
+        out["floorplan"]["image"] = (floorplan_file(ctx.settings.get("floorplan")) or "").rsplit(".", 1)[-1] or None
+        if sid:
+            s, pts, aps = load(sid)
+            if s["sensor"] != sensor:
+                raise HTTPException(404, "No such survey")
+            mine = {m for m, a in aps.items() if a["mine"]}
+            out["survey"] = {"id": sid, "name": s["name"], "width_m": s.get("width_m") or DEFAULT_WIDTH_M, "open": col.open.get(sensor) == sid,
+                             "points": [{"id": p["id"], "x": p["x"], "y": p["y"], "aps": len(p["readings"]), "best": best(p["readings"], mine)} for p in pts],
+                             "analysis": analyse(ctx, s, pts, aps)}
+            if out["survey"]["open"]:
+                out["now"] = now_heard(sid)
+        return out
+
+    @r.get("/api/ingest/walk/floorplan")
+    def sensor_floorplan(sensor: str = Depends(own_sensor)):
+        import os
+
+        from .sensors import IMAGE_TYPES
+        name = floorplan_file(ctx.settings.get("floorplan"))
+        path = os.path.join(ctx.cfg.data_dir, name) if name else None
+        if not path or not os.path.exists(path):
+            raise HTTPException(404, "No floor plan")
+        return FileResponse(path, media_type=IMAGE_TYPES[name.rsplit(".", 1)[-1]], headers={"Cache-Control": "no-cache"})
+
+    @r.post("/api/ingest/walk")
+    def sensor_start(body: EditBody, sensor: str = Depends(own_sensor)):
+        """Start a survey with this sensor (the one open on it is closed)."""
+        for sid in [v for k, v in col.open.items() if k == sensor]:
+            stop(sid)
+        with ctx.wdb() as w:
+            sid = w.execute("INSERT INTO walk_sessions(name, sensor, created, width_m) VALUES(?, ?, ?, ?)",
+                            ((body.name or f"Survey {time.strftime('%d %b %H:%M')}").strip(), sensor, time.time(), body.width_m or DEFAULT_WIDTH_M)).lastrowid
+        col.start(sensor, sid)
+        return {"id": sid}
+
+    @r.post("/api/ingest/walk/{sid}/point")
+    def sensor_point(sid: int, body: PointBody, sensor: str = Depends(own_sensor)):
+        own(sid, sensor)
+        return point(sid, body)
+
+    @r.delete("/api/ingest/walk/{sid}/point/{pid}")
+    def sensor_undo(sid: int, pid: int, sensor: str = Depends(own_sensor)):
+        own(sid, sensor)
+        return undo(sid, pid)
+
+    @r.post("/api/ingest/walk/{sid}/stop")
+    def sensor_stop(sid: int, sensor: str = Depends(own_sensor)):
+        own(sid, sensor)
+        return stop(sid)
+
+    @r.post("/api/ingest/walk/{sid}/resume")
+    def sensor_resume(sid: int, sensor: str = Depends(own_sensor)):
+        own(sid, sensor)
+        return resume(sid)
 
     @r.delete("/api/walk/{sid}")
     def delete(sid: int, _=Depends(require_admin)):

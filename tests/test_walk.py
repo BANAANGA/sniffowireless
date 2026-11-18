@@ -123,3 +123,43 @@ def test_compare(ctx):
     admin.put(f"/api/walk/{after}", json={"name": "Moved", "width_m": 12})
     s = admin.get(f"/api/walk/{after}").json()
     assert s["name"] == "Moved" and s["width_m"] == 12
+
+
+def test_the_phone_walks_its_own_survey_with_its_sensor_token(ctx):
+    """Release 34.2: the Android app shows the floor plan and adds points itself, with the token it sends its readings with."""
+    import gzip
+    import json
+
+    from fastapi.testclient import TestClient
+    mine_ap(ctx)
+    app = create_app(ctx)
+    admin = client(app, "admin")
+    r = admin.post("/api/sensors", json={"name": "Phone"}).json()
+    other = admin.post("/api/sensors", json={"name": "Shed"}).json()
+    phone = TestClient(app, base_url="http://sniffowireless.test", headers={"authorization": f"Bearer {r['token']}"})
+    shed = TestClient(app, base_url="http://sniffowireless.test", headers={"authorization": f"Bearer {other['token']}"})
+    assert phone.get("/api/ingest/walk").json()["survey"] is None
+    sid = phone.post("/api/ingest/walk", json={"name": "Upstairs", "width_m": 12}).json()["id"]
+    body = {"sent_at": time.time(), "obs": [{"t": "wifi_ap", "ts": time.time(), "mac": AP1, "rssi": -58, "ssid": "Home", "channel": 6, "freq": 2437, "band": "2.4"}]}
+    assert phone.post("/api/ingest", content=gzip.compress(json.dumps(body).encode()), headers={"content-encoding": "gzip", "content-type": "application/json"}).status_code == 200
+    while ctx.store.q.qsize():
+        ctx.store.process(ctx.store.q.get_nowait())
+    ctx.store.flush()
+    st = phone.get("/api/ingest/walk").json()
+    assert st["open"] == sid and st["survey"]["name"] == "Upstairs" and st["now"]["aps"] == 1 and st["now"]["best_mine"] == -58
+    pid = phone.post(f"/api/ingest/walk/{sid}/point", json={"x": 0.5, "y": 0.5}).json()["id"]
+    st = phone.get("/api/ingest/walk").json()
+    assert st["survey"]["points"] == [{"id": pid, "x": 0.5, "y": 0.5, "aps": 1, "best": -58}] and st["survey"]["width_m"] == 12
+    # another sensor's token sees nothing of it and can't add to it; users can't use these endpoints
+    assert shed.get(f"/api/ingest/walk?survey={sid}").status_code == 404
+    assert shed.post(f"/api/ingest/walk/{sid}/point", json={"x": 0.1, "y": 0.1}).status_code == 404
+    assert admin.get("/api/ingest/walk").status_code == 401
+    assert phone.get("/api/walk").status_code == 403          # nor can the sensor token use the admin side
+    assert phone.get("/api/ingest/walk/floorplan").status_code == 404   # none uploaded
+    phone.delete(f"/api/ingest/walk/{sid}/point/{pid}")
+    phone.post(f"/api/ingest/walk/{sid}/stop")
+    st = phone.get(f"/api/ingest/walk?survey={sid}").json()
+    assert st["open"] is None and st["survey"]["points"] == [] and not st["survey"]["open"]
+    phone.post(f"/api/ingest/walk/{sid}/resume")
+    assert phone.get("/api/ingest/walk").json()["open"] == sid
+    assert admin.get(f"/api/walk/{sid}").json()["name"] == "Upstairs"   # the same surveys as on the web page

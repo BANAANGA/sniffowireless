@@ -431,7 +431,8 @@ Then:
 1. **New survey…**, choose the sensor you carry and say how wide the floor plan is in metres (used for distances, see below;
    **change** under the map corrects it later). While the survey is open, that sensor notes every access point it hears with
    its signal.
-2. Open the page on a phone (or any browser), walk to a spot, **stand still for 10 seconds**, and tap where you are on the floor
+2. Open the page on a phone (or any browser) — or, when the phone itself is the sensor, the **Walk** screen of the Android app
+   (from app 1.7.0 with release 34.2; see below) — walk to a spot, **stand still for 10 seconds**, and tap where you are on the floor
    plan. The line above the buttons says how many access points the sensor heard in those seconds, and the strongest of yours. A
    sensor that hops channels needs those seconds to have been round them all.
 3. The readings of those seconds become a point: per access point, the median signal. **Undo last point** takes a point back.
@@ -462,6 +463,13 @@ Next to the map (since release 34.2):
   *A − 10·n·log₁₀(distance)*, with *A* and *n* fitted to the survey itself (each of your access points is taken to stand near
   where it was heard best). With too few points it uses the usual indoor values (−40 dBm at 1 m, n = 3). Walls between the spot
   and the weak area make it weaker than the estimate.
+
+**In the Android app** (1.7.0), on the Sensor tab while it sends to this server: **Walk survey** shows the floor plan (PNG,
+JPEG or WebP; an SVG floor plan is not drawn in the app, the points are then placed on a blank floor of the same shape), the
+phone's own surveys, and what it hears now. Start a survey there (name and floor width), stand still, tap where you are; each
+point gets the colour of the strongest of your access points, and the dashed **+** of the extra access point appears once there
+is enough to go by. Undo, Finish and Go on work as on the page. It uses the phone's sensor token, which can reach the surveys of
+that sensor only; the heatmaps, layers and comparison are on the web page, where the same surveys are.
 
 **Compare with** draws the difference between this survey and an earlier one of the same floor, for example before and after
 moving an access point or changing its channel: per spot, how much stronger or weaker the strongest of yours is now (green
