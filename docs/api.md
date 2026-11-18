@@ -60,3 +60,4 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/logs?after=` · `GET /api/logs/stream` · `PUT /api/logs/level` | Recent log lines, live log stream (Server-Sent Events) and runtime log level (admin) |
 | `GET /metrics` | Prometheus metrics |
 | `POST /api/ingest` | Remote sensors push observations here (sensor token) |
+| `GET /api/ingest/walk?survey=` · `GET /api/ingest/walk/floorplan` · `POST /api/ingest/walk` · `POST /api/ingest/walk/{id}/point` · `DELETE /api/ingest/walk/{id}/point/{pid}` · `POST /api/ingest/walk/{id}/stop` · `POST /api/ingest/walk/{id}/resume` | A sensor's own walk surveys, with its sensor token (the Android app): its surveys, the open one with each point's strongest of your access points and the analysis, what it hears now, the floor plan image; start (closing the one open on it), add and undo points, close and go on |
