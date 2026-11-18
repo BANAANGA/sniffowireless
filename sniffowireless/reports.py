@@ -169,14 +169,18 @@ def weekly_summary(ctx):
     return summary(ctx, 7)
 
 
-def summary(ctx, days=7):
-    """(title, text, html) of the report over the last `days` days: 7 for the weekly one, 1 for the daily one."""
+def summary(ctx, days=7, audit_report=None):
+    """(title, text, html) of the report over the last `days` days: 7 for the weekly one, 1 for the daily one. With the audit
+    report of the period, a section says what changed in it since the last snapshot."""
     import html as htmllib
     rep = occupancy(ctx, days, tz=-int(time.localtime().tm_gmtoff / 60))
     now = time.time()
     since = now - days * 86400
     what = "daily" if days == 1 else "weekly"
     sections = digest_lines(ctx, since, now)
+    if audit_report is not None:
+        from .audit import report_lines
+        sections += report_lines(ctx, audit_report)
     s = rep["summary"]
     new_dev = ctx.one("SELECT COUNT(*) n FROM devices WHERE first_seen >= ? AND randomized=0", (since,))["n"]
     alerts = ctx.one("SELECT COUNT(*) n FROM alert_log WHERE ts >= ?", (since,))["n"]
@@ -234,8 +238,19 @@ class ReportScheduler:
         n = self.ctx.one("SELECT * FROM notifiers WHERE id=?", (cfg["notifier_id"],))
         if not n:
             raise ValueError("Choose a notifier for the report first")
-        title, body, html = summary(self.ctx, 1 if cfg.get("daily") else 7)
+        days = 1 if cfg.get("daily") else 7
+        rep = None
+        if cfg.get("audit", True):   # the Wi-Fi audit, and what changed since the last report
+            from . import audit
+            try:
+                rep = audit.build(self.ctx, max(days, 7))
+            except Exception as e:
+                log.warning("Audit for the report failed: %s", e)
+        title, body, html = summary(self.ctx, days, rep)
         send(n["type"], json.loads(n["config"] or "{}"), title, body, html=html)
+        if rep is not None and rep["networks"]:
+            from . import audit
+            audit.snapshot(self.ctx, rep, "report")
         cfg["last_sent"] = time.time()
         self.ctx.settings.set("report", cfg)
 

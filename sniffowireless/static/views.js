@@ -958,6 +958,7 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
       <label class="check"><input type="checkbox" name="email" ${cfg.email ? 'checked' : ''}> Send an occupancy &amp; activity summary</label>
       <label class="field">How often<select name="daily"><option value="0">Every week, over the last 7 days</option><option value="1" ${cfg.daily ? 'selected' : ''}>Every day, over the last 24 hours</option></select></label>
       <label class="field">Send via<select name="notifier_id"><option value="">Choose a channel…</option>${ns.map(n => `<option value="${n.id}" ${n.id === cfg.notifier_id ? 'selected' : ''}>${esc(n.name)} (${esc(n.type)})</option>`).join('')}</select></label>
+      <label class="check"><input type="checkbox" name="audit" ${cfg.audit !== false ? 'checked' : ''}> Include the Wi-Fi audit: what is new, fixed and still open since the last report</label>
       <div class="row"><label class="field" id="rf-day">Day<select name="weekday">${WEEKDAYS.map((d, i) => `<option value="${i}" ${i === +cfg.weekday ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
       <label class="field">Hour<input type="number" name="hour" min="0" max="23" value="${cfg.hour}"></label></div>
       <button class="btn primary">Save</button> <button type="button" class="btn" id="send">Send now</button>
@@ -966,7 +967,7 @@ ${esc(loraArgs)}  ${esc(image)}</pre><button type="button" class="btn small" id=
     const dayField = () => { el.querySelector('#rf-day').hidden = f.daily.value === '1'; };
     f.daily.onchange = dayField;
     dayField();
-    f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour'), daily: f.daily.value === '1' }); toast('Saved'); };
+    f.onsubmit = async e => { e.preventDefault(); await send('PUT', '/api/settings/report', { email: fv(f, 'email'), notifier_id: +fv(f, 'notifier_id') || null, weekday: +fv(f, 'weekday'), hour: +fv(f, 'hour'), daily: f.daily.value === '1', audit: fv(f, 'audit') }); toast('Saved'); };
     el.querySelector('#send').onclick = async () => { try { await send('POST', '/api/reports/send'); toast('Report sent'); } catch (e) { toast(e.message, true); } };
   },
   async mqtt(el) {

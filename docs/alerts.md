@@ -72,3 +72,7 @@ and leaves out a heading when there is nothing under it:
 - **Security and warnings:** how often each high or medium severity event happened.
 - **Sensors offline now:** remote sensors that have not reported for 10 minutes, with how long ago they last did. This is the state
   when the report is made; outages that ended before that are not listed.
+- **Wi-Fi audit** (since release 34.2; on unless you untick *Include the Wi-Fi audit*, and only when your networks are set): what
+  is new, worse and fixed in the [audit report](ui.md#audit-report) since the last report, and how many findings are open by
+  severity. The first report lists the findings themselves. Each report keeps a snapshot of the findings for the next one; the
+  audit page compares with the same snapshots. The audit always covers at least the last 7 days, also in the daily report.

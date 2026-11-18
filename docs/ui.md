@@ -405,11 +405,18 @@ do about it:
   - clients with a poor link
   - why connections failed
   - slow roams
+  - hidden nodes (see [Hidden nodes](#hidden-nodes))
+  - power save: multicast held back for a second or more (see [Power save](#power-save-dtim))
 - **Interference and radar.**
 
 Then the details: every access point of your networks (channel, width, security, PMF, roaming, WPS, beacon rate, colour), how
 busy their channels were, the suggested channel plan, the clients' links, connection failures and roams, client readiness,
 interference and radar, and how it was measured (which sensors, where).
+
+**Changes** (since release 34.2): **Keep snapshot** (admin) keeps the findings as they are now; every scheduled report keeps one
+too. The report then says, against the last snapshot, which findings are **new**, which got **worse** (a higher severity),
+which were **fixed** (crossed out), and how many are still open. A finding is the same one when only a count or a share in its
+title changed (for example "3× microwave" becoming "4× microwave"). The last 104 snapshots are kept.
 
 ## Walk survey
 

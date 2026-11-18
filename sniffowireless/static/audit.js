@@ -17,6 +17,13 @@
         <div><span class="tag ${SEV[f.severity][0]}">${SEV[f.severity][1]}</span> <span class="faint small-text">${esc(f.area)}</span></div>
         <div><b>${esc(f.title)}</b>${f.detail ? `<div class="small-text">${esc(f.detail)}</div>` : ''}${f.advice ? `<div class="small-text muted">→ ${esc(f.advice)}</div>` : ''}</div></div>`).join('')
       : '<div class="empty">Nothing to report.</div>';
+    const ch = r.changes;
+    const fline = f => `<li><span class="tag ${SEV[f.severity][0]}">${SEV[f.severity][1]}</span> ${esc(f.title)}</li>`;
+    const changes = ch ? `<p class="small-text">Since the snapshot of ${dt(ch.since)}${ch.reason === 'report' ? ' (sent with the scheduled report)' : ''}: <b>${ch.new.length}</b> new, <b>${ch.fixed.length}</b> fixed, <b>${ch.still}</b> still open${ch.worse.length ? `, ${ch.worse.length} got worse` : ''}.</p>
+        ${ch.new.length ? `<h3 class="subhead">New</h3><ul class="tight">${ch.new.map(fline).join('')}</ul>` : ''}
+        ${ch.worse.length ? `<h3 class="subhead">Worse</h3><ul class="tight">${ch.worse.map(fline).join('')}</ul>` : ''}
+        ${ch.fixed.length ? `<h3 class="subhead">Fixed</h3><ul class="tight">${ch.fixed.map(f => `<li class="muted"><s>${esc(f.title)}</s></li>`).join('')}</ul>` : ''}`
+      : '<p class="small-text faint">No snapshot yet. Keep one (or let the scheduled report keep one each time), and the next report says what is new, fixed and still open.</p>';
     const aps = r.aps.length ? tableHtml('<th>Network</th><th>BSSID</th><th>Channel</th><th class="num">Width</th><th>Security</th><th>PMF</th><th>Roaming</th><th>WPS</th><th class="num">Beacon rate</th><th class="num">Colour</th>',
       r.aps.map(a => `<tr><td>${esc(a.ssid)}${a.model ? `<div class="faint small-text">${esc(a.model)}</div>` : ''}</td><td class="mono">${esc(a.mac)}</td><td>${chText(a.channel, a.band)}</td>
         <td class="num">${a.width || 20} MHz</td><td>${esc(a.akm.join(', ') || a.enc || '—')}${a.transition ? ' <span class="tag">transition</span>' : ''}</td>
@@ -41,10 +48,11 @@
     const intf = (r.interference.length ? tableHtml('<th>Kind</th><th>Band</th><th class="num">Episodes</th>', r.interference.map(e => `<tr><td>${esc(e.kind)}</td><td>${esc(e.band)} GHz</td><td class="num">${e.n}</td></tr>`).join(''))
       : '<p class="small-text">No interference episodes.</p>') + `<p class="small-text">Radar made your access points leave a DFS channel ${r.radar} time${r.radar === 1 ? '' : 's'}.</p>`;
     app.innerHTML = `<div class="page-head"><div><h1>Wi-Fi audit · ${esc(r.site)}</h1><div class="sub">${r.networks.length ? esc(r.networks.join(', ')) : 'No networks of yours set'} · the last ${days} days · made ${dt(r.generated)}</div></div>
-      <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} <button class="btn" id="print">Print / PDF</button></div></div>
+      <div class="row no-print">${seg('days', [[7, '7 days'], [14, '14 days'], [30, '30 days']], days)} ${isAdmin() ? '<button class="btn ghost" id="snap" title="Keep these findings to compare later reports with">Keep snapshot</button>' : ''} <button class="btn" id="print">Print / PDF</button></div></div>
       <div class="grid cols-4">${['high', 'medium', 'low', 'info'].map(s => `<div class="card"><div class="label">${SEV[s][1]}</div><div class="value ${s === 'high' && c.high ? 'err' : ''}">${c[s]}</div><div class="meta">finding${c[s] === 1 ? '' : 's'}</div></div>`).join('')}</div>
       <div class="grid cols-3" style="margin-top:16px">
         ${section('Findings', findings, 'in order of how much they matter')}
+        ${section('Changes', changes, 'compared with the last snapshot')}
         ${section('Access points', aps, `${r.aps.length} BSSIDs of your networks`)}
         ${section('Channels', chans + '<h3 class="subhead">Channel plan</h3>' + plan, 'how busy your channels were while the sensors listened')}
         ${section('Clients', clients, 'their links, connections and roams')}
@@ -54,5 +62,7 @@
       </div>`;
     onSeg(app, 'days', v => { location.hash = hrefWith('/audit', { days: v }); });
     document.getElementById('print').onclick = () => window.print();
+    const snap = document.getElementById('snap');
+    if (snap) snap.onclick = async () => { const x = await send('POST', `/api/audit/snapshot?days=${days}`); toast(`Snapshot kept: ${x.findings} findings`); route(); };
   });
 })();

@@ -1,6 +1,9 @@
 """The audit report: one page per site that puts together what sniffowireless found about my networks, with findings in order of
 how much they matter and what to do about them. It is what a Wi-Fi consultant hands over; the page (#/audit) prints to PDF.
 
+Snapshots (release 34.2): the findings of a report can be kept (by hand on the page, and with every scheduled report), so the next
+one says what is new, what was fixed and what is still open.
+
 Everything comes from the other analyses: the access points' security settings (their beacons), the channel survey, beacon
 overhead, co-channel interference and the channel plan, BSS colours and widths, who uses the airtime, link quality, connection
 failures and roams, client readiness, interference, radar, and the open security findings.
@@ -10,7 +13,12 @@ import time
 
 from fastapi import APIRouter, Depends
 
-from .auth import current_user
+from .auth import current_user, require_admin
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS audit_snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, days REAL, reason TEXT, findings TEXT);
+"""
+KEEP_SNAPSHOTS = 104   # two years of weekly reports
 
 ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 OWN_CHECKS = {"open_network", "weak_security", "wps_enabled", "no_wpa3"}   # security findings this report works out itself
@@ -31,8 +39,9 @@ def build(ctx, days=7):
     my_ssids, trusted = list(n["ssids"]), set(n["trusted_bssids"])
     findings = []
 
-    def find(area, severity, title, detail, advice=None):
-        findings.append({"area": area, "severity": severity, "title": title, "detail": detail, "advice": advice})
+    def find(area, severity, title, detail, advice=None, key=None):
+        """key: what makes it the same finding from one report to the next (the title, unless that holds a count or a share)."""
+        findings.append({"key": key or title, "area": area, "severity": severity, "title": title, "detail": detail, "advice": advice})
 
     # ---- my access points and their security, from their beacons
     aps = []
@@ -98,7 +107,7 @@ def build(ctx, days=7):
     for t, cnt in attacks.items():
         if t in found:   # already an open finding of its own
             continue
-        find("Security", "high", f"{cnt}× {names[t]}", f"Seen in the last {days:g} days.", "See the Security page and the event log.")
+        find("Security", "high", f"{cnt}× {names[t]}", f"Seen in the last {days:g} days.", "See the Security page and the event log.", key=f"attack:{t}")
 
     # ---- the radio side
     from . import beacons, bsscolour, cci, joins, linkstats, readiness, survey
@@ -116,19 +125,20 @@ def build(ctx, days=7):
     for c in bo["channels"]:
         if (c["band"], c["channel"]) in my_ch and c["level"] != "ok":
             find("Channels", "medium" if c["level"] == "bad" else "low", f"Beacons take {c['airtime'] * 100:.0f}% of channel {c['channel']}",
-                 f"{c['aps']} BSSIDs, {c['ssids']} SSIDs on about {c['radios']} radios.", "Fewer SSIDs, and 12 Mb/s as the lowest basic rate on 2.4 GHz.")
+                 f"{c['aps']} BSSIDs, {c['ssids']} SSIDs on about {c['radios']} radios.", "Fewer SSIDs, and 12 Mb/s as the lowest basic rate on 2.4 GHz.",
+                 key=f"beacons:{c['band']}:{c['channel']}")
     for a in bo["advice"]:
         if a.get("mac"):
-            find("Channels", "low", "Beacon settings", a["text"])
+            find("Channels", "low", "Beacon settings", a["text"], key=f"beacon-settings:{a['mac']}:{'rate' if 'basic rate' in a['text'] else 'other'}")
     for p in bo.get("power", []):
         if p["level"] != "ok":
             find("Clients", "medium" if p["level"] == "high" else "info", f"Power save of “{p['ssid']}”: multicast every {', '.join(f'{m} ms' for m in p['ms'])}",
-                 p["text"], "Set the DTIM period on the access point (1–3 with the usual 100 TU beacon interval).")
+                 p["text"], "Set the DTIM period on the access point (1–3 with the usual 100 TU beacon interval).", key=f"dtim:{p['ssid']}")
     plan = _safe(lambda: cci.analyze(ctx, since, now), {"pairs": [], "plan": {}, "radios": []})
     shared = [p for p in plan["pairs"] if p["same_channel"]]
     if shared:
         find("Channels", "medium", f"{len(shared)} pair{'s' if len(shared) > 1 else ''} of your radios share a channel where both are heard",
-             "They take turns on the air there.", "See the channel plan below.")
+             "They take turns on the air there.", "See the channel plan below.", key="cci-shared")
     changes = [(b, x) for b, p in plan["plan"].items() if p["change"] for x in p["radios"] if x["suggested"] != x["current"]]
     col = _safe(lambda: bsscolour.analyze(ctx, now - 3600), {"collisions": [], "warnings": []})
     for c in col["collisions"]:
@@ -142,37 +152,38 @@ def build(ctx, days=7):
     for d in air["slow"][:5]:
         if (d["band"], d["channel"]) in my_ch:
             find("Clients", "medium", f"{d['name'] or d['mac']} takes {d['share'] * 100:.0f}% of channel {d['channel']}",
-                 f"At a median {d['median_rate']} Mb/s.", "A weak signal or an old radio: move it, or give it an access point of its own.")
+                 f"At a median {d['median_rate']} Mb/s.", "A weak signal or an old radio: move it, or give it an access point of its own.", key=f"slow:{d['mac']}")
     link = _safe(lambda: linkstats.clients(ctx, since), [])
     my_bssids = {a["mac"] for a in aps}
     link = [x for x in link if x["bssid"] in my_bssids] if my_bssids else []
     bad_links = [x for x in link if x["verdict"]["level"] == "bad"]
     if bad_links:
         find("Clients", "medium", f"{len(bad_links)} client{'s' if len(bad_links) > 1 else ''} with a poor link",
-             ", ".join(f"{x['name'] or x['mac']} ({x['verdict']['short']})" for x in bad_links[:6]), "See Link quality on their device pages.")
+             ", ".join(f"{x['name'] or x['mac']} ({x['verdict']['short']})" for x in bad_links[:6]), "See Link quality on their device pages.", key="poor-links")
     from . import hiddennode
     hidden = [c for c in _safe(lambda: hiddennode.analyze(ctx, since), {"clients": []})["clients"] if c["bssid"] in my_bssids]
     for c in hidden[:5]:
         find("Clients", "medium" if c["level"] == "likely" else "low", f"{c['name'] or c['mac']} may be a hidden node on channel {c['channel']}",
              f"{c['retry_up'] * 100:.0f}% of what it sends is sent again at a good rate, while what it receives gets through"
              + (f"; it is {c['far'][0]['why']} from {c['far'][0]['name'] or c['far'][0]['mac']}" if c["far"] else "") + ".",
-             "Set an RTS threshold (e.g. 500 bytes) on the access point, move it more central, or add one for the far clients.")
+             "Set an RTS threshold (e.g. 500 bytes) on the access point, move it more central, or add one for the far clients.", key=f"hidden:{c['mac']}")
     js = _safe(lambda: joins.site(ctx, since, my_bssids or None), {"counts": {}, "causes": [], "roam_stats": {}})
     for c in js["causes"][:5]:
         find("Clients", "medium" if c["count"] >= 3 else "low", f"{c['count']}× connection failed: {c['cause']}",
-             f"{c['clients']} client{'s' if c['clients'] > 1 else ''}; {c['example']}")
+             f"{c['clients']} client{'s' if c['clients'] > 1 else ''}; {c['example']}", key=f"join-failed:{c['cause']}")
     rs = js.get("roam_stats") or {}
     if rs.get("slow"):
         find("Clients", "medium", f"{rs['slow']} of {rs['timed']} roams took longer than 150 ms", "Calls can drop out during them.",
-             "Turn on 802.11r (fast transition) where the clients support it.")
+             "Turn on 802.11r (fast transition) where the clients support it.", key="slow-roams")
     ready = _safe(lambda: readiness.analyze(ctx, since), {"questions": [], "summary": {}, "clients": []})
     eps = _safe(lambda: ctx.rows("SELECT kind, band, COUNT(*) n FROM interference WHERE end_ts >= ? GROUP BY kind, band", (since,)), [])
     for e in eps:
-        find("Interference", "low", f"{e['n']}× {e['kind']} ({e['band']} GHz)", "Non-Wi-Fi energy on the channel.", "See Interference on the Channels page.")
+        find("Interference", "low", f"{e['n']}× {e['kind']} ({e['band']} GHz)", "Non-Wi-Fi energy on the channel.", "See Interference on the Channels page.",
+             key=f"interference:{e['kind']}:{e['band']}")
     radar = _safe(lambda: ctx.one("SELECT COUNT(*) n FROM dfs_events WHERE ts >= ? AND dfs=1 AND mine=1", (since,))["n"], 0)
     if radar:
         find("Interference", "info", f"Your access points left a DFS channel {radar}× for radar", "Each time clients lose the network for a moment.",
-             "Prefer a non-DFS channel where radar is common.")
+             "Prefer a non-DFS channel where radar is common.", key="radar")
     findings.sort(key=lambda f: ORDER[f["severity"]])
     sensors = [{"id": r["id"], "name": r["name"] or r["id"], "room": r["room"]} for r in ctx.rows("SELECT id, name, room FROM sensors ORDER BY name")]
     from .appearance import current as appearance
@@ -188,12 +199,81 @@ def build(ctx, days=7):
             "interference": eps, "radar": radar}
 
 
+def _ensure(ctx):
+    if getattr(ctx, "_audit_schema", False):
+        return
+    with ctx.wdb() as w:
+        w.executescript(SCHEMA)
+    ctx._audit_schema = True
+
+
+def last_snapshot(ctx):
+    _ensure(ctx)
+    s = ctx.one("SELECT id, ts, days, reason, findings FROM audit_snapshots ORDER BY ts DESC, id DESC LIMIT 1")
+    if s:
+        s["findings"] = json.loads(s["findings"] or "[]")
+    return s
+
+
+def changes(report, before):
+    """What is new, fixed and still open in `report` compared with the snapshot `before` (None: no snapshot yet)."""
+    if not before:
+        return None
+    old = {f["key"]: f for f in before["findings"]}
+    now = {f["key"]: f for f in report["findings"]}
+    worse = [f for k, f in now.items() if k in old and ORDER[f["severity"]] < ORDER.get(old[k]["severity"], 3)]
+    return {"since": before["ts"], "reason": before["reason"], "new": [f for k, f in now.items() if k not in old],
+            "fixed": [f for k, f in old.items() if k not in now], "still": sum(1 for k in now if k in old), "worse": worse}
+
+
+def snapshot(ctx, report, reason="manual"):
+    """Keep the findings of this report (key, severity, title, area) for the next comparison."""
+    _ensure(ctx)
+    keep = [{k: f[k] for k in ("key", "area", "severity", "title")} for f in report["findings"]]
+    with ctx.wdb() as w:
+        sid = w.execute("INSERT INTO audit_snapshots(ts, days, reason, findings) VALUES(?, ?, ?, ?)",
+                        (report["generated"], report["days"], reason, json.dumps(keep))).lastrowid
+        w.execute("DELETE FROM audit_snapshots WHERE id NOT IN (SELECT id FROM audit_snapshots ORDER BY ts DESC, id DESC LIMIT ?)", (KEEP_SNAPSHOTS,))
+    return sid
+
+
+def report_lines(ctx, report):
+    """The audit part of the scheduled report: [(heading, [lines])], comparing with the last snapshot."""
+    if not report["networks"]:
+        return []
+    ch = changes(report, last_snapshot(ctx))
+    c = report["counts"]
+    open_line = f"Open: {len(report['findings'])} findings ({', '.join(f'{c[s]} {s}' for s in ORDER if c[s])})" if report["findings"] else "Open: no findings"
+    if ch is None:
+        return [("Wi-Fi audit", [open_line] + [f"[{f['severity']}] {f['title']}" for f in report["findings"][:8]])]
+    lines = [f"Since {time.strftime('%d %b', time.localtime(ch['since']))}: {len(ch['new'])} new, {len(ch['fixed'])} fixed, {ch['still']} still open"]
+    lines += [f"New [{f['severity']}]: {f['title']}" for f in ch["new"][:8]]
+    lines += [f"Worse [{f['severity']}]: {f['title']}" for f in ch["worse"][:4]]
+    lines += [f"Fixed: {f['title']}" for f in ch["fixed"][:8]]
+    return [("Wi-Fi audit", lines + [open_line])]
+
+
 def routes(ctx):
     r = APIRouter()
 
     @r.get("/api/audit")
     def audit(days: float = 7, _=Depends(current_user)):
-        """Everything about my networks in one report, with findings in order of how much they matter."""
-        return build(ctx, days)
+        """Everything about my networks in one report, with findings in order of how much they matter, and what changed since the
+        last snapshot."""
+        rep = build(ctx, days)
+        if ctx.cfg.demo and not last_snapshot(ctx):   # the demo: last week's report, before some things changed
+            old = {**rep, "generated": time.time() - 7 * 86400, "findings": rep["findings"][2:] + [
+                {"key": "“HomeNet-Guest” is open", "area": "Security", "severity": "high", "title": "“HomeNet-Guest” is open"}]}
+            if old["findings"]:
+                old["findings"][0] = {**old["findings"][0], "severity": "low"}
+            snapshot(ctx, old, "report")
+        rep["changes"] = changes(rep, last_snapshot(ctx))
+        return rep
+
+    @r.post("/api/audit/snapshot")
+    def keep(days: float = 7, _=Depends(require_admin)):
+        """Keep the findings of the report as it is now, to compare the next one with."""
+        rep = build(ctx, days)
+        return {"id": snapshot(ctx, rep), "findings": len(rep["findings"])}
 
     return r
