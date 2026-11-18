@@ -40,7 +40,8 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/mynet?days=7` | Health of my networks |
 | `GET /api/walk` · `POST /api/walk` · `GET /api/walk/{id}` · `POST /api/walk/{id}/point` | Walk surveys: list and start one, its points with their readings and the analysis (dead spots, coverage, where an extra access point would help), add a point where you stand (admin) |
 | `GET /api/walk/{id}/compare/{other}` · `PUT /api/walk/{id}` | The change of the strongest of your access points from survey `other` to `id`, cell by cell; rename a survey or set its floor width (admin) |
-| `GET /api/audit?days=7` | The audit report: findings about my networks with advice, and the details behind them |
+| `GET /api/audit?days=7` | The audit report: findings about my networks with advice, the details behind them, and `changes` since the last snapshot (new, worse, fixed, still open) |
+| `POST /api/audit/snapshot?days=7` | Keep the findings of the report as they are now, to compare later reports with (admin) |
 | `GET /api/readiness?days=30` | What the clients of my networks can do, and who each change would leave behind |
 | `GET /api/map`, `/api/sensors` | Device rooms/positions, sensors |
 | `GET /api/reports/occupancy?days=7` | Occupancy report data |
