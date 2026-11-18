@@ -246,6 +246,23 @@ async function loadAirtime(el, hours) {
   el.querySelectorAll('tr[data-at]').forEach(tr => tr.onclick = () => { const d = el.querySelector(`tr[data-at-list="${tr.dataset.at}"]`); d.hidden = !d.hidden; });
 }
 
+/* Hidden nodes (hiddennode.py): clients whose frames collide at the access point with those of clients they cannot hear. Shown
+   only when there is one. */
+async function loadHiddenNodes(el, hours) {
+  if (!el) return;
+  const r = await api(`/api/channels/hidden-nodes?hours=${hours}`);
+  if (!r.clients.length) return;
+  el.hidden = false;
+  const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
+  el.innerHTML = `<header><h2>Hidden nodes</h2><span class="faint">clients whose frames collide with those of clients they cannot hear</span></header>
+    <div class="body flush">${tableHtml('<th>Client</th><th>Access point</th><th class="num">Sent again: up</th><th class="num">down</th><th class="num">MCS · signal</th><th>Probably can’t hear</th>',
+      r.clients.map(c => `<tr><td>${c.level === 'likely' ? '<span class="tag warn">likely</span>' : '<span class="tag">possible</span>'} ${devLink(c.mac, c.name || c.mac)}</td>
+        <td>${esc(c.ssid || c.bssid)} <span class="faint">ch ${c.channel} (${c.band} GHz)</span></td><td class="num"><b>${pct(c.retry_up)}</b></td><td class="num muted">${pct(c.retry_down)}</td>
+        <td class="num muted">${c.mcs ?? '—'} · ${c.rssi != null ? c.rssi + ' dBm' : '—'}</td>
+        <td class="small-text">${c.far.length ? c.far.map(f => `${devLink(f.mac, f.name || f.mac)} <span class="faint">${esc(f.why)}${f.same_ap ? '' : ', another access point'}</span>`).join('<br>') : `<span class="faint">${c.others} other client${c.others > 1 ? 's' : ''} send on this channel; where they are is not known</span>`}</td></tr>`).join(''))}</div>
+    <div class="body"><p class="faint small-text" style="margin:0">What these clients send is lost often although their signal and rate are good, while what the access point sends them gets through: the sign of two clients that can't hear each other sending at once. Fixes: an RTS threshold on the access point (e.g. 500 bytes: a short request first that everyone hears), the access point more central, or another access point for the far clients. <i>Likely</i>: another client on the channel is far from it (other side of the map, or heard by other sensors only).</p></div>`;
+}
+
 /* BSS colours and channel widths (bsscolour.py): Wi-Fi 6 networks with the same colour on one channel, and widths that do more
    harm than good; with the colour and width of each of my access points. */
 async function loadColours(el) {

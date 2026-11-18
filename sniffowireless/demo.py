@@ -174,7 +174,7 @@ DEMO_RADIO = {"50:c7:bf:20:00:03": {"bss_color": 21, "width": None}, "9c:7b:ef:6
               "a0:40:a0:30:00:05": {"bss_color": 33, "width": 160}, "e0:63:da:70:00:0b": {"width": 80}, "24:a4:3c:10:00:09": {"bss_color": 7, "width": 160}}
 
 # Link quality of a few demo clients (the others are fine): a phone near a microwave, a far-away sensor, an old printer-like radio.
-LINK_PROFILES = {"5c:0a:5b:01:00:03": "noisy", "24:0a:c4:01:00:07": "weak", "fc:65:de:01:00:08": "legacy"}
+LINK_PROFILES = {"5c:0a:5b:01:00:03": "noisy", "24:0a:c4:01:00:06": "hidden", "24:0a:c4:01:00:07": "weak", "fc:65:de:01:00:08": "legacy"}
 
 BLE = [
     ("4c:11:aa:02:00:01", "AirPods Pro", 0x004C, "with:a4:83:e7:01:00:01", -60, "random-static", "audio sink"),
@@ -477,6 +477,8 @@ class DemoGenerator:
         out = []
         for way in ("up", "down"):
             n = rng.randint(200, 3000) if way == "down" else rng.randint(80, 1200)
+            if kind == "hidden" and way == "up":   # a hidden node: sends a lot, and its frames collide with the office's at the access point
+                n = rng.randint(600, 1200)
             if kind in ("legacy", "weak"):   # slow links: fewer frames get through in the time the sensor listens
                 n = rng.randint(80, 150) if kind == "legacy" else rng.randint(20, 70)
             if kind == "legacy":
@@ -484,7 +486,7 @@ class DemoGenerator:
                 mcs, retry = {}, 0.12
             else:
                 phy, nss, width = ("HT", 1, 20) if band24 or kind == "weak" else ("HE", 2, 80)
-                lo, hi = {"ok": (6, 11 if phy == "HE" else 7), "weak": (0, 3), "noisy": (6, 9)}[kind]
+                lo, hi = {"ok": (6, 11 if phy == "HE" else 7), "hidden": (5, 7), "weak": (0, 3), "noisy": (6, 9)}[kind]
                 hi = min(hi, 7 if phy == "HT" else 11)
                 lo = min(lo, hi)
                 mcs, rates = {}, {}
@@ -494,7 +496,7 @@ class DemoGenerator:
                     mcs[f"{phy} MCS {m} {nss}SS {width}"] = mcs.get(f"{phy} MCS {m} {nss}SS {width}", 0) + k
                     rate = round((HE_20[m] * WIDTH_HE[width] if phy == "HE" else HT_VHT_20[m] * WIDTH_HT[width]) * nss, 1)
                     rates[f"{rate:g}"] = rates.get(f"{rate:g}", 0) + k
-                retry = {"ok": 0.04, "weak": 0.07, "noisy": 0.33}[kind]
+                retry = {"ok": 0.04, "weak": 0.07, "noisy": 0.33, "hidden": 0.3 if way == "up" else 0.04}[kind]
             frames = sum(rates.values())
             out.append({"t": "link", "ts": t + 59, "mac": mac, "bssid": bssid, "dir": way, "frames": frames, "bytes": frames * (1500 if kind == "legacy" or way == "down" else 300),
                         "retries": int(frames * retry * rng.uniform(0.7, 1.3)), "rates": rates, "mcs": mcs,
