@@ -26,6 +26,7 @@ const LABEL_HELP = {
   'Old WPA': 'The network also offers WPA version 1 (TKIP), the standard that came before WPA2. It has known weaknesses.',
   'Load': 'How many stations are connected and how much of the time the channel is busy, as the access point itself reports it (the BSS Load element).',
   'Beacon interval': 'How often the access point announces itself. It is counted in TU (time units of 1.024 ms); 100 TU, about 102 ms, is typical.',
+  'DTIM period': 'Every how many beacons the access point sends the multicast and broadcast it held back for sleeping clients. 1 wakes them at every beacon (more battery use, least delay); 1–3 is usual; long intervals delay casting and printer discovery.',
   'Country': 'The country whose radio rules the access point says it follows (the Country element). It decides which channels and power are allowed.',
   'Roaming': 'Standards that help clients move between access points: 802.11k (neighbour reports), 802.11v (the network can steer a client) and 802.11r (fast, secure hand-over).',
   'Wi-Fi 6 / 7': 'Wi-Fi 6 and 7 details from the beacon: the BSS colour tells neighbouring networks on one channel apart, multi-link operation lets a Wi-Fi 7 access point use several bands at once.',

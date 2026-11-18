@@ -37,6 +37,7 @@ function wifiApRows(ex, d) {
   if (a.load) rows.push(['Load', `${a.load.sta} connected · ${a.load.util}% of the time busy <span class="faint">(reported by the access point)</span>`]);
   if (a.ap_name) rows.push(['AP name', `${esc(a.ap_name)} <span class="faint">(announced in its beacons by ${esc(a.ap_name_src || 'the access point')}; an administrator can set it to anything)</span>`]);
   if (a.beacon_tu) rows.push(['Beacon interval', `${a.beacon_tu} TU <span class="faint">≈ ${Math.round(a.beacon_tu * 1.024)} ms</span>`]);
+  if (a.dtim) rows.push(['DTIM period', `${a.dtim}${a.beacon_tu ? ` <span class="faint">multicast for sleeping clients every ≈ ${Math.round(a.beacon_tu * 1.024 * a.dtim)} ms</span>` : ''}`]);
   if (a.country) rows.push(['Country', `${esc(a.country)}${a.country_env ? ` <span class="faint">(${esc(a.country_env)})</span>` : ''}`]);
   if (a.roaming && a.roaming.length) rows.push(['Roaming', tags(a.roaming.map(x => `<span class="tag" title="${esc(ROAM_HELP[x] || '')}">802.${esc(x)}</span>`))]);
   const gen = [];

@@ -147,6 +147,8 @@ def ap_attributes(elts, beacon_tu=None, capability=None):
                 env = chr(info[2]) if info[2] in (0x20, 0x4F, 0x49) else ""
                 if env.strip():
                     out["country_env"] = "indoor" if env == "I" else "outdoor"
+        elif eid == 5 and len(info) >= 2 and info[1]:  # TIM: DTIM count, DTIM period (every how many beacons multicast is sent)
+            out["dtim"] = info[1]
         elif eid == 11 and len(info) >= 5:  # BSS Load
             out["load"] = {"sta": _le16(info, 0), "util": round(info[2] * 100 / 255)}
         elif eid == 48:

@@ -36,7 +36,7 @@ Interactive docs (all endpoints) are at `/api/docs`. Every endpoint needs a logi
 | `GET /api/joins/{mac}?hours=24` | One client's connection attempts step by step, its roams and its disconnects |
 | `GET /api/link?hours=24&bssid=` | Link quality of every client (of one access point), the worst first |
 | `GET /api/link/{mac}?hours=24` | One client's rates, MCS and retries per direction, with a verdict |
-| `GET /api/channels/beacons?hours=1` | Beacon airtime per channel and per access point, with tips for your own networks |
+| `GET /api/channels/beacons?hours=1` | Beacon airtime per channel and per access point, with tips for your own networks; `power`: per network of yours, how often multicast is sent to sleeping clients (beacon interval × DTIM period) |
 | `GET /api/mynet?days=7` | Health of my networks |
 | `GET /api/walk` · `POST /api/walk` · `GET /api/walk/{id}` · `POST /api/walk/{id}/point` | Walk surveys: list and start one, its points with their readings and the analysis (dead spots, coverage, where an extra access point would help), add a point where you stand (admin) |
 | `GET /api/walk/{id}/compare/{other}` · `PUT /api/walk/{id}` | The change of the strongest of your access points from survey `other` to `id`, cell by cell; rename a survey or set its floor width (admin) |

@@ -174,7 +174,7 @@ async function loadBeacons(el) {
   const apRows = (band, ch) => r.aps.filter(a => a.band === band && a.channel === ch).map(a => `<tr class="${a.counts ? '' : 'faint'}">
       <td>${a.ssid ? esc(a.ssid) : '<span class="faint">hidden</span>'}${a.mine ? ' <span class="tag on">mine</span>' : ''}</td><td>${devLink(a.mac)}</td>
       <td class="num">${a.rssi != null ? a.rssi + ' dBm' : '—'}</td><td class="num">${a.rate} Mb/s${a.known ? '' : ' <span class="faint" title="Not reported by the sensor (an older version): assumed">?</span>'}</td>
-      <td class="num">${a.interval} TU</td><td class="num">${a.length} B</td><td class="num">${a.counts ? pct(a.airtime) : '<span title="Weaker than ' + r.cca + ' dBm: not deferred to">—</span>'}</td></tr>`).join('');
+      <td class="num">${a.interval} TU${a.dtim ? ` <span class="faint" title="DTIM period: sleeping clients get multicast every ${a.dtim} beacons">· DTIM ${a.dtim}</span>` : ''}</td><td class="num">${a.length} B</td><td class="num">${a.counts ? pct(a.airtime) : '<span title="Weaker than ' + r.cca + ' dBm: not deferred to">—</span>'}</td></tr>`).join('');
   el.innerHTML = `<header><h2>Beacon overhead</h2><span class="faint">the airtime beacons alone take, from the access points heard in the last hour (at ${r.cca} dBm or stronger) · under ${Math.round(r.thresholds.high * 100)}% is fine, over ${Math.round(r.thresholds.bad * 100)}% is a problem</span></header>
     ${r.advice.length ? `<div class="body">${r.advice.map(a => `<div class="small-text" style="margin:4px 0"><span class="tag ${a.level === 'bad' ? 'bad' : a.level === 'high' ? 'warn' : ''}">${a.level === 'info' ? 'tip' : a.level === 'bad' ? 'problem' : 'high'}</span> ${esc(a.text)}</div>`).join('')}</div>` : ''}
     <div class="body flush">${tableHtml('<th>Channel</th><th class="num">BSSIDs</th><th class="num">SSIDs</th><th class="num">Radios</th><th class="num">Beacons/s</th><th class="num">Beacon airtime</th><th class="num">Yours</th>',
@@ -182,7 +182,10 @@ async function loadBeacons(el) {
         <td class="num">${c.aps}</td><td class="num">${c.ssids}</td><td class="num">${c.radios}</td><td class="num">${c.beacons_per_s}</td>
         <td class="num">${bar(c.airtime, c.level)} <span class="tag ${tag(c.level)}">${pct(c.airtime)}</span></td><td class="num muted">${c.mine ? pct(c.mine) : '—'}</td></tr>
         <tr hidden data-bo-aps="${c.band}|${c.channel}"><td colspan="7" style="padding:0 0 8px 24px">${tableHtml('<th>SSID</th><th>BSSID</th><th class="num">Signal</th><th class="num">Beacon rate</th><th class="num">Interval</th><th class="num">Size</th><th class="num">Airtime</th>', apRows(c.band, c.channel))}</td></tr>`).join(''),
-      'No access points heard in the last hour')}</div>`;
+      'No access points heard in the last hour')}</div>
+    ${r.power.length ? `<div class="body"><h3>Power save</h3><p class="faint small-text" style="margin:0 0 6px">Clients that sleep wake up for every DTIM beacon, when the access point sends the multicast and broadcast it held back: a short interval costs battery, a long one delays discovery (casting, AirPlay, printers) and smart-home apps.</p>
+      ${r.power.map(p => `<div class="small-text" style="margin:4px 0"><span class="tag ${p.level === 'high' ? 'warn' : p.level === 'ok' ? 'on' : ''}">${p.ms.map(m => m + ' ms').join(' / ')}</span> <b>${esc(p.ssid)}</b>
+        <span class="faint">(${p.aps.map(a => `DTIM ${a.dtim} × ${a.interval} TU on ${chText(a.channel, a.band)}`).join(', ')})</span>: ${esc(p.text)}</div>`).join('')}</div>` : ''}`;
   el.querySelectorAll('tr[data-bo]').forEach(tr => tr.onclick = () => { const d = el.querySelector(`tr[data-bo-aps="${tr.dataset.bo}"]`); d.hidden = !d.hidden; });
 }
 

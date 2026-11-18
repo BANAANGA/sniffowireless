@@ -169,6 +169,7 @@ CLIENTS = [
     ("5c:0a:5b:01:00:0f", "Samsung", "evening", (2,), -62, []),
 ]
 
+DEMO_DTIM = {"24:a4:3c:10:00:01": 3, "24:a4:3c:10:00:02": 3, "50:c7:bf:20:00:03": 10}   # HomeNet 6 GHz: 1 (differs); the IoT network: 1 s
 DEMO_RADIO = {"50:c7:bf:20:00:03": {"bss_color": 21, "width": None}, "9c:7b:ef:60:00:0a": {"bss_color": 21, "width": None},
               "a0:40:a0:30:00:04": {"width": 40}, "24:a4:3c:10:00:02": {"bss_color": 7, "width": 80},
               "a0:40:a0:30:00:05": {"bss_color": 33, "width": 160}, "e0:63:da:70:00:0b": {"width": 80}, "24:a4:3c:10:00:09": {"bss_color": 7, "width": 160}}
@@ -404,7 +405,7 @@ class DemoGenerator:
     def _ap_info(self, mac, enc, vendor):
         """Example of what beacons say about an access point (the real values come from wifiattrs.ap_attributes)."""
         h = _h(mac, 11)
-        info = {"country": "NL", "beacon_tu": 100, "boot": int(self.boot_base - (1 + h % 20) * 86400 - h % 3600),
+        info = {"country": "NL", "beacon_tu": 100, "dtim": DEMO_DTIM.get(mac, 1), "boot": int(self.boot_base - (1 + h % 20) * 86400 - h % 3600),
                 "load": {"sta": h % 14, "util": 8 + h % 55}}
         if "WPA3" in enc:
             info["rsn"] = {"akm": ["PSK", "SAE"], "pairwise": ["CCMP"], "group": "CCMP", "pmf": "optional", "transition": True}
