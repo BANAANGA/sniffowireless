@@ -761,3 +761,7 @@ table.cci thead th { font-weight: 400; vertical-align: bottom; }
 .map.walk.tap { cursor: crosshair; }
 .walk-pt { position: absolute; transform: translate(-50%, -50%); min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px; background: rgba(0, 0, 0, .65);
   color: #fff; font-size: 10px; line-height: 18px; text-align: center; pointer-events: none; }
+.walk-new { position: absolute; transform: translate(-50%, -50%); width: 30px; height: 30px; border-radius: 50%; border: 2px dashed #1a73e8;
+  background: rgba(26, 115, 232, .18); color: #1a73e8; font: 700 18px/26px sans-serif; text-align: center; pointer-events: none; }
+.walk-new.inline { position: static; display: inline-block; transform: none; width: 18px; height: 18px; font-size: 12px; line-height: 14px; vertical-align: middle; }
+ul.tight { margin: 4px 0 8px; padding-left: 18px; }
