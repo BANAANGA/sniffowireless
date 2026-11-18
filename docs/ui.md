@@ -185,6 +185,21 @@ Under 10 % is fine, 10–20 % is high, and over 20 % is a problem. Above the tab
   costs.
 - **A beacon interval below 100 TU.**
 
+### Power save (DTIM)
+
+Since release 34.2 the sensor also reads each access point's DTIM period from the TIM element of its beacons. Clients that sleep
+(phones with the screen off, battery sensors) wake up for every DTIM beacon: that is when the access point sends the multicast
+and broadcast it held back for them. Below the table, per network of yours, how often that is (beacon interval × DTIM period):
+
+- **about 100 ms (DTIM 1):** the lowest delay, but sleeping clients wake up for every beacon and use more energy. DTIM 2–3
+  roughly halves that for a few hundred milliseconds of delay.
+- **up to about 650 ms:** a good balance.
+- **longer:** fine for battery, slow for discovery (casting, AirPlay, printers, smart-home apps); from 1 second it is a finding
+  in the audit report.
+
+When the access points of one network differ, clients behave differently after roaming; that is noted too. The access point's
+page shows its DTIM period under *Beacon interval*.
+
 ## Link quality
 
 A Wi-Fi sensor reads the radiotap header and frame control of every data frame between a client and its access point, in
@@ -317,7 +332,7 @@ each other. The Channels page (since release 34.2) lists the clients that show t
   everyone, so nobody sends into its frames
 - **other clients send on the same channel**
 
-It is **likely** when one of those other clients is far from it: on the other side of the floor plan (by the position on the
+It is **likely** when one of those other clients is far from it: on the other side of the floor plan (40 % of its width or more apart, by the position on the
 map, or the sensor of its room), or heard well (−75 dBm or better) only by other sensors. Without anything known about where the
 others are, it is listed as **possible** from 25 % retries up. Hidden nodes also appear in the [audit report](#audit-report).
 

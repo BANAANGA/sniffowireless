@@ -24,7 +24,7 @@ MIN_UP = 200          # frames sent in the period: fewer says too little
 RETRY_UP = 0.15       # retries up from here count
 RETRY_POSSIBLE = 0.25 # without any sign the others are far, only this much counts
 GOOD_MCS, GOOD_RSSI = 5, -67
-FAR = 0.45            # a share of the floor plan's width
+FAR = 0.4             # a share of the floor plan's width: about 8 m on a 20 m floor, usually with walls between
 HEARD_WELL = -75
 
 

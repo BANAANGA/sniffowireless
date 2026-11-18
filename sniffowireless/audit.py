@@ -52,7 +52,7 @@ def build(ctx, days=7):
                         "akm": rsn.get("akm") or [], "pmf": rsn.get("pmf"), "transition": bool(rsn.get("transition")),
                         "ciphers": rsn.get("pairwise") or [], "wpa1": bool(info.get("wpa1")), "wps": bool(info.get("wps_configured") or wps_element),
                         "wps_locked": info.get("wps_locked"), "roaming": info.get("roaming") or [], "width": info.get("width"),
-                        "colour": info.get("bss_color"), "basic_rate": info.get("basic_rate"), "beacon_tu": info.get("beacon_tu"),
+                        "colour": info.get("bss_color"), "basic_rate": info.get("basic_rate"), "beacon_tu": info.get("beacon_tu"), "dtim": info.get("dtim"),
                         "model": info.get("ap_name"), "gen": r["wifi_gen"]})
     if not my_ssids:
         find("Setup", "info", "No networks of yours are set", "The report covers your own networks: add them under Settings → My networks.")
@@ -120,6 +120,10 @@ def build(ctx, days=7):
     for a in bo["advice"]:
         if a.get("mac"):
             find("Channels", "low", "Beacon settings", a["text"])
+    for p in bo.get("power", []):
+        if p["level"] != "ok":
+            find("Clients", "medium" if p["level"] == "high" else "info", f"Power save of “{p['ssid']}”: multicast every {', '.join(f'{m} ms' for m in p['ms'])}",
+                 p["text"], "Set the DTIM period on the access point (1–3 with the usual 100 TU beacon interval).")
     plan = _safe(lambda: cci.analyze(ctx, since, now), {"pairs": [], "plan": {}, "radios": []})
     shared = [p for p in plan["pairs"] if p["same_channel"]]
     if shared:

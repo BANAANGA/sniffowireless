@@ -5,6 +5,10 @@ basic rate so every client can decode it. On 2.4 GHz that is often still 1 Mb/s,
 Many SSIDs on many access points sharing a channel then leave less airtime for traffic. A typical consultant's rule of thumb:
 under 10 % is fine, above 20 % is a problem.
 
+Power save (release 34.2): clients that sleep wake up for every DTIM beacon (every so many beacons, as each access point's TIM
+element says), when the access point sends the multicast and broadcast it held back. A short DTIM interval costs sleeping phones
+and battery sensors energy; a long one delays multicast (mDNS, casting and AirPlay discovery, ARP) by up to that long.
+
 Per access point the beacon interval, the lowest basic rate and the size of its beacon come from its beacons (wifiattrs); where
 an older sensor did not report them, 100 TU, 1 Mb/s (2.4 GHz) or 6 Mb/s (5 / 6 GHz) and 300 bytes are assumed. Only access points
 heard at -82 dBm or stronger count: that is the level at which a radio's clear-channel assessment detects a Wi-Fi preamble and
@@ -23,6 +27,7 @@ CCA_DBM = -82                 # preamble detection threshold: weaker beacons are
 DEFAULT_TU, DEFAULT_LEN = 100, 300
 DEFAULT_RATE = {"2.4": 1.0, "5": 6.0, "6": 6.0}
 HIGH, BAD = 0.10, 0.20        # share of the airtime
+DTIM_SHORT_MS, DTIM_LONG_MS, DTIM_VERY_LONG_MS = 110, 650, 1000
 MANY_SSIDS = 4                # SSIDs on one radio worth a remark
 
 
@@ -61,6 +66,7 @@ def overhead(ctx, since):
         a = {"mac": r["mac"], "ssid": r["ssid"], "hidden": bool(extra.get("hidden")), "band": r["band"], "channel": r["channel"],
              "rssi": r["last_rssi"], "rate": rate or DEFAULT_RATE[r["band"]], "interval": tu if isinstance(tu, int) and 10 <= tu <= 10000 else DEFAULT_TU,
              "length": size if isinstance(size, int) and 40 <= size <= 2400 else DEFAULT_LEN, "known": bool(rate and size),
+             "dtim": info.get("dtim") if isinstance(info.get("dtim"), int) and 1 <= info.get("dtim") <= 255 else None,
              "mine": r["ssid"] in my_ssids and (not trusted or r["mac"] in trusted)}
         a["counts"] = a["rssi"] is None or a["rssi"] >= CCA_DBM
         a["airtime"] = round(airtime(a["length"], a["rate"], a["interval"], a["band"]), 5)
@@ -86,7 +92,7 @@ def overhead(ctx, since):
         c["level"] = "bad" if c["airtime"] >= BAD else "high" if c["airtime"] >= HIGH else "ok"
         out.append(c)
     out.sort(key=lambda c: (-c["airtime"], c["band"], c["channel"]))
-    return {"channels": out, "aps": sorted(aps, key=lambda a: -a["airtime"]), "advice": advice(aps, out), "cca": CCA_DBM,
+    return {"channels": out, "aps": sorted(aps, key=lambda a: -a["airtime"]), "advice": advice(aps, out), "power": power_save(aps), "cca": CCA_DBM,
             "thresholds": {"high": HIGH, "bad": BAD}}
 
 
@@ -126,6 +132,36 @@ def advice(aps, channels):
                                 f" each SSID you drop or merge saves about {pct(total / len(group))}."})
     order = {"bad": 0, "high": 1, "info": 2}
     out.sort(key=lambda x: order[x["level"]])
+    return out
+
+
+def power_save(aps):
+    """Per network of mine: how often its access points send the multicast held back for sleeping clients (beacon interval x
+    DTIM period), and what that means for battery and for multicast."""
+    by = {}
+    for a in aps:
+        if a["mine"] and a["dtim"]:
+            by.setdefault(a["ssid"] or "(hidden)", []).append(a)
+    out = []
+    for ssid, group in sorted(by.items()):
+        ms = sorted({round(a["interval"] * 1.024 * a["dtim"]) for a in group})
+        worst = max(ms)
+        if worst >= DTIM_VERY_LONG_MS:
+            level, text = "high", (f"Multicast and broadcast wait up to {worst / 1000:.1f} s for sleeping clients: casting and AirPlay discovery, "
+                                   "smart-home apps and calls can stall. A DTIM period of 1–3 (100–300 ms) is usual.")
+        elif worst >= DTIM_LONG_MS:
+            level, text = "info", (f"Multicast waits up to {worst} ms for sleeping clients: fine for battery, slow for discovery (casting, "
+                                   "printers). 1–3 is usual unless the network is mostly battery sensors.")
+        elif worst <= DTIM_SHORT_MS:
+            level, text = "info", ("Sleeping clients wake up for every beacon (DTIM 1): the lowest delay for multicast, but phones and battery "
+                                   "sensors use more energy. DTIM 2–3 roughly halves that wake-up energy for a few hundred ms of delay.")
+        else:
+            level, text = "ok", f"Multicast is sent every {worst} ms: a good balance of battery and delay."
+        if len(ms) > 1:
+            text += f" The access points of this network differ ({', '.join(f'{m} ms' for m in ms)}): clients behave differently after roaming."
+            level = "info" if level == "ok" else level
+        out.append({"ssid": ssid, "level": level, "text": text, "ms": ms,
+                    "aps": [{"mac": a["mac"], "band": a["band"], "channel": a["channel"], "interval": a["interval"], "dtim": a["dtim"]} for a in group]})
     return out
 
 
