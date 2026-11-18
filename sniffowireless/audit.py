@@ -146,6 +146,13 @@ def build(ctx, days=7):
     if bad_links:
         find("Clients", "medium", f"{len(bad_links)} client{'s' if len(bad_links) > 1 else ''} with a poor link",
              ", ".join(f"{x['name'] or x['mac']} ({x['verdict']['short']})" for x in bad_links[:6]), "See Link quality on their device pages.")
+    from . import hiddennode
+    hidden = [c for c in _safe(lambda: hiddennode.analyze(ctx, since), {"clients": []})["clients"] if c["bssid"] in my_bssids]
+    for c in hidden[:5]:
+        find("Clients", "medium" if c["level"] == "likely" else "low", f"{c['name'] or c['mac']} may be a hidden node on channel {c['channel']}",
+             f"{c['retry_up'] * 100:.0f}% of what it sends is sent again at a good rate, while what it receives gets through"
+             + (f"; it is {c['far'][0]['why']} from {c['far'][0]['name'] or c['far'][0]['mac']}" if c["far"] else "") + ".",
+             "Set an RTS threshold (e.g. 500 bytes) on the access point, move it more central, or add one for the far clients.")
     js = _safe(lambda: joins.site(ctx, since, my_bssids or None), {"counts": {}, "causes": [], "roam_stats": {}})
     for c in js["causes"][:5]:
         find("Clients", "medium" if c["count"] >= 3 else "low", f"{c['count']}× connection failed: {c['cause']}",

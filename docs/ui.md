@@ -52,6 +52,7 @@
   - a ranking of the best channels per band (2.4 GHz: 1/6/11 with overlap weighting; 5 GHz: quietest 80 MHz block, non-DFS preferred; 6 GHz: PSCs)
   - a recommendation for each of your own access points
   - **who uses the airtime:** per channel, the share each client and access point takes with its data frames, and the slow ones (see [Who uses the airtime](#who-uses-the-airtime))
+  - **hidden nodes:** clients whose frames collide with those of clients they cannot hear (see [Hidden nodes](#hidden-nodes))
   - **BSS colours and channel widths:** Wi-Fi 6 networks with the same colour on one channel, and widths that do more harm than good (see [BSS colours and channel widths](#bss-colours-and-channel-widths))
   - **co-channel interference** between your own access points, and a channel plan for all of them (see [Co-channel interference](#co-channel-interference))
 
@@ -302,6 +303,26 @@ are far away or old, or low basic rates.
 *All airtime* is everything the sensor measured on the channel (management frames and other networks included), so the
 devices' data is a part of it. Sensors before release 34.1 do not count frame sizes; 600 bytes per frame is assumed for their
 data, marked with a `?`.
+
+## Hidden nodes
+
+Every client listens before it sends. Two clients that can't hear each other (on opposite sides of the access point, or with a
+wall between them) both find the air free, send at once, and the access point gets neither frame: they are *hidden nodes* to
+each other. The Channels page (since release 34.2) lists the clients that show the signs, from their link counts (see
+[Link quality](#link-quality)):
+
+- **what they send is sent again often** (15 % or more of at least 200 frames), **although the link is good** (median MCS 5 or
+  more, or −67 dBm or better): it is not the distance
+- **what the access point sends them gets through** (retries down less than 60 % of those up): the access point is heard by
+  everyone, so nobody sends into its frames
+- **other clients send on the same channel**
+
+It is **likely** when one of those other clients is far from it: on the other side of the floor plan (by the position on the
+map, or the sensor of its room), or heard well (−75 dBm or better) only by other sensors. Without anything known about where the
+others are, it is listed as **possible** from 25 % retries up. Hidden nodes also appear in the [audit report](#audit-report).
+
+The fixes: an RTS threshold on the access point (e.g. 500 bytes: a client then first sends a short request, and the access
+point's answer is heard by everyone), the access point more central, or another access point for the far clients.
 
 ## BSS colours and channel widths
 

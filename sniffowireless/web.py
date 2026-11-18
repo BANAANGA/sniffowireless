@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import (adapters, alerts, appearance, audit, walk, beacons, bsscolour, readiness, triggers, linkstats, joins, cci, dataprivacy, macprivacy, auth, backup, bluetooth, capture, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
+from . import (adapters, alerts, appearance, audit, walk, hiddennode, beacons, bsscolour, readiness, triggers, linkstats, joins, cci, dataprivacy, macprivacy, auth, backup, bluetooth, capture, channels, dfs, handshake, health, interference, investigate, lan, logs, lora, manage,
                matching, metrics, modules, occupancy, mqtt, purge, radiowatch, reports, search, security, sensors, signal_live, status, survey, sysinfo, tracker_sound, trackers, version, zigbee)
 from .anonymize import AnonymizeMiddleware
 from .auth import current_user, require_admin
@@ -875,7 +875,7 @@ def create_app(ctx):
     # investigate and mqtt before manage: manage's catch-all /api/settings/{key} would otherwise shadow
     # /api/settings/investigate and /api/settings/mqtt
     for mod in (auth, appearance, modules, dataprivacy, adapters, purge, radiowatch, investigate, mqtt, manage, alerts, security, survey, health, metrics, sensors, reports, lan, zigbee, lora, interference, dfs,
-                trackers, backup, search, logs, matching, handshake, channels, occupancy, triggers, capture, signal_live, cci, joins, linkstats, beacons, bsscolour, readiness, audit, walk):
+                trackers, backup, search, logs, matching, handshake, channels, occupancy, triggers, capture, signal_live, cci, joins, linkstats, beacons, bsscolour, readiness, audit, walk, hiddennode):
         app.include_router(mod.routes(ctx))
 
     # Cache-busting: reference static files as /static/x.js?v=<content hash>, so browsers pick up new
