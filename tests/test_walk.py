@@ -63,3 +63,63 @@ def test_the_demo_makes_up_readings_by_place(ctx):
     near = walk.demo_readings(ctx, 0.24, 0.32)   # in the living room, where the demo's 2.4 GHz HomeNet access point is
     far = walk.demo_readings(ctx, 0.78, 0.9)
     assert near["24:a4:3c:10:00:01"] > far.get("24:a4:3c:10:00:01", -200)
+
+
+# ---- release 34.2: the analysis of a survey, and comparing two
+
+def fake_survey(ctx, name, ap_at, width=20, without=False):
+    """A 9 x 7 walk over a floor with my access point AP1 at ap_at (log-distance path loss, exponent 3) and the
+    neighbour AP2 about as loud everywhere."""
+    import json
+    import math
+    with ctx.wdb() as w:
+        sid = w.execute("INSERT INTO walk_sessions(name, sensor, created, width_m) VALUES(?, 'local', ?, ?)", (name, time.time(), width)).lastrowid
+        for i in range(9):
+            for j in range(7):
+                x, y = 0.06 + 0.11 * i, 0.08 + 0.14 * j
+                d = max(1, math.hypot((x - ap_at[0]) * width, (y - ap_at[1]) * width * 0.64))
+                rd = {AP2: -80} if without else {AP1: round(-38 - 30 * math.log10(d)), AP2: -80}
+                w.execute("INSERT INTO walk_points(session, ts, x, y, readings) VALUES(?, ?, ?, ?, ?)", (sid, time.time(), x, y, json.dumps(rd)))
+    return sid
+
+
+def mine_ap(ctx):
+    ctx.settings.set("networks", {"ssids": ["Home"], "trusted_bssids": []})
+    obs(ctx, AP1, -50)
+    obs(ctx, AP2, -80)
+    ctx.store.flush()
+
+
+def test_the_model_is_fitted_to_the_survey(ctx):
+    mine_ap(ctx)
+    sid = fake_survey(ctx, "x", (0.1, 0.2))
+    d = client(create_app(ctx), "view").get(f"/api/walk/{sid}").json()
+    a = d["analysis"]
+    assert a["suggest"]["model"]["fitted"] and 2.5 <= a["suggest"]["model"]["n"] <= 3.5
+    assert a["dead"] and all(p["best"] < -75 for p in a["dead"])
+    assert all(p["x"] > 0.4 for p in a["dead"])            # far from the access point in the corner
+    assert a["suggest"]["x"] > 0.45                         # the extra one goes to the other side
+    assert a["suggest"]["area_after"] > a["area_good"]
+
+
+def test_a_well_covered_floor_needs_nothing(ctx):
+    mine_ap(ctx)
+    sid = fake_survey(ctx, "x", (0.5, 0.5), width=6)
+    a = client(create_app(ctx), "view").get(f"/api/walk/{sid}").json()["analysis"]
+    assert a["dead"] == [] and a["suggest"] is None and a["area_good"] == 100
+
+
+def test_compare(ctx):
+    mine_ap(ctx)
+    before = fake_survey(ctx, "before", (0.1, 0.2))
+    after = fake_survey(ctx, "after", (0.5, 0.5))
+    app = create_app(ctx)
+    c = client(app, "view").get(f"/api/walk/{after}/compare/{before}").json()
+    assert c["cells"] and c["better"] > 0 and c["worse"] > 0 and c["good_after"] > c["good_before"]
+    # nothing of mine heard before: every spot got better
+    gone = fake_survey(ctx, "gone", (0, 0), without=True)
+    assert client(app, "view").get(f"/api/walk/{after}/compare/{gone}").json()["cells"] == []   # no value to compare with
+    admin = client(app, "admin")
+    admin.put(f"/api/walk/{after}", json={"name": "Moved", "width_m": 12})
+    s = admin.get(f"/api/walk/{after}").json()
+    assert s["name"] == "Moved" and s["width_m"] == 12

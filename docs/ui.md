@@ -385,7 +385,8 @@ interference and radar, and how it was measured (which sensors, where).
 
 Then:
 
-1. **New survey…**, and choose the sensor you carry. While the survey is open, that sensor notes every access point it hears with
+1. **New survey…**, choose the sensor you carry and say how wide the floor plan is in metres (used for distances, see below;
+   **change** under the map corrects it later). While the survey is open, that sensor notes every access point it hears with
    its signal.
 2. Open the page on a phone (or any browser), walk to a spot, **stand still for 10 seconds**, and tap where you are on the floor
    plan. The line above the buttons says how many access points the sensor heard in those seconds, and the strongest of yours. A
@@ -400,7 +401,26 @@ The heatmap is drawn between the points (inverse-distance weighting; nothing is 
   better.
 - **2.4 / 5 / 6 GHz:** the same per band.
 - **One access point:** its own coverage.
+- **Second AP:** the second-strongest of your access points. Designs for roaming (and for calls while walking) aim for −67 dBm or
+  better from two access points at once.
 - **Overlap:** how many of your access points are heard at −67 dBm or better. Two or more lets clients roam; on one channel they
   share the air.
+- **Shared channel:** how many other access points, yours or the neighbours', are heard above −82 dBm on the channel of the
+  strongest of yours (co-channel interference). They all take turns on the air, so fewer is faster.
 
 Each point shows its value. Surveys are kept until you delete them.
+
+Next to the map (since release 34.2):
+
+- **Coverage:** the share of the points, and of the surveyed area, where one of yours is at −67 dBm or better.
+- **Dead spots:** the points where none of yours reaches −75 dBm, by room (the room of the nearest sensor on the map).
+- **An extra access point:** where one more access point would bring most of the weak area (below −67 dBm) up to −67 dBm, marked
+  with a dashed **+** on the map, with the coverage it would give. This is an estimate: the signal is taken to fall off as
+  *A − 10·n·log₁₀(distance)*, with *A* and *n* fitted to the survey itself (each of your access points is taken to stand near
+  where it was heard best). With too few points it uses the usual indoor values (−40 dBm at 1 m, n = 3). Walls between the spot
+  and the weak area make it weaker than the estimate.
+
+**Compare with** draws the difference between this survey and an earlier one of the same floor, for example before and after
+moving an access point or changing its channel: per spot, how much stronger or weaker the strongest of yours is now (green
+better, red worse, grey within 3 dB), only where both surveys have points nearby. The legend gives the share of the area that
+got better or worse, and the coverage at −67 dBm before and after.
