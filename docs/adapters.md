@@ -23,6 +23,8 @@ iw phy "$(cat /sys/class/net/wlan1/phy80211/name)" info | grep -A8 "Supported in
 
 An adapter that stopped capturing can be reset from the web interface: admins see a **Reset…** button per interface in the overview's *Sensors* panel (also for remote sensors, which do it with their next upload). Wi-Fi is brought down and up again, Bluetooth gets an HCI reset, Zigbee and LoRa sticks are reconnected, and *Also reset the USB device* does what unplugging and replugging would (needs the container to see `/dev/bus/usb`, which `privileged` does).
 
+This also happens by itself: an adapter that has been in error for 3 minutes is reset, USB device included, by the machine it is plugged into (the server, or the remote sensor without waiting for the server). The *Sensors* panel notes when and what came of it. If the adapter is still in error, the next try waits twice as long (6, 12, 24 minutes, up to an hour). After a minute without errors it counts as working again and starts over. Set `AUTO_RESET_AFTER` to another number of seconds, or to `0` to switch it off.
+
 If the interface is missing, the adapter usually needs firmware. On Debian/Ubuntu/Raspberry Pi OS install `firmware-misc-nonfree` (MediaTek), `firmware-atheros` or `firmware-realtek`. On Arch install `linux-firmware`. Then replug the adapter.
 
 ## 2. Keep NetworkManager / wpa_supplicant away from it

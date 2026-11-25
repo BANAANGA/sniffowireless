@@ -7,6 +7,10 @@ Bluetooth dongle that stopped answering, a USB serial stick that hung). What it 
   + USB       optionally the USB device is reset as well, like unplugging and replugging it (needs the container to see
               /dev/bus/usb: it does when it runs privileged)
 
+The same reset, with the USB device, also happens by itself (Watchdog): an adapter that has been in error for AUTO_RESET_AFTER
+seconds (3 minutes) is reset on the machine it is plugged into, the server or the remote sensor. When that does not help, the
+next try waits twice as long, up to an hour; an adapter that works for a minute again starts over.
+
 For a remote sensor the server keeps the request until the sensor's next upload and hands it over in the reply."""
 import fcntl
 import hashlib
@@ -136,6 +140,83 @@ def reset(name, usb=False):
     log.info("Reset %s (usb=%s): %s", name, bool(usb), "; ".join(steps))
     status.update(name, note=f"Reset at {time.strftime('%H:%M')}: {steps[-1] if steps else 'done'}")
     return steps
+
+
+# ------------------------------------------------------------------ automatic reset
+RECOVERED = 60       # seconds without an error before an adapter counts as working again (a Wi-Fi loop that fails at once
+                     # shows "capturing" for a moment between its retries)
+MAX_WAIT = 3600
+
+
+class Watchdog:
+    """Resets, with the USB device, a local adapter that has been in error for `after` seconds. Runs on every machine with
+    adapters; the entries of remote sensors on the server are left alone (those sensors run their own)."""
+
+    def __init__(self, after, interval=5, clock=time.monotonic, resetter=None):
+        self.after, self.interval, self.clock = after, interval, clock
+        self.resetter = resetter or reset
+        self.track = {}      # name -> {"since": error since, "ok": working since, "tries": resets so far, "wait": seconds}
+
+    def start(self, stop):
+        if self.after > 0:
+            threading.Thread(target=self.run, args=(stop,), daemon=True, name="adapter-watchdog").start()
+            log.info("Adapters in error for %d s are reset automatically (AUTO_RESET_AFTER)", self.after)
+
+    def run(self, stop):
+        while not stop.wait(self.interval):
+            try:
+                self.check()
+            except Exception:
+                log.exception("adapter watchdog")
+
+    def candidates(self):
+        with status._lock:
+            entries = [dict(v) for v in status.SENSORS.values()]
+        for e in entries:
+            name = e.get("name") or ""
+            if e.get("remote") or not NAME_RX.match(name) or e.get("state") == "updating":
+                continue
+            if name.split(":", 1)[0] in ("zigbee", "lora") and name not in REGISTRY:
+                continue
+            yield name, e.get("state") == "error"
+
+    def check(self):
+        now, seen = self.clock(), set()
+        for name, bad in self.candidates():
+            seen.add(name)
+            t = self.track.get(name)
+            if bad:
+                if t is None:
+                    t = self.track[name] = {"since": now, "ok": None, "tries": 0, "wait": self.after}
+                t["ok"] = None
+                if now - t["since"] >= t["wait"]:
+                    self.fire(name, t, now)
+            elif t is not None:
+                if t["ok"] is None:
+                    t["ok"] = now
+                elif now - t["ok"] >= RECOVERED:
+                    if t["tries"]:
+                        log.info("%s works again after %d automatic reset%s", name, t["tries"], "" if t["tries"] == 1 else "s")
+                    del self.track[name]
+        for name in set(self.track) - seen:   # unplugged for good, or renamed
+            del self.track[name]
+
+    def fire(self, name, t, now):
+        minutes = round((now - t["since"]) / 60)
+        t["tries"] += 1
+        t["since"], t["wait"] = now, min(t["wait"] * 2, MAX_WAIT)
+        log.warning("%s has been in error for %d min: resetting it with its USB device (automatic try %d)", name, minutes, t["tries"])
+        try:
+            steps = self.resetter(name, True)
+            result = steps[-1] if steps else "done"
+            usb = next((s for s in steps if "USB" in s), None)
+            if usb and usb not in result:
+                result = f"{usb}; {result}"
+        except Exception as e:
+            log.warning("Automatic reset of %s failed: %s", name, e)
+            result = f"failed: {e}"
+        status.update(name, note=f"Automatic reset at {time.strftime('%H:%M')} after {minutes} min of errors (try {t['tries']}, "
+                                 f"next after {round(t['wait'] / 60)} min): {result}"[:300], auto_resets=t["tries"])
 
 
 # ------------------------------------------------------------------ remote sensors
