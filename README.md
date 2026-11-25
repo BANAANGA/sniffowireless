@@ -340,6 +340,7 @@ All settings are environment variables (put them in `.env`).
 | `TRUSTED_PROXIES` | `127.0.0.1` | Addresses whose `X-Forwarded-For`/`-Proto`/`-Host` headers are trusted (your reverse proxy); ignored from anyone else. |
 | `SNIFFOWIRELESS_MODE` | `server` | `sensor` = capture only and forward to `SERVER_URL` (see [Multiple sensors](docs/sensors.md#multiple-sensors--the-map)). |
 | `SERVER_URL` / `SENSOR_TOKEN` | – | Sensor mode: URL of the main sniffowireless server and the token from Settings → Sensors. |
+| `AUTO_RESET_AFTER` | `180` | Seconds an adapter may be in error before it is reset by itself, with its USB device (server and remote sensors; see [Adapters](docs/adapters.md)). `0` = never. |
 | `DB_PATH` | `/data/sniffowireless.db` | SQLite database location. |
 | `DATA_DIR` | folder of `DB_PATH` | Where uploaded files (floor plan) are kept. |
 | `TZ` | `UTC` | Container time zone (logs). The UI always shows the viewer's local time. |

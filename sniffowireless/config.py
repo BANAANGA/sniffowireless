@@ -202,6 +202,7 @@ class Config:
 
     eth_interfaces: list = field(default_factory=list)
     eth_promisc: bool = True
+    auto_reset_after: int = 180       # seconds of errors before an adapter is reset by itself (with USB); 0 = never
     zigbee_devices: list = field(default_factory=list)
     zigbee_channels: list = field(default_factory=lambda: list(range(11, 27)))
     zigbee_hop_interval: float = 2.0
@@ -283,6 +284,7 @@ class Config:
             lora_decode_public=_bool("LORA_DECODE_PUBLIC", True),
             eth_interfaces=_list("ETH_INTERFACES"),
             eth_promisc=_bool("ETH_PROMISC", True),
+            auto_reset_after=max(0, _int("AUTO_RESET_AFTER", 180)),
             lan_session_timeout=_int("LAN_SESSION_TIMEOUT", 900),
             wifi_session_timeout=_int("WIFI_SESSION_TIMEOUT", 300),
             bt_session_timeout=_int("BT_SESSION_TIMEOUT", 180),

@@ -48,6 +48,9 @@ def start_sensors(cfg, sink, stop, handshake=None, wifi=None, lora=None, zigbee=
             LoraSensor(dev, cfg, sink, control=lora).start(stop)
             log.info("LoRa sensor on %s, profiles %s", dev, ", ".join(p.name for p in lora.effective()[0]))
             n += 1
+    if n:
+        from .adapters import Watchdog
+        Watchdog(cfg.auto_reset_after).start(stop)   # an adapter in error for 3 minutes is reset by itself, with its USB device
     return n
 
 

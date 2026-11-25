@@ -132,3 +132,89 @@ def test_the_status_a_remote_sensor_reports_keeps_the_lora_fields():
     out = sanitize.remote_status({"name": "lora:ttyUSB0", "type": "lora", "state": "listening", "fw_version": 2, "crc_errors": 3, "profile": "meshcore-eu868",
                                   "note": "Reset at 12:00: ok", "evil": "x", "firmware": "lora-sniffer"})
     assert out["fw_version"] == 2 and out["crc_errors"] == 3 and out["profile"] == "meshcore-eu868" and out["note"].startswith("Reset at") and "evil" not in out
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def watchdog(after=180):
+    clock, calls = Clock(), []
+    w = adapters.Watchdog(after, clock=clock, resetter=lambda name, usb: (calls.append((name, usb)), ["USB device 1-1 reset", "wlan9 up"])[1])
+    return w, clock, calls
+
+
+def run_for(w, clock, seconds, step=5):
+    end = clock.t + seconds
+    while clock.t < end:
+        clock.t += step
+        w.check()
+
+
+def test_an_adapter_in_error_for_three_minutes_is_reset_with_its_usb_device():
+    status.SENSORS.clear()
+    status.register("wifi:wlan9", type="wifi", iface="wlan9")
+    status.update("wifi:wlan9", state="error", error="Network is down")
+    w, clock, calls = watchdog()
+    w.check()
+    run_for(w, clock, 170)
+    assert calls == []
+    run_for(w, clock, 15)
+    assert calls == [("wifi:wlan9", True)]
+    note = status.SENSORS["wifi:wlan9"]["note"]
+    assert note.startswith("Automatic reset at ") and "after 3 min of errors" in note and "USB device 1-1 reset" in note
+    run_for(w, clock, 300)                     # still broken: the next try waits twice as long
+    assert len(calls) == 1
+    run_for(w, clock, 70)
+    assert len(calls) == 2 and status.SENSORS["wifi:wlan9"]["auto_resets"] == 2
+
+
+def test_short_errors_and_flapping_count_but_a_minute_of_working_starts_over():
+    status.SENSORS.clear()
+    status.register("bt:hci0", type="bt", iface="hci0")
+    w, clock, calls = watchdog()
+    for _ in range(12):                        # a loop that fails at once: 10 s error, 5 s "scanning", for 3 minutes
+        status.update("bt:hci0", state="error")
+        run_for(w, clock, 10)
+        status.update("bt:hci0", state="scanning")
+        run_for(w, clock, 5)
+    status.update("bt:hci0", state="error")
+    run_for(w, clock, 10)
+    assert calls == [("bt:hci0", True)]
+    status.update("bt:hci0", state="scanning")
+    run_for(w, clock, 65)
+    assert "bt:hci0" not in w.track
+    status.update("bt:hci0", state="error")
+    run_for(w, clock, 120)
+    assert len(calls) == 1                     # a fresh error waits the full 3 minutes again
+
+
+def test_the_watchdog_leaves_remote_entries_and_unknown_sticks_alone():
+    status.SENSORS.clear()
+    status.replace_remote("pi", [{"name": "wifi:wlan1", "state": "error"}], time.time())
+    status.register("zigbee:ttyACM7", type="zigbee")
+    status.update("zigbee:ttyACM7", state="error")
+    status.register("eth:eth0", type="eth")
+    status.update("eth:eth0", state="error")
+    w, clock, calls = watchdog()
+    run_for(w, clock, 400)
+    assert calls == []
+    assert adapters.Watchdog(0).after == 0     # AUTO_RESET_AFTER=0 switches it off (start() does nothing)
+
+
+def test_a_failing_reset_is_noted_and_tried_again_later():
+    status.SENSORS.clear()
+    status.register("wifi:wlan9", type="wifi", iface="wlan9")
+    status.update("wifi:wlan9", state="error")
+    clock = Clock()
+
+    def broken(name, usb):
+        raise OSError("ip: not found")
+    w = adapters.Watchdog(180, clock=clock, resetter=broken)
+    w.check()
+    run_for(w, clock, 185)
+    assert "failed: ip: not found" in status.SENSORS["wifi:wlan9"]["note"] and w.track["wifi:wlan9"]["tries"] == 1
